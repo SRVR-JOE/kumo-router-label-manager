@@ -5,6 +5,88 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# Helper function to make secure web requests with HTTPS fallback
+function Invoke-SecureWebRequest {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Uri,
+        [string]$Method = "GET",
+        [object]$Body = $null,
+        [hashtable]$Headers = @{},
+        [int]$TimeoutSec = 10,
+        [switch]$UseBasicParsing,
+        [switch]$ForceHTTP
+    )
+
+    if (-not $ForceHTTP) {
+        $httpsUri = $Uri -replace "^http://", "https://"
+        try {
+            $params = @{
+                Uri = $httpsUri
+                Method = $Method
+                TimeoutSec = $TimeoutSec
+                UseBasicParsing = $UseBasicParsing
+                ErrorAction = "Stop"
+            }
+            if ($Body) { $params.Body = $Body }
+            if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+            return Invoke-WebRequest @params
+        } catch {
+            Write-Verbose "HTTPS failed, falling back to HTTP: $_"
+        }
+    }
+
+    $params = @{
+        Uri = $Uri
+        Method = $Method
+        TimeoutSec = $TimeoutSec
+        UseBasicParsing = $UseBasicParsing
+        ErrorAction = "Stop"
+    }
+    if ($Body) { $params.Body = $Body }
+    if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+    return Invoke-WebRequest @params
+}
+
+function Invoke-SecureRestMethod {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Uri,
+        [string]$Method = "GET",
+        [object]$Body = $null,
+        [hashtable]$Headers = @{},
+        [int]$TimeoutSec = 10,
+        [switch]$ForceHTTP
+    )
+
+    if (-not $ForceHTTP) {
+        $httpsUri = $Uri -replace "^http://", "https://"
+        try {
+            $params = @{
+                Uri = $httpsUri
+                Method = $Method
+                TimeoutSec = $TimeoutSec
+                ErrorAction = "Stop"
+            }
+            if ($Body) { $params.Body = $Body }
+            if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+            return Invoke-RestMethod @params
+        } catch {
+            Write-Verbose "HTTPS failed, falling back to HTTP: $_"
+        }
+    }
+
+    $params = @{
+        Uri = $Uri
+        Method = $Method
+        TimeoutSec = $TimeoutSec
+        ErrorAction = "Stop"
+    }
+    if ($Body) { $params.Body = $Body }
+    if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+    return Invoke-RestMethod @params
+}
+
 # Main Form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "KUMO Router Label Manager - Solotech Production"
@@ -330,7 +412,7 @@ function Download-CurrentLabels {
                 $statusLabel.Text = "Trying API: $endpoint"
                 $form.Refresh()
                 
-                $response = Invoke-RestMethod -Uri $endpoint -TimeoutSec 10
+                $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 10
                 
                 # Parse different response formats
                 if ($response.inputs -or $response.outputs) {
@@ -340,7 +422,7 @@ function Download-CurrentLabels {
                             $allLabels += [PSCustomObject]@{
                                 Port = $i
                                 Type = "INPUT"
-                                Current_Label = $response.inputs[$i-1].label ?? "Input $i"
+                                Current_Label = if ($response.inputs[$i-1].label) { $response.inputs[$i-1].label } else { "Input $i" }
                                 New_Label = ""
                                 Notes = "Retrieved from KUMO"
                             }
@@ -354,7 +436,7 @@ function Download-CurrentLabels {
                             $allLabels += [PSCustomObject]@{
                                 Port = $i
                                 Type = "OUTPUT"
-                                Current_Label = $response.outputs[$i-1].label ?? "Output $i"
+                                Current_Label = if ($response.outputs[$i-1].label) { $response.outputs[$i-1].label } else { "Output $i" }
                                 New_Label = ""
                                 Notes = "Retrieved from KUMO"
                             }
@@ -389,7 +471,7 @@ function Download-CurrentLabels {
                     $label = "Input $i"  # Default
                     foreach ($endpoint in $endpoints) {
                         try {
-                            $response = Invoke-RestMethod -Uri $endpoint -TimeoutSec 5
+                            $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 5
                             if ($response.label) {
                                 $label = $response.label
                                 break
@@ -437,7 +519,7 @@ function Download-CurrentLabels {
                     $label = "Output $i"  # Default
                     foreach ($endpoint in $endpoints) {
                         try {
-                            $response = Invoke-RestMethod -Uri $endpoint -TimeoutSec 5
+                            $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 5
                             if ($response.label) {
                                 $label = $response.label
                                 break
@@ -666,7 +748,7 @@ function Send-KumoLabels {
             
             # Send request (Note: Actual API endpoints may vary - this is example structure)
             try {
-                $response = Invoke-RestMethod -Uri $uri -Method PUT -Body $body -ContentType "application/json" -TimeoutSec 5
+                $response = Invoke-SecureRestMethod -Uri $uri -Method PUT -Body $body -Headers @{"Content-Type"="application/json"} -TimeoutSec 5
                 $successCount++
             } catch {
                 # Try alternative API structure
@@ -677,7 +759,7 @@ function Send-KumoLabels {
                     label = $item.New_Label
                 } | ConvertTo-Json
                 
-                $response = Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType "application/json" -TimeoutSec 5
+                $response = Invoke-SecureRestMethod -Uri $uri -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -TimeoutSec 5
                 $successCount++
             }
             

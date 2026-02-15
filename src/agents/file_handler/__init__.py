@@ -11,6 +11,7 @@ from .schema import FileData, PortData
 from .excel_handler import ExcelHandler
 from .csv_handler import CSVHandler
 from .json_handler import JSONHandler
+from ...models.events import FileEvent, EventType
 
 
 FileFormat = Literal["excel", "csv", "json"]
@@ -241,11 +242,18 @@ class FileHandlerAgent:
                 f"Supported: .xlsx, .csv, .json"
             )
 
-    def _emit_event(self, event_name: str, data: dict) -> None:
+    async def _emit_event(self, event_name: str, data: dict) -> None:
         """Emit event to event bus if available."""
         if self.event_bus:
             try:
-                self.event_bus.emit(event_name, data)
+                # Create a FileEvent with the data
+                event = FileEvent(
+                    file_path=data.get("file_path", ""),
+                    operation=event_name,
+                    data=data
+                )
+                # Publish the event using the correct async method
+                await self.event_bus.publish(event)
             except Exception:
                 # Silently fail if event bus errors
                 pass

@@ -285,7 +285,7 @@ class APIAgent:
 
         return labels
 
-    def _emit_connection_event(
+    async def _emit_connection_event(
         self, connected: bool, error_message: Optional[str] = None
     ) -> None:
         """Emit connection event to event bus.
@@ -303,13 +303,13 @@ class APIAgent:
                 connected=connected,
                 error_message=error_message,
             )
-            # Assuming event bus has a publish method
+            # Await the async publish method
             if hasattr(self.event_bus, "publish"):
-                self.event_bus.publish(event)
+                await self.event_bus.publish(event)
         except Exception as e:
             logger.error(f"Error emitting connection event: {e}")
 
-    def _emit_labels_event(
+    async def _emit_labels_event(
         self,
         labels: List[Label],
         source: str,
@@ -341,9 +341,9 @@ class APIAgent:
             if metadata:
                 event.data.update(metadata)
 
-            # Publish event
+            # Publish event (await async method)
             if hasattr(self.event_bus, "publish"):
-                self.event_bus.publish(event)
+                await self.event_bus.publish(event)
         except Exception as e:
             logger.error(f"Error emitting labels event: {e}")
 

@@ -8,7 +8,7 @@ import asyncio
 from typing import Callable, Dict, List, Set, Awaitable
 from collections import defaultdict
 import logging
-from threading import Lock
+# Removed threading.Lock - using asyncio.Lock for async-safe locking
 
 from ..models.events import BaseEvent, EventType
 
@@ -32,12 +32,12 @@ class EventBus:
         self._subscribers: Dict[EventType, Set[asyncio.Queue]] = defaultdict(set)
         self._global_subscribers: Set[asyncio.Queue] = set()
         self._max_queue_size = max_queue_size
-        self._lock = Lock()
+        self._lock = asyncio.Lock()
         self._running = False
 
         logger.info("EventBus initialized with max queue size: %d", max_queue_size)
 
-    def subscribe(
+    async def subscribe(
         self,
         event_type: EventType,
         queue: asyncio.Queue,
@@ -48,7 +48,7 @@ class EventBus:
             event_type: Type of events to subscribe to
             queue: Asyncio queue to receive events
         """
-        with self._lock:
+        async with self._lock:
             self._subscribers[event_type].add(queue)
             logger.debug(
                 "Subscriber added for event type: %s (total: %d)",
@@ -56,20 +56,20 @@ class EventBus:
                 len(self._subscribers[event_type])
             )
 
-    def subscribe_all(self, queue: asyncio.Queue) -> None:
+    async def subscribe_all(self, queue: asyncio.Queue) -> None:
         """Subscribe to all event types.
 
         Args:
             queue: Asyncio queue to receive all events
         """
-        with self._lock:
+        async with self._lock:
             self._global_subscribers.add(queue)
             logger.debug(
                 "Global subscriber added (total: %d)",
                 len(self._global_subscribers)
             )
 
-    def unsubscribe(
+    async def unsubscribe(
         self,
         event_type: EventType,
         queue: asyncio.Queue,
@@ -80,7 +80,7 @@ class EventBus:
             event_type: Type of events to unsubscribe from
             queue: Queue to remove from subscribers
         """
-        with self._lock:
+        async with self._lock:
             if queue in self._subscribers[event_type]:
                 self._subscribers[event_type].remove(queue)
                 logger.debug(

@@ -1,6 +1,6 @@
 # KUMO Excel Label Updater - Command Line Version
 # Simple script for bulk updating KUMO labels from Excel
-# 
+#
 # Usage Examples:
 # Download current labels: .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "current_labels.xlsx"
 # Create template:        .\KUMO-Excel-Updater.ps1 -CreateTemplate
@@ -10,20 +10,126 @@
 param(
     [Parameter(Mandatory=$false)]
     [string]$KumoIP,
-    
+
     [Parameter(Mandatory=$false)]
     [string]$ExcelFile,
-    
+
     [string]$WorksheetName = "KUMO_Labels",
-    
+
     [switch]$TestOnly,
-    
+
     [switch]$CreateTemplate,
-    
+
     [switch]$DownloadLabels,
-    
-    [string]$DownloadPath
+
+    [string]$DownloadPath,
+
+    [switch]$ForceHTTP
 )
+
+# Helper function to make secure web requests with HTTPS fallback
+function Invoke-SecureWebRequest {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Uri,
+
+        [string]$Method = "GET",
+
+        [object]$Body = $null,
+
+        [hashtable]$Headers = @{},
+
+        [int]$TimeoutSec = 10,
+
+        [switch]$UseBasicParsing,
+
+        [switch]$ForceHTTP
+    )
+
+    # Try HTTPS first unless ForceHTTP is specified
+    if (-not $ForceHTTP) {
+        $httpsUri = $Uri -replace "^http://", "https://"
+        try {
+            $params = @{
+                Uri = $httpsUri
+                Method = $Method
+                TimeoutSec = $TimeoutSec
+                UseBasicParsing = $UseBasicParsing
+                ErrorAction = "Stop"
+            }
+            if ($Body) { $params.Body = $Body }
+            if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+
+            return Invoke-WebRequest @params
+        }
+        catch {
+            Write-Verbose "HTTPS failed, falling back to HTTP: $_"
+        }
+    }
+
+    # Fall back to HTTP
+    $params = @{
+        Uri = $Uri
+        Method = $Method
+        TimeoutSec = $TimeoutSec
+        UseBasicParsing = $UseBasicParsing
+        ErrorAction = "Stop"
+    }
+    if ($Body) { $params.Body = $Body }
+    if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+
+    return Invoke-WebRequest @params
+}
+
+# Helper function for Invoke-RestMethod with HTTPS fallback
+function Invoke-SecureRestMethod {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Uri,
+
+        [string]$Method = "GET",
+
+        [object]$Body = $null,
+
+        [hashtable]$Headers = @{},
+
+        [int]$TimeoutSec = 10,
+
+        [switch]$ForceHTTP
+    )
+
+    # Try HTTPS first unless ForceHTTP is specified
+    if (-not $ForceHTTP) {
+        $httpsUri = $Uri -replace "^http://", "https://"
+        try {
+            $params = @{
+                Uri = $httpsUri
+                Method = $Method
+                TimeoutSec = $TimeoutSec
+                ErrorAction = "Stop"
+            }
+            if ($Body) { $params.Body = $Body }
+            if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+
+            return Invoke-RestMethod @params
+        }
+        catch {
+            Write-Verbose "HTTPS failed, falling back to HTTP: $_"
+        }
+    }
+
+    # Fall back to HTTP
+    $params = @{
+        Uri = $Uri
+        Method = $Method
+        TimeoutSec = $TimeoutSec
+        ErrorAction = "Stop"
+    }
+    if ($Body) { $params.Body = $Body }
+    if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+
+    return Invoke-RestMethod @params
+}
 
 # Function to download current labels from KUMO
 function Get-KumoCurrentLabels {
@@ -51,7 +157,7 @@ function Get-KumoCurrentLabels {
     foreach ($endpoint in $apiEndpoints) {
         try {
             Write-Host "  Trying: $endpoint" -ForegroundColor Gray
-            $response = Invoke-RestMethod -Uri $endpoint -TimeoutSec 10 -ErrorAction Stop
+            $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 10 -ErrorAction Stop -ForceHTTP:$ForceHTTP
             
             # Parse different response formats
             if ($response.inputs -or $response.outputs) {
@@ -126,7 +232,7 @@ function Get-KumoCurrentLabels {
             
             foreach ($endpoint in $endpoints) {
                 try {
-                    $response = Invoke-RestMethod -Uri $endpoint -TimeoutSec 3
+                    $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 3 -ForceHTTP:$ForceHTTP
                     if ($response.label -and $response.label.Trim()) {
                         $label = $response.label.Trim()
                         break
@@ -167,7 +273,7 @@ function Get-KumoCurrentLabels {
             
             foreach ($endpoint in $endpoints) {
                 try {
-                    $response = Invoke-RestMethod -Uri $endpoint -TimeoutSec 3
+                    $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 3 -ForceHTTP:$ForceHTTP
                     if ($response.label -and $response.label.Trim()) {
                         $label = $response.label.Trim()
                         break
@@ -451,7 +557,7 @@ function Test-KumoConnectivity {
     
     # Test web interface (port 80)
     try {
-        $response = Invoke-WebRequest -Uri "http://$IP" -TimeoutSec 10 -UseBasicParsing
+        $response = Invoke-SecureWebRequest -Uri "http://$IP" -TimeoutSec 10 -UseBasicParsing -ForceHTTP:$ForceHTTP
         Write-Host "✓ Web interface accessible" -ForegroundColor Green
         return $true
     } catch {
@@ -544,7 +650,7 @@ function Update-KumoLabelsREST {
             $success = $false
             foreach ($endpoint in $endpoints) {
                 try {
-                    $response = Invoke-RestMethod -Uri $endpoint -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10
+                    $response = Invoke-SecureRestMethod -Uri $endpoint -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -TimeoutSec 10 -ForceHTTP:$ForceHTTP
                     $success = $true
                     break
                 } catch {

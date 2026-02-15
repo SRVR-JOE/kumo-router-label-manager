@@ -7,7 +7,11 @@
       "Bash(find:*)",
       "Bash(python:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git config:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: KUMO Router Label Manager v2.0\n\nComplete solution for managing AJA KUMO router labels with both PowerShell\nand Python implementations.\n\nPowerShell Components \\(Production Ready\\):\n- KUMO-Label-Manager.ps1: GUI application for label management\n- KUMO-Excel-Updater.ps1: CLI tool for bulk updates\n- Install-KUMO-Tools.ps1: Installation and setup script\n- Deploy-KUMO-Package.ps1: Deployment automation\n\nPython Components \\(Architecture Framework\\):\n- Event-driven agent architecture with asyncio\n- REST and Telnet API clients for KUMO routers\n- File handlers for Excel, CSV, and JSON\n- Data models and validation with Pydantic\n\nKnown Issues Identified:\n- Python components need integration and entry points\n- PowerShell 7.0 dependency \\(null coalescing operator\\)\n- HTTP communication needs HTTPS upgrade\n- Event bus async/await corrections needed\n- Missing requirements.txt and package configuration\n\nSee README.md for usage instructions and documentation.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)"
     ]
   }
 }
