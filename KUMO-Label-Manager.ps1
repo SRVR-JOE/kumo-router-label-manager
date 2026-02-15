@@ -32,30 +32,6 @@ function Invoke-SecureWebRequest {
     return Invoke-WebRequest @p
 }
 
-function Invoke-SecureRestMethod {
-    param(
-        [Parameter(Mandatory=$true)][string]$Uri,
-        [string]$Method = "GET",
-        [object]$Body = $null,
-        [hashtable]$Headers = @{},
-        [int]$TimeoutSec = 10,
-        [switch]$ForceHTTP
-    )
-    if (-not $ForceHTTP) {
-        $httpsUri = $Uri -replace "^http://", "https://"
-        try {
-            $p = @{ Uri=$httpsUri; Method=$Method; TimeoutSec=$TimeoutSec; ErrorAction="Stop" }
-            if ($Body) { $p.Body = $Body }
-            if ($Headers.Count -gt 0) { $p.Headers = $Headers }
-            return Invoke-RestMethod @p
-        } catch { Write-Verbose "HTTPS failed, falling back to HTTP: $_" }
-    }
-    $p = @{ Uri=$Uri; Method=$Method; TimeoutSec=$TimeoutSec; ErrorAction="Stop" }
-    if ($Body) { $p.Body = $Body }
-    if ($Headers.Count -gt 0) { $p.Headers = $Headers }
-    return Invoke-RestMethod @p
-}
-
 # ─── Color Theme ─────────────────────────────────────────────────────────────
 
 $clrBg        = [System.Drawing.Color]::FromArgb(30, 30, 34)
@@ -96,13 +72,6 @@ function Set-KumoParam {
     } catch { return $false }
 }
 
-function Get-KumoRouterName {
-    param([string]$IP)
-    $name = Get-KumoParam -IP $IP -ParamId "eParamID_SysName"
-    if ($name) { return $name }
-    return "KUMO_$($IP -replace '\.','_')"
-}
-
 function Get-DocumentsPath {
     $docs = [Environment]::GetFolderPath("MyDocuments")
     $kumoDir = Join-Path $docs "KUMO_Labels"
@@ -138,7 +107,9 @@ $topPanel.Dock = "Top"
 $topPanel.Height = 70
 $topPanel.BackColor = $clrPanel
 $topPanel.Padding = New-Object System.Windows.Forms.Padding(16, 10, 16, 10)
-$form.Controls.Add($topPanel)
+# NOTE: topPanel is added to the form AFTER all other docked controls
+# WinForms Dock order: last-added Top panel appears at the very top
+# So we add them in visual order: bottom first, top last
 
 $titleLabel = New-Object System.Windows.Forms.Label
 $titleLabel.Text = "KUMO Label Manager"
@@ -197,14 +168,14 @@ $toolPanel.Dock = "Top"
 $toolPanel.Height = 44
 $toolPanel.BackColor = $clrPanel
 $toolPanel.Padding = New-Object System.Windows.Forms.Padding(12, 6, 12, 6)
-$form.Controls.Add($toolPanel)
+# NOTE: toolPanel added to form later for correct dock order
 
 # Separator line between top and toolbar
 $sep1 = New-Object System.Windows.Forms.Label
 $sep1.Dock = "Top"
 $sep1.Height = 1
 $sep1.BackColor = $clrBorder
-$form.Controls.Add($sep1)
+# NOTE: sep1 added to form later for correct dock order
 
 $btnDownload = New-Object System.Windows.Forms.Button
 $btnDownload.Text = "Download from Router"
@@ -288,7 +259,7 @@ $filterPanel.Dock = "Top"
 $filterPanel.Height = 40
 $filterPanel.BackColor = $clrBg
 $filterPanel.Padding = New-Object System.Windows.Forms.Padding(12, 6, 12, 6)
-$form.Controls.Add($filterPanel)
+# NOTE: filterPanel added to form later for correct dock order
 
 $tabAll = New-Object System.Windows.Forms.Button
 $tabAll.Text = "All Ports"
@@ -439,7 +410,7 @@ $colCharCount.DefaultCellStyle.Alignment = "MiddleCenter"
 
 $dataGrid.Columns.AddRange(@($colPort, $colType, $colCurrent, $colNew, $colStatus, $colCharCount))
 
-$form.Controls.Add($dataGrid)
+# NOTE: dataGrid added to form later for correct dock order
 
 # ─── Bottom Bar: Upload + Progress ───────────────────────────────────────────
 
@@ -448,7 +419,7 @@ $bottomPanel.Dock = "Bottom"
 $bottomPanel.Height = 56
 $bottomPanel.BackColor = $clrPanel
 $bottomPanel.Padding = New-Object System.Windows.Forms.Padding(16, 10, 16, 10)
-$form.Controls.Add($bottomPanel)
+# NOTE: bottomPanel added to form later for correct dock order
 
 $btnUpload = New-Object System.Windows.Forms.Button
 $btnUpload.Text = "Upload Changes to Router"
@@ -476,6 +447,17 @@ $progressLabel.Location = New-Object System.Drawing.Point(530, 20)
 $progressLabel.Size = New-Object System.Drawing.Size(250, 20)
 $bottomPanel.Controls.Add($progressLabel)
 
+# ─── Add Controls to Form (correct WinForms dock order) ──────────────────────
+# WinForms processes Dock in reverse Z-order: last-added Top panel is at very top
+# So we add: Bottom first, then Fill, then Top panels from bottom-to-top
+
+$form.Controls.Add($bottomPanel)    # Dock=Bottom - goes to bottom
+$form.Controls.Add($dataGrid)       # Dock=Fill - fills remaining space
+$form.Controls.Add($filterPanel)    # Dock=Top - appears below toolbar
+$form.Controls.Add($toolPanel)      # Dock=Top - appears below separator
+$form.Controls.Add($sep1)           # Dock=Top - appears below topPanel
+$form.Controls.Add($topPanel)       # Dock=Top - at the very top (added last)
+
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
 function Populate-Grid {
@@ -494,10 +476,10 @@ function Populate-Grid {
 
         # Filter by search
         if ($searchTerm) {
-            $matchCurrent = $lbl.Current_Label.ToLower().Contains($searchTerm)
-            $nl = if ($lbl.New_Label) { $lbl.New_Label.ToLower().Contains($searchTerm) } else { $false }
-            $matchPort = $lbl.Port.ToString().Contains($searchTerm)
-            if (-not ($matchCurrent -or $nl -or $matchPort)) { continue }
+            $matchCurrent = if ($lbl.Current_Label) { $lbl.Current_Label.ToLower().Contains($searchTerm) } else { $false }
+            $matchNew = if ($lbl.New_Label) { $lbl.New_Label.ToLower().Contains($searchTerm) } else { $false }
+            $matchPort = if ($lbl.Port) { $lbl.Port.ToString().Contains($searchTerm) } else { $false }
+            if (-not ($matchCurrent -or $matchNew -or $matchPort)) { continue }
         }
 
         # Determine status
@@ -940,11 +922,14 @@ $btnFindReplace.Add_Click({
             if ($rbOutputOnly.Checked -and $lbl.Type -ne "OUTPUT") { continue }
 
             if ($rbCurrentToNew.Checked) {
-                $lbl.New_Label = $lbl.Current_Label -replace [regex]::Escape($find), $replace
-                $count++
+                $newVal = $lbl.Current_Label.Replace($find, $replace)
+                if ($newVal -ne $lbl.Current_Label) {
+                    $lbl.New_Label = $newVal
+                    $count++
+                }
             } else {
                 if ($lbl.New_Label -and $lbl.New_Label.Contains($find)) {
-                    $lbl.New_Label = $lbl.New_Label -replace [regex]::Escape($find), $replace
+                    $lbl.New_Label = $lbl.New_Label.Replace($find, $replace)
                     $count++
                 }
             }
@@ -1042,7 +1027,9 @@ $btnAutoNumber.Add_Click({
         $num = [int]$startNumBox.Value
 
         if ($rbSelected2.Checked) {
-            foreach ($row in $dataGrid.SelectedRows) {
+            # Sort selected rows by index (SelectedRows returns in reverse selection order)
+            $sortedRows = $dataGrid.SelectedRows | Sort-Object { $_.Index }
+            foreach ($row in $sortedRows) {
                 $port = $row.Cells["Port"].Value
                 $type = $row.Cells["Type"].Value
                 foreach ($lbl in $global:allLabels) {

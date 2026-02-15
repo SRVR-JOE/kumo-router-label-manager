@@ -66,14 +66,14 @@ class Settings(BaseSettings):
     min_port_number: int = Field(
         default=1,
         ge=1,
-        le=32,
+        le=64,
         description="Minimum valid port number"
     )
     max_port_number: int = Field(
-        default=32,
+        default=64,
         ge=1,
-        le=32,
-        description="Maximum valid port number"
+        le=64,
+        description="Maximum valid port number (supports 16, 32, or 64 port routers)"
     )
     max_label_length: int = Field(
         default=50,

@@ -92,7 +92,7 @@ class BaseAgent(ABC):
         self._event_queue = asyncio.Queue()
 
         # Subscribe to configured events
-        self._subscribe_to_events()
+        await self._subscribe_to_events()
 
         # Start event processing task
         self._event_task = asyncio.create_task(self._process_events())
@@ -123,7 +123,7 @@ class BaseAgent(ABC):
                 pass
 
         # Unsubscribe from events
-        self._unsubscribe_from_events()
+        await self._unsubscribe_from_events()
 
         # Clean up agent resources
         await self.cleanup()
@@ -150,31 +150,31 @@ class BaseAgent(ABC):
         # Mark with a special indicator
         self._subscribed_events.add(None)  # None indicates all events
 
-    def _subscribe_to_events(self) -> None:
+    async def _subscribe_to_events(self) -> None:
         """Subscribe agent to configured event types on the event bus."""
         if not self._event_queue:
             return
 
         if None in self._subscribed_events:
             # Subscribe to all events
-            self.event_bus.subscribe_all(self._event_queue)
+            await self.event_bus.subscribe_all(self._event_queue)
             logger.debug("Agent '%s' subscribed to all events on event bus", self.name)
         else:
             # Subscribe to specific event types
             for event_type in self._subscribed_events:
-                self.event_bus.subscribe(event_type, self._event_queue)
+                await self.event_bus.subscribe(event_type, self._event_queue)
                 logger.debug(
                     "Agent '%s' subscribed to %s on event bus",
                     self.name,
                     event_type.value
                 )
 
-    def _unsubscribe_from_events(self) -> None:
+    async def _unsubscribe_from_events(self) -> None:
         """Unsubscribe agent from all events on the event bus."""
         if not self._event_queue:
             return
 
-        self.event_bus.unsubscribe_all(self._event_queue)
+        await self.event_bus.unsubscribe_all(self._event_queue)
         logger.debug("Agent '%s' unsubscribed from all events", self.name)
 
     async def _process_events(self) -> None:

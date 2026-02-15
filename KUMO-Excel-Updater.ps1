@@ -81,56 +81,6 @@ function Invoke-SecureWebRequest {
     return Invoke-WebRequest @params
 }
 
-# Helper function for Invoke-RestMethod with HTTPS fallback
-function Invoke-SecureRestMethod {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Uri,
-
-        [string]$Method = "GET",
-
-        [object]$Body = $null,
-
-        [hashtable]$Headers = @{},
-
-        [int]$TimeoutSec = 10,
-
-        [switch]$ForceHTTP
-    )
-
-    # Try HTTPS first unless ForceHTTP is specified
-    if (-not $ForceHTTP) {
-        $httpsUri = $Uri -replace "^http://", "https://"
-        try {
-            $params = @{
-                Uri = $httpsUri
-                Method = $Method
-                TimeoutSec = $TimeoutSec
-                ErrorAction = "Stop"
-            }
-            if ($Body) { $params.Body = $Body }
-            if ($Headers.Count -gt 0) { $params.Headers = $Headers }
-
-            return Invoke-RestMethod @params
-        }
-        catch {
-            Write-Verbose "HTTPS failed, falling back to HTTP: $_"
-        }
-    }
-
-    # Fall back to HTTP
-    $params = @{
-        Uri = $Uri
-        Method = $Method
-        TimeoutSec = $TimeoutSec
-        ErrorAction = "Stop"
-    }
-    if ($Body) { $params.Body = $Body }
-    if ($Headers.Count -gt 0) { $params.Headers = $Headers }
-
-    return Invoke-RestMethod @params
-}
-
 # Function to download current labels from KUMO
 function Get-KumoCurrentLabels {
     param(
@@ -235,7 +185,7 @@ function Get-KumoCurrentLabels {
             }
             
             # Query input labels via Telnet
-            for ($i = 1; $i -le 32; $i++) {
+            for ($i = 1; $i -le $portCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL INPUT $i ?")
                     $writer.Flush()
@@ -283,7 +233,7 @@ function Get-KumoCurrentLabels {
             }
             
             # Query output labels via Telnet
-            for ($i = 1; $i -le 32; $i++) {
+            for ($i = 1; $i -le $portCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL OUTPUT $i ?")
                     $writer.Flush()
@@ -330,21 +280,22 @@ function Get-KumoCurrentLabels {
                 }
             }
             
-            $writer.Close()
-            $reader.Close()
-            $tcpClient.Close()
             $labelsRetrieved = $true
-            
+
         } catch {
             Write-Warning "Telnet method failed: $($_.Exception.Message)"
+        } finally {
+            try { if ($writer) { $writer.Close() } } catch {}
+            try { if ($reader) { $reader.Close() } } catch {}
+            try { if ($tcpClient) { $tcpClient.Close() } } catch {}
         }
     }
     
     # If everything failed, create default template
     if ($allLabels.Count -eq 0) {
         Write-Warning "All download methods failed. Creating default template..."
-        
-        for ($i = 1; $i -le 32; $i++) {
+
+        for ($i = 1; $i -le $portCount; $i++) {
             $allLabels += [PSCustomObject]@{
                 Port = $i
                 Type = "INPUT"
@@ -353,8 +304,8 @@ function Get-KumoCurrentLabels {
                 Notes = "Default (download failed)"
             }
         }
-        
-        for ($i = 1; $i -le 32; $i++) {
+
+        for ($i = 1; $i -le $portCount; $i++) {
             $allLabels += [PSCustomObject]@{
                 Port = $i
                 Type = "OUTPUT"
@@ -577,6 +528,11 @@ function Update-KumoLabelsREST {
     Write-Host "`nUpdate Summary:" -ForegroundColor Yellow
     Write-Host "  Success: $successCount" -ForegroundColor Green
     Write-Host "  Errors: $errorCount" -ForegroundColor Red
+
+    # If all REST updates failed, throw so caller can fall back to Telnet
+    if ($successCount -eq 0 -and $errorCount -gt 0) {
+        throw "All REST API updates failed ($errorCount errors)"
+    }
 }
 
 # Function to update KUMO labels via Telnet
@@ -622,15 +578,15 @@ function Update-KumoLabelsTelnet {
         $writer.Flush()
         Start-Sleep -Seconds 2
         
-        # Cleanup
-        $writer.Close()
-        $reader.Close()
-        $tcpClient.Close()
-        
         Write-Host "`nTelnet Update Complete: $successCount labels updated" -ForegroundColor Green
-        
+
     } catch {
         Write-Error "Telnet connection failed: $($_.Exception.Message)"
+    } finally {
+        # Cleanup resources
+        try { if ($writer) { $writer.Close() } } catch {}
+        try { if ($reader) { $reader.Close() } } catch {}
+        try { if ($tcpClient) { $tcpClient.Close() } } catch {}
     }
 }
 

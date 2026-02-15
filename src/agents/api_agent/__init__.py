@@ -137,7 +137,7 @@ class APIAgent:
             )
 
             # Emit event
-            self._emit_labels_event(
+            await self._emit_labels_event(
                 labels=labels,
                 source="router",
                 operation="download",
@@ -154,7 +154,7 @@ class APIAgent:
             labels_dict = DefaultLabelGenerator.generate_default_labels()
             labels = self._dict_to_labels(labels_dict)
 
-            self._emit_labels_event(
+            await self._emit_labels_event(
                 labels=labels,
                 source="default",
                 operation="download",

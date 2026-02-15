@@ -3,7 +3,7 @@ JSON file handler for nested structure.
 """
 from pathlib import Path
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from .schema import FileData, PortData
 
@@ -119,9 +119,9 @@ class JSONHandler:
 
     def _parse_port_list(
         self,
-        port_list: list[Dict[str, Any]],
+        port_list: List[Dict[str, Any]],
         default_type: str,
-    ) -> list[PortData]:
+    ) -> List[PortData]:
         """Parse a list of port dictionaries."""
         ports = []
         for idx, port_dict in enumerate(port_list):
