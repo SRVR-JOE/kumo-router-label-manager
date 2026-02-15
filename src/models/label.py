@@ -39,16 +39,18 @@ class Label:
         self.validate_label_text()
 
     def validate_port_number(self) -> None:
-        """Validate that port number is within valid range (1-32).
+        """Validate that port number is within valid range (1-64).
+
+        Supports KUMO 16x16, 32x32, and 64x64 router models.
 
         Raises:
-            ValueError: If port number is not between 1 and 32
+            ValueError: If port number is not between 1 and 64
         """
         if not isinstance(self.port_number, int):
             raise TypeError(f"Port number must be an integer, got {type(self.port_number)}")
 
-        if not 1 <= self.port_number <= 32:
-            raise ValueError(f"Port number must be between 1 and 32, got {self.port_number}")
+        if not 1 <= self.port_number <= 64:
+            raise ValueError(f"Port number must be between 1 and 64, got {self.port_number}")
 
     def validate_port_type(self) -> None:
         """Validate that port type is a valid PortType enum.
