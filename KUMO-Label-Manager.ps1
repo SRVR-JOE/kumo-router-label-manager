@@ -408,7 +408,12 @@ $colCharCount.FillWeight = 8
 $colCharCount.MinimumWidth = 45
 $colCharCount.DefaultCellStyle.Alignment = "MiddleCenter"
 
-$dataGrid.Columns.AddRange(@($colPort, $colType, $colCurrent, $colNew, $colStatus, $colCharCount))
+$dataGrid.Columns.Add($colPort)
+$dataGrid.Columns.Add($colType)
+$dataGrid.Columns.Add($colCurrent)
+$dataGrid.Columns.Add($colNew)
+$dataGrid.Columns.Add($colStatus)
+$dataGrid.Columns.Add($colCharCount)
 
 # NOTE: dataGrid added to form later for correct dock order
 
