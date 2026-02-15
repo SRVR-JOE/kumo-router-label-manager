@@ -81,12 +81,15 @@ function Get-DocumentsPath {
 
 # ─── Global State ────────────────────────────────────────────────────────────
 
-$global:kumoConnected  = $false
-$global:allLabels      = [System.Collections.ArrayList]::new()
-$global:backupLabels   = $null
-$global:currentFilter  = "ALL"
-$global:routerName     = ""
-$global:routerPortCount = 32
+$global:kumoConnected   = $false
+$global:allLabels       = [System.Collections.ArrayList]::new()
+$global:backupLabels    = $null
+$global:currentFilter   = "ALL"
+$global:routerName      = ""
+$global:routerModel     = ""       # e.g. "KUMO 3232", "KUMO 1604"
+$global:routerFirmware  = ""       # e.g. "8.2.0"
+$global:routerInputCount  = 32     # Number of input (source) ports
+$global:routerOutputCount = 32     # Number of output (dest) ports — may differ on KUMO 1604
 
 # ─── Main Form ───────────────────────────────────────────────────────────────
 
@@ -241,9 +244,20 @@ $btnAutoNumber.FlatAppearance.BorderColor = $clrBorder
 $btnAutoNumber.Cursor = "Hand"
 $toolPanel.Controls.Add($btnAutoNumber)
 
+$btnTemplate = New-Object System.Windows.Forms.Button
+$btnTemplate.Text = "Create Template"
+$btnTemplate.Location = New-Object System.Drawing.Point(602, 7)
+$btnTemplate.Size = New-Object System.Drawing.Size(110, 28)
+$btnTemplate.BackColor = $clrField
+$btnTemplate.ForeColor = $clrText
+$btnTemplate.FlatStyle = "Flat"
+$btnTemplate.FlatAppearance.BorderColor = $clrBorder
+$btnTemplate.Cursor = "Hand"
+$toolPanel.Controls.Add($btnTemplate)
+
 $btnClearNew = New-Object System.Windows.Forms.Button
 $btnClearNew.Text = "Clear All New"
-$btnClearNew.Location = New-Object System.Drawing.Point(602, 7)
+$btnClearNew.Location = New-Object System.Drawing.Point(720, 7)
 $btnClearNew.Size = New-Object System.Drawing.Size(100, 28)
 $btnClearNew.BackColor = $clrField
 $btnClearNew.ForeColor = $clrText
@@ -553,14 +567,17 @@ function Sync-GridToData {
 }
 
 function Create-DefaultLabels {
-    param([int]$PortCount = 32)
+    param(
+        [int]$InputCount = 32,
+        [int]$OutputCount = 32
+    )
     $global:allLabels.Clear()
-    for ($i = 1; $i -le $PortCount; $i++) {
+    for ($i = 1; $i -le $InputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
             Port = $i; Type = "INPUT"; Current_Label = "Input $i"; New_Label = ""; Notes = ""
         }) | Out-Null
     }
-    for ($i = 1; $i -le $PortCount; $i++) {
+    for ($i = 1; $i -le $OutputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
             Port = $i; Type = "OUTPUT"; Current_Label = "Output $i"; New_Label = ""; Notes = ""
         }) | Out-Null
@@ -598,26 +615,61 @@ $connectButton.Add_Click({
         $global:kumoConnected = $true
         $global:routerName = if ($json.value -and $json.value -ne "") { $json.value } else { "KUMO" }
 
-        # Try to detect port count (check if source 33 exists = 64-port router)
-        $global:routerPortCount = 32
+        # Get firmware version
+        $global:routerFirmware = ""
+        try {
+            $fw = Get-KumoParam -IP $ip -ParamId "eParamID_SWVersion"
+            if ($fw) { $global:routerFirmware = $fw }
+        } catch { }
+
+        # ── Auto-detect router model by probing ports ──
+        # Step 1: Detect input (source) count
+        $inputCount = 32  # default
+        $statusText.Text = "Detecting router model..."
+        $form.Refresh()
+
         try {
             $test64 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source33_Line_1"
-            if ($test64 -ne $null) { $global:routerPortCount = 64 }
+            if ($test64 -ne $null) { $inputCount = 64 }
         } catch { }
-        # Check 16-port: if source 17 doesn't exist
-        if ($global:routerPortCount -eq 32) {
+        if ($inputCount -eq 32) {
             try {
                 $test17 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source17_Line_1"
-                if ($test17 -eq $null) { $global:routerPortCount = 16 }
-            } catch { $global:routerPortCount = 16 }
+                if ($test17 -eq $null) { $inputCount = 16 }
+            } catch { $inputCount = 16 }
         }
 
-        $statusText.Text = "$($global:routerName) ($($global:routerPortCount)x$($global:routerPortCount)) at $ip"
+        # Step 2: Detect output (destination) count
+        # KUMO 1604 has 16 inputs but only 4 outputs — probe Dest5 to differentiate
+        $outputCount = $inputCount  # assume symmetric by default
+        if ($inputCount -eq 16) {
+            try {
+                $testDest5 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination5_Line_1"
+                if ($testDest5 -eq $null) { $outputCount = 4 }
+            } catch { $outputCount = 4 }
+        }
+
+        $global:routerInputCount = $inputCount
+        $global:routerOutputCount = $outputCount
+
+        # Step 3: Infer model name from port counts
+        $global:routerModel = switch ("$inputCount`x$outputCount") {
+            "16x4"  { "KUMO 1604" }
+            "16x16" { "KUMO 1616" }
+            "32x32" { "KUMO 3232" }
+            "64x64" { "KUMO 6464" }
+            default { "KUMO ${inputCount}x${outputCount}" }
+        }
+
+        # Build status text
+        $fwText = if ($global:routerFirmware) { " | FW $($global:routerFirmware)" } else { "" }
+        $statusText.Text = "$($global:routerModel) `"$($global:routerName)`" ($inputCount in / $outputCount out)$fwText"
         $statusText.ForeColor = $clrSuccess
+        $statusText.Size = New-Object System.Drawing.Size(500, 20)
         $statusDot.ForeColor = $clrSuccess
         $btnDownload.Enabled = $true
         $connectButton.Text = "Reconnect"
-        $form.Text = "KUMO Label Manager - $($global:routerName)"
+        $form.Text = "KUMO Label Manager - $($global:routerModel) `"$($global:routerName)`""
         Update-ChangeCount
     } catch {
         $global:kumoConnected = $false
@@ -636,43 +688,44 @@ $connectButton.Add_Click({
 
 $btnDownload.Add_Click({
     $ip = $ipTextBox.Text.Trim()
-    $portCount = $global:routerPortCount
-    $totalPorts = $portCount * 2
+    $inCount = $global:routerInputCount
+    $outCount = $global:routerOutputCount
+    $totalPorts = $inCount + $outCount
     $global:allLabels.Clear()
     $progressBar.Value = 0
     $progressBar.Maximum = $totalPorts
-    $progressLabel.Text = "Downloading via REST API..."
+    $progressLabel.Text = "Downloading from $($global:routerModel)..."
     $form.Refresh()
 
     # ── Method 1: AJA KUMO REST API (correct method) ──
     # Uses: /config?action=get&configid=0&paramid=eParamID_XPT_Source{N}_Line_1
     $restSuccess = $true
 
-    for ($i = 1; $i -le $portCount; $i++) {
+    for ($i = 1; $i -le $inCount; $i++) {
         $label = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source${i}_Line_1"
         if (-not $label -or $label -eq "") {
             $label = "Source $i"
             if ($i -eq 1) { $restSuccess = $false }  # First port failed = API not working
         }
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO REST API"
+            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From $($global:routerModel)"
         }) | Out-Null
         $progressBar.Value = $i
-        $progressLabel.Text = "Source $i/$portCount..."
+        $progressLabel.Text = "Source $i/$inCount..."
         $form.Refresh()
 
         if (-not $restSuccess -and $i -eq 1) { break }  # Don't waste time if API is dead
     }
 
     if ($restSuccess) {
-        for ($i = 1; $i -le $portCount; $i++) {
+        for ($i = 1; $i -le $outCount; $i++) {
             $label = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination${i}_Line_1"
             if (-not $label -or $label -eq "") { $label = "Dest $i" }
             $global:allLabels.Add([PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO REST API"
+                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From $($global:routerModel)"
             }) | Out-Null
-            $progressBar.Value = $portCount + $i
-            $progressLabel.Text = "Dest $i/$portCount..."
+            $progressBar.Value = $inCount + $i
+            $progressLabel.Text = "Dest $i/$outCount..."
             $form.Refresh()
         }
     }
@@ -695,7 +748,7 @@ $btnDownload.Add_Click({
             # Clear initial prompt
             while ($stream.DataAvailable) { $reader.ReadLine() | Out-Null }
 
-            for ($i = 1; $i -le $portCount; $i++) {
+            for ($i = 1; $i -le $inCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL INPUT $i ?"); $writer.Flush()
                     Start-Sleep -Milliseconds 150
@@ -706,10 +759,10 @@ $btnDownload.Add_Click({
                     Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
                 }) | Out-Null
                 $progressBar.Value = $i
-                $progressLabel.Text = "Telnet: Input $i/$portCount..."
+                $progressLabel.Text = "Telnet: Input $i/$inCount..."
                 $form.Refresh()
             }
-            for ($i = 1; $i -le $portCount; $i++) {
+            for ($i = 1; $i -le $outCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL OUTPUT $i ?"); $writer.Flush()
                     Start-Sleep -Milliseconds 150
@@ -719,20 +772,20 @@ $btnDownload.Add_Click({
                 $global:allLabels.Add([PSCustomObject]@{
                     Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
                 }) | Out-Null
-                $progressBar.Value = $portCount + $i
-                $progressLabel.Text = "Telnet: Output $i/$portCount..."
+                $progressBar.Value = $inCount + $i
+                $progressLabel.Text = "Telnet: Output $i/$outCount..."
                 $form.Refresh()
             }
             $writer.Close(); $reader.Close(); $tcp.Close()
         } catch {
-            Create-DefaultLabels -PortCount $portCount
+            Create-DefaultLabels -InputCount $inCount -OutputCount $outCount
         }
     }
 
-    if ($global:allLabels.Count -eq 0) { Create-DefaultLabels -PortCount $portCount }
+    if ($global:allLabels.Count -eq 0) { Create-DefaultLabels -InputCount $inCount -OutputCount $outCount }
 
     $progressBar.Value = $progressBar.Maximum
-    $progressLabel.Text = "Downloaded $($global:allLabels.Count) labels from $($global:routerName)"
+    $progressLabel.Text = "Downloaded $($global:allLabels.Count) labels from $($global:routerModel) `"$($global:routerName)`""
 
     # Auto-save to Documents folder with router name
     try {
@@ -1061,6 +1114,129 @@ $btnAutoNumber.Add_Click({
     $anForm.Controls.Add($btnApply)
     $anForm.Controls.Add($btnCancelAN)
     $anForm.ShowDialog() | Out-Null
+})
+
+# ─── Create Template ─────────────────────────────────────────────────────────
+
+$btnTemplate.Add_Click({
+    Sync-GridToData
+
+    # Determine port counts (from connected router or ask user)
+    $inCount = $global:routerInputCount
+    $outCount = $global:routerOutputCount
+    $modelName = $global:routerModel
+
+    if (-not $global:kumoConnected) {
+        # Not connected - ask user to pick router model
+        $pickForm = New-Object System.Windows.Forms.Form
+        $pickForm.Text = "Select Router Model"
+        $pickForm.Size = New-Object System.Drawing.Size(320, 200)
+        $pickForm.StartPosition = "CenterParent"
+        $pickForm.BackColor = $clrPanel
+        $pickForm.ForeColor = $clrText
+        $pickForm.FormBorderStyle = "FixedDialog"
+        $pickForm.MaximizeBox = $false
+        $pickForm.MinimizeBox = $false
+
+        $pickForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
+            Text="No router connected. Select your model:"; Location="20,15"; Size="260,20"; ForeColor=$clrText
+        }))
+
+        $modelCombo = New-Object System.Windows.Forms.ComboBox -Property @{
+            Location="20,45"; Size="260,28"; BackColor=$clrField; ForeColor=$clrText; DropDownStyle="DropDownList"
+        }
+        $modelCombo.Items.AddRange(@("KUMO 1604 (16 in / 4 out)", "KUMO 1616 (16 in / 16 out)", "KUMO 3232 (32 in / 32 out)", "KUMO 6464 (64 in / 64 out)"))
+        $modelCombo.SelectedIndex = 2  # Default to 3232
+        $pickForm.Controls.Add($modelCombo)
+
+        $btnPickOK = New-Object System.Windows.Forms.Button -Property @{
+            Text="OK"; Location="130,90"; Size="70,28"; BackColor=$clrAccent; ForeColor=$clrText; FlatStyle="Flat"; DialogResult="OK"
+        }
+        $btnPickOK.FlatAppearance.BorderSize = 0
+        $btnPickCancel = New-Object System.Windows.Forms.Button -Property @{
+            Text="Cancel"; Location="210,90"; Size="70,28"; BackColor=$clrField; ForeColor=$clrText; FlatStyle="Flat"; DialogResult="Cancel"
+        }
+        $btnPickCancel.FlatAppearance.BorderColor = $clrBorder
+        $pickForm.Controls.Add($btnPickOK)
+        $pickForm.Controls.Add($btnPickCancel)
+
+        if ($pickForm.ShowDialog() -ne "OK") { return }
+
+        switch ($modelCombo.SelectedIndex) {
+            0 { $inCount = 16; $outCount = 4;  $modelName = "KUMO 1604" }
+            1 { $inCount = 16; $outCount = 16; $modelName = "KUMO 1616" }
+            2 { $inCount = 32; $outCount = 32; $modelName = "KUMO 3232" }
+            3 { $inCount = 64; $outCount = 64; $modelName = "KUMO 6464" }
+        }
+    }
+
+    # Build template data
+    $templateData = @()
+    $hasLabels = ($global:allLabels.Count -gt 0)
+
+    for ($i = 1; $i -le $inCount; $i++) {
+        $currentLabel = "Input $i"
+        if ($hasLabels) {
+            $existing = $global:allLabels | Where-Object { $_.Port -eq $i -and $_.Type -eq "INPUT" } | Select-Object -First 1
+            if ($existing -and $existing.Current_Label) { $currentLabel = $existing.Current_Label }
+        }
+        $templateData += [PSCustomObject]@{
+            Port = $i
+            Type = "INPUT"
+            Current_Label = $currentLabel
+            New_Label = ""
+            Notes = "Enter your new label name here"
+        }
+    }
+    for ($i = 1; $i -le $outCount; $i++) {
+        $currentLabel = "Output $i"
+        if ($hasLabels) {
+            $existing = $global:allLabels | Where-Object { $_.Port -eq $i -and $_.Type -eq "OUTPUT" } | Select-Object -First 1
+            if ($existing -and $existing.Current_Label) { $currentLabel = $existing.Current_Label }
+        }
+        $templateData += [PSCustomObject]@{
+            Port = $i
+            Type = "OUTPUT"
+            Current_Label = $currentLabel
+            New_Label = ""
+            Notes = "Enter your new label name here"
+        }
+    }
+
+    # Save template file
+    $docsPath = Get-DocumentsPath
+    $safeName = if ($global:routerName -and $global:routerName -ne "") {
+        $global:routerName -replace '[^\w\-]', '_'
+    } else { $modelName -replace ' ', '_' }
+    $templateFileName = "${safeName}_Template_$(Get-Date -Format 'yyyyMMdd_HHmm')"
+
+    # Try Excel first, fall back to CSV
+    $savedPath = $null
+    $hasExcel = $false
+    try { $hasExcel = [bool](Get-Module -ListAvailable -Name ImportExcel) } catch {}
+
+    if ($hasExcel) {
+        try {
+            Import-Module ImportExcel
+            $savedPath = Join-Path $docsPath "$templateFileName.xlsx"
+            $templateData | Export-Excel -Path $savedPath -WorksheetName "KUMO_Labels" -AutoSize -TableStyle Medium6 -FreezeTopRow
+        } catch { $savedPath = $null }
+    }
+
+    if (-not $savedPath) {
+        $savedPath = Join-Path $docsPath "$templateFileName.csv"
+        $templateData | Export-Csv -Path $savedPath -NoTypeInformation
+    }
+
+    $progressLabel.Text = "Template saved: $([System.IO.Path]::GetFileName($savedPath))"
+
+    # Open the file so user can edit it
+    try { Start-Process $savedPath } catch { }
+
+    [System.Windows.Forms.MessageBox]::Show(
+        "Template created for $modelName ($inCount inputs / $outCount outputs)`n`nFile: $savedPath`n`nInstructions:`n1. Fill in the 'New_Label' column with your desired names`n2. Save the file`n3. Use 'Open File' in this app to load it back`n4. Click 'Upload Changes to Router' to apply",
+        "Template Created", "OK", "Information"
+    )
 })
 
 # ─── Clear All New Labels ────────────────────────────────────────────────────

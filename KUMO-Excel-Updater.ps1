@@ -1,11 +1,13 @@
 # KUMO Excel Label Updater - Command Line Version
 # Simple script for bulk updating KUMO labels from Excel
+# Auto-detects KUMO model (1604/1616/3232/6464) and handles asymmetric port counts
 #
 # Usage Examples:
 # Download current labels: .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "current_labels.xlsx"
-# Create template:        .\KUMO-Excel-Updater.ps1 -CreateTemplate
-# Update from Excel:      .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
-# Test only:              .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
+# Create template (manual): .\KUMO-Excel-Updater.ps1 -CreateTemplate
+# Create template (auto):   .\KUMO-Excel-Updater.ps1 -CreateTemplate -KumoIP "192.168.1.100"
+# Update from Excel:        .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
+# Test only:                .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
 
 param(
     [Parameter(Mandatory=$false)]
@@ -107,26 +109,16 @@ function Get-KumoCurrentLabels {
         $routerName = "KUMO"
     }
 
-    # Detect port count
-    $portCount = 32
-    try {
-        $test33Uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source33_Line_1"
-        $test33 = Invoke-SecureWebRequest -Uri $test33Uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
-        $test33Json = $test33.Content | ConvertFrom-Json
-        if ($test33Json.value -ne $null) { $portCount = 64 }
-    } catch { }
-    if ($portCount -eq 32) {
-        try {
-            $test17Uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source17_Line_1"
-            $test17 = Invoke-SecureWebRequest -Uri $test17Uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
-            $test17Json = $test17.Content | ConvertFrom-Json
-            if ($test17Json.value -eq $null) { $portCount = 16 }
-        } catch { $portCount = 16 }
-    }
-    Write-Host "  Detected ${portCount}x${portCount} router" -ForegroundColor Green
+    # Detect router model using shared function
+    $modelInfo = Get-KumoRouterModel -IP $IP
+    $inputCount = $modelInfo.InputCount
+    $outputCount = $modelInfo.OutputCount
+    $modelName = $modelInfo.Model
+    $fwInfo = if ($modelInfo.Firmware) { " | FW $($modelInfo.Firmware)" } else { "" }
+    Write-Host "  Detected: $modelName `($inputCount in / $outputCount out`)$fwInfo" -ForegroundColor Green
 
     # Download source names (inputs) via REST API
-    for ($i = 1; $i -le $portCount; $i++) {
+    for ($i = 1; $i -le $inputCount; $i++) {
         $label = "Source $i"
         try {
             $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_1"
@@ -149,7 +141,7 @@ function Get-KumoCurrentLabels {
 
     # Download destination names (outputs) via REST API
     if ($labelsRetrieved) {
-        for ($i = 1; $i -le $portCount; $i++) {
+        for ($i = 1; $i -le $outputCount; $i++) {
             $label = "Dest $i"
             try {
                 $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Destination${i}_Line_1"
@@ -185,7 +177,7 @@ function Get-KumoCurrentLabels {
             }
             
             # Query input labels via Telnet
-            for ($i = 1; $i -le $portCount; $i++) {
+            for ($i = 1; $i -le $inputCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL INPUT $i ?")
                     $writer.Flush()
@@ -233,7 +225,7 @@ function Get-KumoCurrentLabels {
             }
             
             # Query output labels via Telnet
-            for ($i = 1; $i -le $portCount; $i++) {
+            for ($i = 1; $i -le $outputCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL OUTPUT $i ?")
                     $writer.Flush()
@@ -295,7 +287,7 @@ function Get-KumoCurrentLabels {
     if ($allLabels.Count -eq 0) {
         Write-Warning "All download methods failed. Creating default template..."
 
-        for ($i = 1; $i -le $portCount; $i++) {
+        for ($i = 1; $i -le $inputCount; $i++) {
             $allLabels += [PSCustomObject]@{
                 Port = $i
                 Type = "INPUT"
@@ -305,7 +297,7 @@ function Get-KumoCurrentLabels {
             }
         }
 
-        for ($i = 1; $i -le $portCount; $i++) {
+        for ($i = 1; $i -le $outputCount; $i++) {
             $allLabels += [PSCustomObject]@{
                 Port = $i
                 Type = "OUTPUT"
@@ -356,58 +348,201 @@ function Get-KumoCurrentLabels {
     }
 }
 
+# Function to detect KUMO router model from port probing
+function Get-KumoRouterModel {
+    param([string]$IP)
+
+    $inputCount = 32
+    $outputCount = 32
+    $modelName = "KUMO 3232"
+    $firmware = ""
+
+    # Get firmware version
+    try {
+        $fwUri = "http://$IP/config?action=get&configid=0&paramid=eParamID_SWVersion"
+        $fwResp = Invoke-SecureWebRequest -Uri $fwUri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+        $fwJson = $fwResp.Content | ConvertFrom-Json
+        if ($fwJson.value) { $firmware = $fwJson.value }
+    } catch { }
+
+    # Probe Source33 for 64-port router
+    try {
+        $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source33_Line_1"
+        $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
+        $json = $resp.Content | ConvertFrom-Json
+        if ($json.value -ne $null -and $json.value -ne "") {
+            $inputCount = 64; $outputCount = 64
+        }
+    } catch { }
+
+    if ($inputCount -lt 64) {
+        # Probe Source17 for 32-port vs 16-port
+        try {
+            $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source17_Line_1"
+            $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
+            $json = $resp.Content | ConvertFrom-Json
+            if ($json.value -eq $null -or $json.value -eq "") {
+                $inputCount = 16; $outputCount = 16
+            }
+        } catch {
+            $inputCount = 16; $outputCount = 16
+        }
+    }
+
+    # For 16-input routers, differentiate KUMO 1604 (4 outputs) vs KUMO 1616 (16 outputs)
+    if ($inputCount -eq 16) {
+        try {
+            $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Destination5_Line_1"
+            $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
+            $json = $resp.Content | ConvertFrom-Json
+            if ($json.value -eq $null -or $json.value -eq "") {
+                $outputCount = 4  # Only 4 outputs = KUMO 1604
+            }
+        } catch {
+            $outputCount = 4  # If probe fails assume smaller model
+        }
+    }
+
+    # Determine model name
+    $modelName = switch ("$inputCount`x$outputCount") {
+        "16x4"  { "KUMO 1604" }
+        "16x16" { "KUMO 1616" }
+        "32x32" { "KUMO 3232" }
+        "64x64" { "KUMO 6464" }
+        default { "KUMO ${inputCount}x${outputCount}" }
+    }
+
+    return @{
+        Model = $modelName
+        InputCount = $inputCount
+        OutputCount = $outputCount
+        Firmware = $firmware
+    }
+}
+
 # Function to create Excel template
 function New-KumoLabelTemplate {
-    param([string]$FilePath)
-    
-    Write-Host "Creating KUMO Label Template..." -ForegroundColor Green
-    
+    param(
+        [string]$FilePath,
+        [string]$KumoIP = ""
+    )
+
+    $inputCount = 32
+    $outputCount = 32
+    $modelName = ""
+    $currentLabels = @{}  # Hash of "TYPE_PORT" -> label
+
+    # If IP provided, auto-detect router model and download current labels
+    if ($KumoIP -and $KumoIP -ne "") {
+        Write-Host "Connecting to KUMO at $KumoIP to auto-detect model..." -ForegroundColor Cyan
+
+        # Detect model
+        $modelInfo = Get-KumoRouterModel -IP $KumoIP
+        $inputCount = $modelInfo.InputCount
+        $outputCount = $modelInfo.OutputCount
+        $modelName = $modelInfo.Model
+        $fwVersion = $modelInfo.Firmware
+
+        Write-Host "  Detected: $modelName `($inputCount in / $outputCount out`)" -ForegroundColor Green
+        if ($fwVersion) { Write-Host "  Firmware: $fwVersion" -ForegroundColor Green }
+
+        # Download current labels
+        Write-Host "Downloading current labels..." -ForegroundColor Cyan
+        for ($i = 1; $i -le $inputCount; $i++) {
+            try {
+                $uri = "http://$KumoIP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_1"
+                $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                $json = $resp.Content | ConvertFrom-Json
+                $lbl = if ($json.value_name -and $json.value_name -ne "") { $json.value_name }
+                       elseif ($json.value -and $json.value -ne "") { $json.value }
+                       else { $null }
+                if ($lbl) { $currentLabels["INPUT_$i"] = $lbl }
+            } catch { }
+        }
+        for ($i = 1; $i -le $outputCount; $i++) {
+            try {
+                $uri = "http://$KumoIP/config?action=get&configid=0&paramid=eParamID_XPT_Destination${i}_Line_1"
+                $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                $json = $resp.Content | ConvertFrom-Json
+                $lbl = if ($json.value_name -and $json.value_name -ne "") { $json.value_name }
+                       elseif ($json.value -and $json.value -ne "") { $json.value }
+                       else { $null }
+                if ($lbl) { $currentLabels["OUTPUT_$i"] = $lbl }
+            } catch { }
+        }
+        Write-Host "  Downloaded $($currentLabels.Count) labels from router" -ForegroundColor Green
+
+    } else {
+        # No IP provided - ask user to choose router model
+        Write-Host ""
+        Write-Host "No KUMO IP provided. Choose your router model:" -ForegroundColor Yellow
+        Write-Host "  1. KUMO 1604  `(16 inputs / 4 outputs`)" -ForegroundColor White
+        Write-Host "  2. KUMO 1616  `(16 inputs / 16 outputs`)" -ForegroundColor White
+        Write-Host "  3. KUMO 3232  `(32 inputs / 32 outputs`)" -ForegroundColor White
+        Write-Host "  4. KUMO 6464  `(64 inputs / 64 outputs`)" -ForegroundColor White
+        $choice = Read-Host "Enter choice `(1-4, default 3`)"
+        switch ($choice) {
+            "1" { $inputCount = 16; $outputCount = 4;  $modelName = "KUMO 1604" }
+            "2" { $inputCount = 16; $outputCount = 16; $modelName = "KUMO 1616" }
+            "4" { $inputCount = 64; $outputCount = 64; $modelName = "KUMO 6464" }
+            default { $inputCount = 32; $outputCount = 32; $modelName = "KUMO 3232" }
+        }
+        Write-Host "  Creating template for: $modelName `($inputCount in / $outputCount out`)" -ForegroundColor Green
+    }
+
+    Write-Host "Creating $modelName Label Template..." -ForegroundColor Green
+
     # Template data structure
     $templateData = @()
-    
-    # Add inputs (1-32)
-    for ($i = 1; $i -le 32; $i++) {
+
+    # Add inputs
+    for ($i = 1; $i -le $inputCount; $i++) {
+        $curLabel = if ($currentLabels.ContainsKey("INPUT_$i")) { $currentLabels["INPUT_$i"] } else { "Input $i" }
         $templateData += [PSCustomObject]@{
             Port = $i
             Type = "INPUT"
-            Current_Label = "Input $i"
-            New_Label = "Camera $i"
-            Notes = "Update this column with your desired label"
+            Current_Label = $curLabel
+            New_Label = ""
+            Notes = "Enter your desired label"
         }
     }
-    
-    # Add outputs (1-32)
-    for ($i = 1; $i -le 32; $i++) {
+
+    # Add outputs
+    for ($i = 1; $i -le $outputCount; $i++) {
+        $curLabel = if ($currentLabels.ContainsKey("OUTPUT_$i")) { $currentLabels["OUTPUT_$i"] } else { "Output $i" }
         $templateData += [PSCustomObject]@{
             Port = $i
             Type = "OUTPUT"
-            Current_Label = "Output $i"
-            New_Label = "Monitor $i"
-            Notes = "Update this column with your desired label"
+            Current_Label = $curLabel
+            New_Label = ""
+            Notes = "Enter your desired label"
         }
     }
-    
+
     # Export to Excel (requires ImportExcel module)
     try {
         if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
             Write-Warning "ImportExcel module not found. Installing..."
             Install-Module ImportExcel -Scope CurrentUser -Force
         }
-        
+
         Import-Module ImportExcel
-        
+
         $templateData | Export-Excel -Path $FilePath -WorksheetName $WorksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
-        
-        Write-Host "Template created: $FilePath" -ForegroundColor Green
-        Write-Host "Instructions:" -ForegroundColor Yellow
+
+        Write-Host "`nTemplate created: $FilePath" -ForegroundColor Green
+        Write-Host "  Model: $modelName `($inputCount inputs / $outputCount outputs`)" -ForegroundColor White
+        Write-Host "  Total rows: $($templateData.Count)" -ForegroundColor White
+        Write-Host "`nInstructions:" -ForegroundColor Yellow
         Write-Host "1. Open the Excel file" -ForegroundColor White
-        Write-Host "2. Update the 'New_Label' column with your desired names" -ForegroundColor White
-        Write-Host "3. Save the file" -ForegroundColor White
-        Write-Host "4. Run this script with -KumoIP and -ExcelFile parameters" -ForegroundColor White
-        
+        Write-Host "2. Fill in the 'New_Label' column with your desired names" -ForegroundColor White
+        Write-Host "3. Leave New_Label blank for ports you don't want to change" -ForegroundColor White
+        Write-Host "4. Save the file" -ForegroundColor White
+        Write-Host "5. Upload: .\KUMO-Excel-Updater.ps1 -KumoIP '<IP>' -ExcelFile '$FilePath'" -ForegroundColor White
+
     } catch {
-        Write-Error "Failed to create template: $($_.Exception.Message)"
-        
+        Write-Error "Failed to create Excel template: $($_.Exception.Message)"
+
         # Fallback: Create CSV template
         $csvPath = $FilePath -replace "\.xlsx$", ".csv"
         $templateData | Export-Csv -Path $csvPath -NoTypeInformation
@@ -628,8 +763,26 @@ if ($DownloadLabels) {
 
 # Handle template creation
 if ($CreateTemplate) {
-    $templatePath = Read-Host "Enter template file path (e.g., C:\temp\KUMO_Template.xlsx)"
-    New-KumoLabelTemplate -FilePath $templatePath
+    # Default output path
+    $docsDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "KUMO_Labels"
+    if (-not (Test-Path $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
+    $defaultPath = Join-Path $docsDir "KUMO_Template_$(Get-Date -Format 'yyyyMMdd_HHmm').xlsx"
+
+    $templatePath = Read-Host "Enter template file path (default: $defaultPath)"
+    if (-not $templatePath -or $templatePath.Trim() -eq "") { $templatePath = $defaultPath }
+
+    # Optionally connect to router for auto-detect
+    $templateIP = ""
+    if ($KumoIP) {
+        $templateIP = $KumoIP
+    } else {
+        $useRouter = Read-Host "Connect to a KUMO router to auto-detect model and download current labels? (y/N)"
+        if ($useRouter -eq 'y' -or $useRouter -eq 'Y') {
+            $templateIP = Read-Host "Enter KUMO IP address"
+        }
+    }
+
+    New-KumoLabelTemplate -FilePath $templatePath -KumoIP $templateIP
     exit
 }
 
