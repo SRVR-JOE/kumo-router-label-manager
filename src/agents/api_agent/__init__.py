@@ -64,7 +64,7 @@ class APIAgent:
             async with RestClient(self.router_ip) as rest:
                 if await rest.test_connection():
                     logger.info(f"Connection successful via REST to {self.router_ip}")
-                    self._emit_connection_event(connected=True)
+                    await self._emit_connection_event(connected=True)
                     return True
 
             # Try Telnet as fallback
@@ -72,7 +72,7 @@ class APIAgent:
                 async with TelnetClient(self.router_ip) as telnet:
                     if telnet.is_connected():
                         logger.info(f"Connection successful via Telnet to {self.router_ip}")
-                        self._emit_connection_event(connected=True)
+                        await self._emit_connection_event(connected=True)
                         return True
             except Exception as e:
                 logger.debug(f"Telnet connection test failed: {e}")
@@ -80,13 +80,13 @@ class APIAgent:
             # All methods failed
             error_msg = f"Cannot connect to router at {self.router_ip}"
             logger.warning(error_msg)
-            self._emit_connection_event(connected=False, error_message=error_msg)
+            await self._emit_connection_event(connected=False, error_message=error_msg)
             return False
 
         except Exception as e:
             error_msg = f"Connection test failed: {e}"
             logger.error(error_msg)
-            self._emit_connection_event(connected=False, error_message=error_msg)
+            await self._emit_connection_event(connected=False, error_message=error_msg)
             return False
 
     async def download_labels(self) -> List[Label]:
@@ -214,7 +214,7 @@ class APIAgent:
 
                     if success_count > 0:
                         logger.info(f"Upload via REST: {success_count} succeeded, {error_count} failed")
-                        self._emit_upload_success_event(labels_to_upload, success_count, error_count)
+                        await self._emit_upload_success_event(labels_to_upload, success_count, error_count)
                         return success_count, error_count, error_messages
 
             except Exception as e:
@@ -229,7 +229,7 @@ class APIAgent:
                     )
 
                     logger.info(f"Upload via Telnet: {success_count} succeeded, {error_count} failed")
-                    self._emit_upload_success_event(labels_to_upload, success_count, error_count)
+                    await self._emit_upload_success_event(labels_to_upload, success_count, error_count)
                     return success_count, error_count, error_messages
 
             except Exception as e:
@@ -347,7 +347,7 @@ class APIAgent:
         except Exception as e:
             logger.error(f"Error emitting labels event: {e}")
 
-    def _emit_upload_success_event(
+    async def _emit_upload_success_event(
         self, labels: List[Label], success_count: int, error_count: int
     ) -> None:
         """Emit upload success event.
@@ -357,7 +357,7 @@ class APIAgent:
             success_count: Number of successful uploads
             error_count: Number of failed uploads
         """
-        self._emit_labels_event(
+        await self._emit_labels_event(
             labels=labels,
             source="router",
             operation="upload",
@@ -367,6 +367,18 @@ class APIAgent:
                 "total": len(labels),
             },
         )
+
+    async def connect(self) -> bool:
+        """Connect to the router. Tests connection and stores state.
+
+        Returns:
+            True if connection successful, False otherwise
+        """
+        return await self.test_connection()
+
+    async def disconnect(self) -> None:
+        """Disconnect from the router. Alias for close()."""
+        await self.close()
 
     async def close(self) -> None:
         """Close all connections and cleanup resources."""

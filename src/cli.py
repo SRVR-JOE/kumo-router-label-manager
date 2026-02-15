@@ -60,7 +60,7 @@ class KumoManager:
 
             # Download labels
             logger.info("Downloading labels...")
-            labels = await self.api_agent.download_all_labels()
+            labels = await self.api_agent.download_labels()
 
             logger.info(f"Downloaded {len(labels)} labels")
 

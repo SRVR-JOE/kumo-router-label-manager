@@ -242,20 +242,27 @@ class FileHandlerAgent:
                 f"Supported: .xlsx, .csv, .json"
             )
 
-    async def _emit_event(self, event_name: str, data: dict) -> None:
-        """Emit event to event bus if available."""
+    def _emit_event(self, event_name: str, data: dict) -> None:
+        """Emit event to event bus if available.
+
+        Uses fire-and-forget for async event buses, or direct call for sync ones.
+        """
         if self.event_bus:
             try:
-                # Create a FileEvent with the data
                 event = FileEvent(
                     file_path=data.get("file_path", ""),
                     operation=event_name,
                     data=data
                 )
-                # Publish the event using the correct async method
-                await self.event_bus.publish(event)
+                if hasattr(self.event_bus, "publish"):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self.event_bus.publish(event))
+                    except RuntimeError:
+                        # No running event loop - skip async publish
+                        pass
             except Exception:
-                # Silently fail if event bus errors
                 pass
 
     @property
