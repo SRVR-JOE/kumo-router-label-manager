@@ -105,15 +105,11 @@ class APIAgent:
         protocol_used = Protocol.DEFAULT
 
         try:
-            # Method 1: Try REST bulk endpoints
-            logger.debug("Attempting REST bulk download")
+            # Method 1: Try REST API (uses real AJA /config?action=get&paramid= endpoints)
+            logger.debug("Attempting REST download via AJA KUMO API")
             async with RestClient(self.router_ip) as rest:
-                protocol_used, labels_dict = await rest.download_labels_bulk()
-
-                # Method 2: Try REST individual endpoints if bulk failed
-                if labels_dict is None:
-                    logger.debug("Bulk download failed, trying individual endpoints")
-                    protocol_used, labels_dict = await rest.download_labels_individual()
+                await rest.detect_port_count()
+                protocol_used, labels_dict = await rest.download_labels()
 
             # Method 3: Try Telnet if REST failed
             if labels_dict is None:

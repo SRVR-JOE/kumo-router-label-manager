@@ -143,161 +143,76 @@ function Get-KumoCurrentLabels {
     $allLabels = @()
     $labelsRetrieved = $false
     
-    # Method 1: Try REST API bulk endpoints
-    Write-Host "Attempting REST API bulk download..." -ForegroundColor Cyan
-    $apiEndpoints = @(
-        "http://$IP/api/config",
-        "http://$IP/api/status", 
-        "http://$IP/cgi-bin/config",
-        "http://$IP/config.json",
-        "http://$IP/status.json",
-        "http://$IP/api/router/config"
-    )
-    
-    foreach ($endpoint in $apiEndpoints) {
-        try {
-            Write-Host "  Trying: $endpoint" -ForegroundColor Gray
-            $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 10 -ErrorAction Stop -ForceHTTP:$ForceHTTP
-            
-            # Parse different response formats
-            if ($response.inputs -or $response.outputs) {
-                Write-Host "  ✓ Found bulk config data" -ForegroundColor Green
-                
-                # Process inputs
-                if ($response.inputs) {
-                    for ($i = 0; $i -lt [Math]::Min(32, $response.inputs.Count); $i++) {
-                        $label = if ($response.inputs[$i].label) { 
-                            $response.inputs[$i].label 
-                        } elseif ($response.inputs[$i].name) { 
-                            $response.inputs[$i].name 
-                        } else { 
-                            "Input $($i+1)" 
-                        }
-                        
-                        $allLabels += [PSCustomObject]@{
-                            Port = $i + 1
-                            Type = "INPUT"
-                            Current_Label = $label
-                            New_Label = ""
-                            Notes = "Retrieved from KUMO API"
-                        }
-                    }
-                }
-                
-                # Process outputs  
-                if ($response.outputs) {
-                    for ($i = 0; $i -lt [Math]::Min(32, $response.outputs.Count); $i++) {
-                        $label = if ($response.outputs[$i].label) { 
-                            $response.outputs[$i].label 
-                        } elseif ($response.outputs[$i].name) { 
-                            $response.outputs[$i].name 
-                        } else { 
-                            "Output $($i+1)" 
-                        }
-                        
-                        $allLabels += [PSCustomObject]@{
-                            Port = $i + 1
-                            Type = "OUTPUT"
-                            Current_Label = $label
-                            New_Label = ""
-                            Notes = "Retrieved from KUMO API"
-                        }
-                    }
-                }
-                
-                $labelsRetrieved = $true
-                break
-            }
-            
-        } catch {
-            Write-Host "    Failed: $($_.Exception.Message)" -ForegroundColor DarkGray
-            continue
-        }
+    # Method 1: AJA KUMO REST API (correct /config?action=get&paramid= endpoints)
+    Write-Host "Querying KUMO REST API..." -ForegroundColor Cyan
+
+    # Get router name
+    try {
+        $nameUri = "http://$IP/config?action=get&configid=0&paramid=eParamID_SysName"
+        $nameResp = Invoke-SecureWebRequest -Uri $nameUri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+        $nameJson = $nameResp.Content | ConvertFrom-Json
+        $routerName = if ($nameJson.value) { $nameJson.value } else { "KUMO" }
+        Write-Host "  Router name: $routerName" -ForegroundColor Green
+    } catch {
+        $routerName = "KUMO"
     }
-    
-    # Method 2: Try individual port queries if bulk failed
-    if (-not $labelsRetrieved) {
-        Write-Host "Attempting individual port queries..." -ForegroundColor Cyan
-        
-        # Query inputs individually
-        for ($i = 1; $i -le 32; $i++) {
-            $label = "Input $i"  # Default
-            
-            $endpoints = @(
-                "http://$IP/api/inputs/$i",
-                "http://$IP/api/input/$i/label",
-                "http://$IP/cgi-bin/getlabel?type=input&port=$i",
-                "http://$IP/api/router/input/$i"
-            )
-            
-            foreach ($endpoint in $endpoints) {
-                try {
-                    $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 3 -ForceHTTP:$ForceHTTP
-                    if ($response.label -and $response.label.Trim()) {
-                        $label = $response.label.Trim()
-                        break
-                    } elseif ($response.name -and $response.name.Trim()) {
-                        $label = $response.name.Trim()
-                        break
-                    } elseif ($response -is [string] -and $response.Trim()) {
-                        $label = $response.Trim()
-                        break
-                    }
-                } catch {
-                    continue
-                }
-            }
-            
-            $allLabels += [PSCustomObject]@{
-                Port = $i
-                Type = "INPUT"
-                Current_Label = $label
-                New_Label = ""
-                Notes = "Retrieved individually"
-            }
-            
-            Write-Host "  Input $i`: $label" -ForegroundColor White
+
+    # Detect port count
+    $portCount = 32
+    try {
+        $test33Uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source33_Line_1"
+        $test33 = Invoke-SecureWebRequest -Uri $test33Uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
+        $test33Json = $test33.Content | ConvertFrom-Json
+        if ($test33Json.value -ne $null) { $portCount = 64 }
+    } catch { }
+    if ($portCount -eq 32) {
+        try {
+            $test17Uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source17_Line_1"
+            $test17 = Invoke-SecureWebRequest -Uri $test17Uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
+            $test17Json = $test17.Content | ConvertFrom-Json
+            if ($test17Json.value -eq $null) { $portCount = 16 }
+        } catch { $portCount = 16 }
+    }
+    Write-Host "  Detected ${portCount}x${portCount} router" -ForegroundColor Green
+
+    # Download source names (inputs) via REST API
+    for ($i = 1; $i -le $portCount; $i++) {
+        $label = "Source $i"
+        try {
+            $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_1"
+            $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+            $json = $resp.Content | ConvertFrom-Json
+            if ($json.value_name -and $json.value_name -ne "") { $label = $json.value_name }
+            elseif ($json.value -and $json.value -ne "") { $label = $json.value }
             $labelsRetrieved = $true
+        } catch {
+            if ($i -eq 1) { Write-Host "    REST API failed on first port, will try Telnet..." -ForegroundColor Yellow }
         }
-        
-        # Query outputs individually
-        for ($i = 1; $i -le 32; $i++) {
-            $label = "Output $i"  # Default
-            
-            $endpoints = @(
-                "http://$IP/api/outputs/$i",
-                "http://$IP/api/output/$i/label",
-                "http://$IP/cgi-bin/getlabel?type=output&port=$i",
-                "http://$IP/api/router/output/$i"
-            )
-            
-            foreach ($endpoint in $endpoints) {
-                try {
-                    $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 3 -ForceHTTP:$ForceHTTP
-                    if ($response.label -and $response.label.Trim()) {
-                        $label = $response.label.Trim()
-                        break
-                    } elseif ($response.name -and $response.name.Trim()) {
-                        $label = $response.name.Trim()
-                        break
-                    } elseif ($response -is [string] -and $response.Trim()) {
-                        $label = $response.Trim()
-                        break
-                    }
-                } catch {
-                    continue
-                }
-            }
-            
+
+        $allLabels += [PSCustomObject]@{
+            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From $routerName REST API"
+        }
+        Write-Host "  Source $i`: $label" -ForegroundColor White
+
+        if (-not $labelsRetrieved -and $i -eq 1) { break }
+    }
+
+    # Download destination names (outputs) via REST API
+    if ($labelsRetrieved) {
+        for ($i = 1; $i -le $portCount; $i++) {
+            $label = "Dest $i"
+            try {
+                $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Destination${i}_Line_1"
+                $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                $json = $resp.Content | ConvertFrom-Json
+                if ($json.value_name -and $json.value_name -ne "") { $label = $json.value_name }
+                elseif ($json.value -and $json.value -ne "") { $label = $json.value }
+            } catch { }
+
             $allLabels += [PSCustomObject]@{
-                Port = $i
-                Type = "OUTPUT"
-                Current_Label = $label
-                New_Label = ""
-                Notes = "Retrieved individually"
+                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From $routerName REST API"
             }
-            
-            Write-Host "  Output $i`: $label" -ForegroundColor White
+            Write-Host "  Dest $i`: $label" -ForegroundColor White
         }
     }
     
@@ -624,56 +539,41 @@ function Update-KumoLabelsREST {
         [string]$IP,
         [array]$LabelData
     )
-    
+
     Write-Host "Updating KUMO labels via REST API..." -ForegroundColor Yellow
-    
+    Write-Host "Using AJA KUMO /config?action=set endpoint" -ForegroundColor Gray
+
     $successCount = 0
     $errorCount = 0
-    
+
     foreach ($item in $LabelData) {
         try {
             Write-Host "Updating $($item.Type) $($item.Port): $($item.New_Label)" -ForegroundColor Cyan
-            
-            # Try different API endpoint patterns
-            $endpoints = @(
-                "http://$IP/api/$($item.Type.ToLower())s/$($item.Port)/label",
-                "http://$IP/cgi-bin/setlabel",
-                "http://$IP/config/label"
-            )
-            
-            $body = @{
-                type = $item.Type.ToLower()
-                port = [int]$item.Port
-                label = $item.New_Label.ToString()
-            } | ConvertTo-Json
-            
-            $success = $false
-            foreach ($endpoint in $endpoints) {
-                try {
-                    $response = Invoke-SecureRestMethod -Uri $endpoint -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -TimeoutSec 10 -ForceHTTP:$ForceHTTP
-                    $success = $true
-                    break
-                } catch {
-                    # Try next endpoint
-                    continue
-                }
+
+            # Build correct eParamID
+            $paramId = if ($item.Type.ToUpper() -eq "INPUT") {
+                "eParamID_XPT_Source$($item.Port)_Line_1"
+            } else {
+                "eParamID_XPT_Destination$($item.Port)_Line_1"
             }
-            
-            if ($success) {
+
+            $encoded = [System.Uri]::EscapeDataString($item.New_Label.ToString())
+            $uri = "http://$IP/config?action=set&configid=0&paramid=$paramId&value=$encoded"
+
+            try {
+                $response = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
                 $successCount++
                 Write-Host "  ✓ Success" -ForegroundColor Green
-            } else {
-                throw "All endpoints failed"
+            } catch {
+                throw "REST API set failed: $($_.Exception.Message)"
             }
-            
+
         } catch {
             $errorCount++
             Write-Host "  ✗ Failed: $($_.Exception.Message)" -ForegroundColor Red
         }
-        
-        Start-Sleep -Milliseconds 200  # Don't overwhelm the device
     }
-    
+
     Write-Host "`nUpdate Summary:" -ForegroundColor Yellow
     Write-Host "  Success: $successCount" -ForegroundColor Green
     Write-Host "  Errors: $errorCount" -ForegroundColor Red
@@ -745,7 +645,10 @@ if ($DownloadLabels) {
     }
     
     if (-not $DownloadPath) {
-        $DownloadPath = Read-Host "Enter output file path (e.g., C:\temp\KUMO_Downloaded_Labels.xlsx)"
+        $docsDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "KUMO_Labels"
+        if (-not (Test-Path $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
+        $DownloadPath = Join-Path $docsDir "KUMO_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
+        Write-Host "Saving to: $DownloadPath" -ForegroundColor Cyan
     }
     
     # Test connectivity
