@@ -4,7 +4,7 @@ File Handler Agent for managing CSV, Excel, and JSON files.
 Provides unified interface for loading and saving port data across multiple formats.
 """
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from datetime import datetime
 
 from .schema import FileData, PortData
@@ -48,7 +48,7 @@ class FileHandlerAgent:
 
     def load(
         self,
-        file_path: str | Path,
+        file_path: Union[str, Path],
         file_format: Optional[FileFormat] = None,
     ) -> FileData:
         """
@@ -111,7 +111,7 @@ class FileHandlerAgent:
 
     def save(
         self,
-        file_path: str | Path,
+        file_path: Union[str, Path],
         data: FileData,
         file_format: Optional[FileFormat] = None,
         **kwargs,
@@ -175,7 +175,7 @@ class FileHandlerAgent:
 
     def create_template(
         self,
-        file_path: str | Path,
+        file_path: Union[str, Path],
         file_format: Optional[FileFormat] = None,
     ) -> None:
         """

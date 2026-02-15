@@ -89,13 +89,13 @@ class EventBus:
                     len(self._subscribers[event_type])
                 )
 
-    def unsubscribe_all(self, queue: asyncio.Queue) -> None:
+    async def unsubscribe_all(self, queue: asyncio.Queue) -> None:
         """Unsubscribe from all event types.
 
         Args:
             queue: Queue to remove from all subscriptions
         """
-        with self._lock:
+        async with self._lock:
             # Remove from global subscribers
             if queue in self._global_subscribers:
                 self._global_subscribers.remove(queue)
@@ -129,7 +129,7 @@ class EventBus:
         )
 
         # Get subscribers for this event type
-        with self._lock:
+        async with self._lock:
             specific_subscribers = self._subscribers[event.event_type].copy()
             global_subscribers = self._global_subscribers.copy()
 
@@ -187,7 +187,7 @@ class EventBus:
                 exc_info=True
             )
 
-    def get_subscriber_count(self, event_type: EventType) -> int:
+    async def get_subscriber_count(self, event_type: EventType) -> int:
         """Get number of subscribers for a specific event type.
 
         Args:
@@ -196,21 +196,21 @@ class EventBus:
         Returns:
             Number of subscribers
         """
-        with self._lock:
+        async with self._lock:
             return len(self._subscribers[event_type])
 
-    def get_global_subscriber_count(self) -> int:
+    async def get_global_subscriber_count(self) -> int:
         """Get number of global subscribers.
 
         Returns:
             Number of global subscribers
         """
-        with self._lock:
+        async with self._lock:
             return len(self._global_subscribers)
 
-    def clear_all_subscribers(self) -> None:
+    async def clear_all_subscribers(self) -> None:
         """Clear all subscribers from the event bus."""
-        with self._lock:
+        async with self._lock:
             self._subscribers.clear()
             self._global_subscribers.clear()
             logger.info("All subscribers cleared from event bus")
@@ -223,7 +223,7 @@ class EventBus:
     async def stop(self) -> None:
         """Stop the event bus and clear all subscribers."""
         self._running = False
-        self.clear_all_subscribers()
+        await self.clear_all_subscribers()
         logger.info("EventBus stopped")
 
     def is_running(self) -> bool:

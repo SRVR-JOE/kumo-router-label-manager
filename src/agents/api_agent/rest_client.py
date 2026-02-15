@@ -31,11 +31,11 @@ class RestClientError(Exception):
     pass
 
 
-class ConnectionError(RestClientError):
+class RestConnectionError(RestClientError):
     pass
 
 
-class TimeoutError(RestClientError):
+class RestTimeoutError(RestClientError):
     pass
 
 
@@ -161,7 +161,16 @@ class RestClient:
                 label = ResponseParser.parse_param_response(result)
             labels["outputs"].append(label or DefaultLabelGenerator.generate_output_label(port))
 
-        if any(l != DefaultLabelGenerator.generate_input_label(i + 1) for i, l in enumerate(labels["inputs"])):
+        # Check if we got any real (non-default) labels for inputs OR outputs
+        has_real_inputs = any(
+            l != DefaultLabelGenerator.generate_input_label(i + 1)
+            for i, l in enumerate(labels["inputs"])
+        )
+        has_real_outputs = any(
+            l != DefaultLabelGenerator.generate_output_label(i + 1)
+            for i, l in enumerate(labels["outputs"])
+        )
+        if has_real_inputs or has_real_outputs:
             return Protocol.REST, labels
         else:
             logger.warning("REST download returned only default labels")

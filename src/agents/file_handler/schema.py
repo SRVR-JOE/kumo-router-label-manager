@@ -1,7 +1,7 @@
 """
 Pydantic models for file data validation.
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -48,28 +48,29 @@ class PortData(BaseModel):
 class FileData(BaseModel):
     """Model for complete file data with all ports."""
 
-    ports: list[PortData] = Field(default_factory=list, description="List of port data")
+    ports: List[PortData] = Field(default_factory=list, description="List of port data")
 
     @field_validator("ports")
     @classmethod
-    def validate_ports(cls, v: list[PortData]) -> list[PortData]:
+    def validate_ports(cls, v: List[PortData]) -> List[PortData]:
         """Validate port list constraints."""
-        if len(v) > 64:
-            raise ValueError(f"Cannot have more than 64 ports, got {len(v)}")
+        if len(v) > 128:
+            raise ValueError(f"Cannot have more than 128 ports (64 inputs + 64 outputs), got {len(v)}")
 
-        # Check for duplicate port numbers
-        port_numbers = [port.port for port in v]
-        if len(port_numbers) != len(set(port_numbers)):
-            duplicates = [p for p in port_numbers if port_numbers.count(p) > 1]
-            raise ValueError(f"Duplicate port numbers found: {set(duplicates)}")
+        # Check for duplicate (port, type) combinations
+        # Same port number is valid for INPUT and OUTPUT (e.g., Input 1 and Output 1)
+        port_keys = [(port.port, port.type) for port in v]
+        if len(port_keys) != len(set(port_keys)):
+            duplicates = [k for k in port_keys if port_keys.count(k) > 1]
+            raise ValueError(f"Duplicate port entries found: {set(duplicates)}")
 
         return v
 
-    def get_inputs(self) -> list[PortData]:
+    def get_inputs(self) -> List[PortData]:
         """Get all INPUT ports."""
         return [p for p in self.ports if p.type == "INPUT"]
 
-    def get_outputs(self) -> list[PortData]:
+    def get_outputs(self) -> List[PortData]:
         """Get all OUTPUT ports."""
         return [p for p in self.ports if p.type == "OUTPUT"]
 

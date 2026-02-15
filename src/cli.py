@@ -38,7 +38,7 @@ class KumoManager:
         self.settings = settings or Settings()
         self.event_bus = EventBus()
         self.api_agent = APIAgent(
-            router_ip=self.settings.kumo_host,
+            router_ip=self.settings.router_ip,
             event_bus=self.event_bus
         )
         self.file_handler = FileHandlerAgent(event_bus=self.event_bus)
@@ -53,7 +53,7 @@ class KumoManager:
             True if successful, False otherwise
         """
         try:
-            logger.info(f"Connecting to KUMO router at {self.settings.kumo_host}")
+            logger.info(f"Connecting to KUMO router at {self.settings.router_ip}")
 
             # Connect to router
             await self.api_agent.connect()
@@ -71,7 +71,7 @@ class KumoManager:
                     {
                         "port": label.port_number,
                         "type": label.port_type.value,
-                        "current_label": label.label_text,
+                        "current_label": label.current_label,
                         "new_label": "",
                         "notes": ""
                     }
@@ -81,7 +81,7 @@ class KumoManager:
                     {
                         "port": label.port_number,
                         "type": label.port_type.value,
-                        "current_label": label.label_text,
+                        "current_label": label.current_label,
                         "new_label": "",
                         "notes": ""
                     }
@@ -135,7 +135,7 @@ class KumoManager:
                 return True
 
             # Connect to router
-            logger.info(f"Connecting to KUMO router at {self.settings.kumo_host}")
+            logger.info(f"Connecting to KUMO router at {self.settings.router_ip}")
             await self.api_agent.connect()
 
             # Upload labels
@@ -181,7 +181,7 @@ def main():
     # Create settings
     settings = Settings()
     if args.ip:
-        settings.kumo_host = args.ip
+        settings.router_ip = args.ip
 
     # Create manager
     manager = KumoManager(settings)
