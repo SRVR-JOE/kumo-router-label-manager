@@ -70,12 +70,54 @@ $clrWarning   = [System.Drawing.Color]::FromArgb(255, 204, 0)
 $clrDanger    = [System.Drawing.Color]::FromArgb(255, 69, 58)
 $clrChanged   = [System.Drawing.Color]::FromArgb(255, 214, 10)
 
+# ─── AJA KUMO REST API Helpers ────────────────────────────────────────────────
+# The real KUMO REST API uses /config?action=get|set&paramid=eParamID_*&configid=0
+# NOT the fake /api/inputs/1 endpoints that were here before.
+
+function Get-KumoParam {
+    param([string]$IP, [string]$ParamId)
+    $uri = "http://$IP/config?action=get&configid=0&paramid=$ParamId"
+    try {
+        $r = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
+        $json = $r.Content | ConvertFrom-Json
+        if ($json.value_name -and $json.value_name -ne "") { return $json.value_name }
+        if ($json.value -and $json.value -ne "") { return $json.value }
+        return $null
+    } catch { return $null }
+}
+
+function Set-KumoParam {
+    param([string]$IP, [string]$ParamId, [string]$Value)
+    $encoded = [System.Uri]::EscapeDataString($Value)
+    $uri = "http://$IP/config?action=set&configid=0&paramid=$ParamId&value=$encoded"
+    try {
+        $r = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
+        return $true
+    } catch { return $false }
+}
+
+function Get-KumoRouterName {
+    param([string]$IP)
+    $name = Get-KumoParam -IP $IP -ParamId "eParamID_SysName"
+    if ($name) { return $name }
+    return "KUMO_$($IP -replace '\.','_')"
+}
+
+function Get-DocumentsPath {
+    $docs = [Environment]::GetFolderPath("MyDocuments")
+    $kumoDir = Join-Path $docs "KUMO_Labels"
+    if (-not (Test-Path $kumoDir)) { New-Item -ItemType Directory -Path $kumoDir -Force | Out-Null }
+    return $kumoDir
+}
+
 # ─── Global State ────────────────────────────────────────────────────────────
 
-$global:kumoConnected = $false
-$global:allLabels     = [System.Collections.ArrayList]::new()
-$global:backupLabels  = $null
-$global:currentFilter = "ALL"
+$global:kumoConnected  = $false
+$global:allLabels      = [System.Collections.ArrayList]::new()
+$global:backupLabels   = $null
+$global:currentFilter  = "ALL"
+$global:routerName     = ""
+$global:routerPortCount = 32
 
 # ─── Main Form ───────────────────────────────────────────────────────────────
 
@@ -561,17 +603,35 @@ $connectButton.Add_Click({
     $form.Refresh()
 
     try {
-        if (Test-NetConnection -ComputerName $ip -Port 80 -InformationLevel Quiet -WarningAction SilentlyContinue) {
-            $global:kumoConnected = $true
-            $statusText.Text = "Connected to $ip"
-            $statusText.ForeColor = $clrSuccess
-            $statusDot.ForeColor = $clrSuccess
-            $btnDownload.Enabled = $true
-            $connectButton.Text = "Reconnect"
-            Update-ChangeCount
-        } else {
-            throw "Port 80 unreachable"
+        # Test with actual KUMO REST API call (get system name)
+        $testUri = "http://$ip/config?action=get&configid=0&paramid=eParamID_SysName"
+        $response = Invoke-SecureWebRequest -Uri $testUri -TimeoutSec 8 -UseBasicParsing
+        $json = $response.Content | ConvertFrom-Json
+
+        $global:kumoConnected = $true
+        $global:routerName = if ($json.value -and $json.value -ne "") { $json.value } else { "KUMO" }
+
+        # Try to detect port count (check if source 33 exists = 64-port router)
+        $global:routerPortCount = 32
+        try {
+            $test64 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source33_Line_1"
+            if ($test64 -ne $null) { $global:routerPortCount = 64 }
+        } catch { }
+        # Check 16-port: if source 17 doesn't exist
+        if ($global:routerPortCount -eq 32) {
+            try {
+                $test17 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source17_Line_1"
+                if ($test17 -eq $null) { $global:routerPortCount = 16 }
+            } catch { $global:routerPortCount = 16 }
         }
+
+        $statusText.Text = "$($global:routerName) ($($global:routerPortCount)x$($global:routerPortCount)) at $ip"
+        $statusText.ForeColor = $clrSuccess
+        $statusDot.ForeColor = $clrSuccess
+        $btnDownload.Enabled = $true
+        $connectButton.Text = "Reconnect"
+        $form.Text = "KUMO Label Manager - $($global:routerName)"
+        Update-ChangeCount
     } catch {
         $global:kumoConnected = $false
         $statusText.Text = "Connection failed"
@@ -579,7 +639,7 @@ $connectButton.Add_Click({
         $statusDot.ForeColor = $clrDanger
         $btnDownload.Enabled = $false
         [System.Windows.Forms.MessageBox]::Show(
-            "Cannot connect to KUMO at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network",
+            "Cannot connect to KUMO at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 80 (HTTP) is accessible",
             "Connection Failed", "OK", "Error"
         )
     }
@@ -589,153 +649,114 @@ $connectButton.Add_Click({
 
 $btnDownload.Add_Click({
     $ip = $ipTextBox.Text.Trim()
+    $portCount = $global:routerPortCount
+    $totalPorts = $portCount * 2
     $global:allLabels.Clear()
     $progressBar.Value = 0
-    $progressBar.Maximum = 64
-    $progressLabel.Text = "Downloading..."
+    $progressBar.Maximum = $totalPorts
+    $progressLabel.Text = "Downloading via REST API..."
     $form.Refresh()
 
-    $labelsRetrieved = $false
+    # ── Method 1: AJA KUMO REST API (correct method) ──
+    # Uses: /config?action=get&configid=0&paramid=eParamID_XPT_Source{N}_Line_1
+    $restSuccess = $true
 
-    # Method 1: REST bulk
-    $apiEndpoints = @(
-        "http://$ip/api/config",
-        "http://$ip/cgi-bin/config",
-        "http://$ip/config.json",
-        "http://$ip/status.json"
-    )
-
-    foreach ($endpoint in $apiEndpoints) {
-        try {
-            $progressLabel.Text = "Trying bulk API..."
-            $form.Refresh()
-            $response = Invoke-SecureRestMethod -Uri $endpoint -TimeoutSec 10
-
-            if ($response.inputs -or $response.outputs) {
-                for ($i = 1; $i -le 32; $i++) {
-                    $label = "Input $i"
-                    if ($response.inputs -and $response.inputs[$i-1]) {
-                        if ($response.inputs[$i-1].label) { $label = $response.inputs[$i-1].label }
-                        elseif ($response.inputs[$i-1].name) { $label = $response.inputs[$i-1].name }
-                    }
-                    $global:allLabels.Add([PSCustomObject]@{
-                        Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
-                    }) | Out-Null
-                    $progressBar.Value = $i
-                    $form.Refresh()
-                }
-                for ($i = 1; $i -le 32; $i++) {
-                    $label = "Output $i"
-                    if ($response.outputs -and $response.outputs[$i-1]) {
-                        if ($response.outputs[$i-1].label) { $label = $response.outputs[$i-1].label }
-                        elseif ($response.outputs[$i-1].name) { $label = $response.outputs[$i-1].name }
-                    }
-                    $global:allLabels.Add([PSCustomObject]@{
-                        Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
-                    }) | Out-Null
-                    $progressBar.Value = 32 + $i
-                    $form.Refresh()
-                }
-                $labelsRetrieved = $true
-                break
-            }
-        } catch { continue }
-    }
-
-    # Method 2: Individual REST
-    if (-not $labelsRetrieved) {
-        $progressLabel.Text = "Querying individual ports..."
+    for ($i = 1; $i -le $portCount; $i++) {
+        $label = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source${i}_Line_1"
+        if (-not $label -or $label -eq "") {
+            $label = "Source $i"
+            if ($i -eq 1) { $restSuccess = $false }  # First port failed = API not working
+        }
+        $global:allLabels.Add([PSCustomObject]@{
+            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO REST API"
+        }) | Out-Null
+        $progressBar.Value = $i
+        $progressLabel.Text = "Source $i/$portCount..."
         $form.Refresh()
 
-        for ($i = 1; $i -le 32; $i++) {
-            $label = "Input $i"
-            foreach ($ep in @("http://$ip/api/inputs/$i", "http://$ip/cgi-bin/getlabel?type=input&port=$i")) {
-                try {
-                    $r = Invoke-SecureRestMethod -Uri $ep -TimeoutSec 5
-                    if ($r.label) { $label = $r.label; break }
-                    elseif ($r.name) { $label = $r.name; break }
-                    elseif ($r -is [string] -and $r.Trim()) { $label = $r.Trim(); break }
-                } catch { continue }
-            }
-            $global:allLabels.Add([PSCustomObject]@{
-                Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
-            }) | Out-Null
-            $progressBar.Value = $i
-            $progressLabel.Text = "Input $i/32..."
-            $form.Refresh()
-            Start-Sleep -Milliseconds 80
-        }
-
-        for ($i = 1; $i -le 32; $i++) {
-            $label = "Output $i"
-            foreach ($ep in @("http://$ip/api/outputs/$i", "http://$ip/cgi-bin/getlabel?type=output&port=$i")) {
-                try {
-                    $r = Invoke-SecureRestMethod -Uri $ep -TimeoutSec 5
-                    if ($r.label) { $label = $r.label; break }
-                    elseif ($r.name) { $label = $r.name; break }
-                    elseif ($r -is [string] -and $r.Trim()) { $label = $r.Trim(); break }
-                } catch { continue }
-            }
-            $global:allLabels.Add([PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
-            }) | Out-Null
-            $progressBar.Value = 32 + $i
-            $progressLabel.Text = "Output $i/32..."
-            $form.Refresh()
-            Start-Sleep -Milliseconds 80
-        }
-        $labelsRetrieved = $true
+        if (-not $restSuccess -and $i -eq 1) { break }  # Don't waste time if API is dead
     }
 
-    # Method 3: Telnet fallback
-    if (-not $labelsRetrieved -or $global:allLabels.Count -eq 0) {
-        $progressLabel.Text = "Trying Telnet..."
+    if ($restSuccess) {
+        for ($i = 1; $i -le $portCount; $i++) {
+            $label = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination${i}_Line_1"
+            if (-not $label -or $label -eq "") { $label = "Dest $i" }
+            $global:allLabels.Add([PSCustomObject]@{
+                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO REST API"
+            }) | Out-Null
+            $progressBar.Value = $portCount + $i
+            $progressLabel.Text = "Dest $i/$portCount..."
+            $form.Refresh()
+        }
+    }
+
+    # ── Method 2: Telnet fallback (only if REST completely failed) ──
+    if (-not $restSuccess) {
+        $global:allLabels.Clear()
+        $progressBar.Value = 0
+        $progressLabel.Text = "REST API failed, trying Telnet..."
         $form.Refresh()
+
         try {
             $tcp = New-Object System.Net.Sockets.TcpClient
             $tcp.Connect($ip, 23)
             $stream = $tcp.GetStream()
             $writer = New-Object System.IO.StreamWriter($stream)
             $reader = New-Object System.IO.StreamReader($stream)
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 1
 
-            for ($i = 1; $i -le 32; $i++) {
+            # Clear initial prompt
+            while ($stream.DataAvailable) { $reader.ReadLine() | Out-Null }
+
+            for ($i = 1; $i -le $portCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL INPUT $i ?"); $writer.Flush()
-                    Start-Sleep -Milliseconds 200
-                    $resp = $reader.ReadLine()
+                    Start-Sleep -Milliseconds 150
+                    $resp = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
                     $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
                 } catch { $label = "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
                     Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
                 }) | Out-Null
                 $progressBar.Value = $i
+                $progressLabel.Text = "Telnet: Input $i/$portCount..."
                 $form.Refresh()
             }
-            for ($i = 1; $i -le 32; $i++) {
+            for ($i = 1; $i -le $portCount; $i++) {
                 try {
                     $writer.WriteLine("LABEL OUTPUT $i ?"); $writer.Flush()
-                    Start-Sleep -Milliseconds 200
-                    $resp = $reader.ReadLine()
+                    Start-Sleep -Milliseconds 150
+                    $resp = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
                     $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
                 } catch { $label = "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
                     Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
                 }) | Out-Null
-                $progressBar.Value = 32 + $i
+                $progressBar.Value = $portCount + $i
+                $progressLabel.Text = "Telnet: Output $i/$portCount..."
                 $form.Refresh()
             }
             $writer.Close(); $reader.Close(); $tcp.Close()
         } catch {
-            # Fall back to defaults
-            Create-DefaultLabels
+            Create-DefaultLabels -PortCount $portCount
         }
     }
 
-    if ($global:allLabels.Count -eq 0) { Create-DefaultLabels }
+    if ($global:allLabels.Count -eq 0) { Create-DefaultLabels -PortCount $portCount }
 
     $progressBar.Value = $progressBar.Maximum
-    $progressLabel.Text = "Downloaded $($global:allLabels.Count) labels"
+    $progressLabel.Text = "Downloaded $($global:allLabels.Count) labels from $($global:routerName)"
+
+    # Auto-save to Documents folder with router name
+    try {
+        $docsPath = Get-DocumentsPath
+        $safeName = $global:routerName -replace '[^\w\-]', '_'
+        $autoSavePath = Join-Path $docsPath "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
+        $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
+            Export-Csv -Path $autoSavePath -NoTypeInformation
+        $progressLabel.Text = "Downloaded $($global:allLabels.Count) labels - saved to Documents\KUMO_Labels"
+    } catch { }
+
     Populate-Grid
 })
 
@@ -807,7 +828,9 @@ $btnSaveFile.Add_Click({
     $dlg = New-Object System.Windows.Forms.SaveFileDialog
     $dlg.Filter = "CSV files (*.csv)|*.csv|Excel files (*.xlsx)|*.xlsx"
     $dlg.DefaultExt = "csv"
-    $dlg.FileName = "KUMO_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm')"
+    $safeName = if ($global:routerName) { $global:routerName -replace '[^\w\-]', '_' } else { "KUMO" }
+    $dlg.FileName = "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm')"
+    $dlg.InitialDirectory = Get-DocumentsPath
     $dlg.Title = "Save Label File"
 
     if ($dlg.ShowDialog() -eq "OK") {
@@ -1180,14 +1203,16 @@ $btnUpload.Add_Click({
         }
     }
 
-    # Also save backup to file
+    # Save backup to Documents/KUMO_Labels folder
     try {
-        $backupPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "KUMO_Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv")
+        $docsPath = Get-DocumentsPath
+        $safeName = $global:routerName -replace '[^\w\-]', '_'
+        $backupPath = Join-Path $docsPath "${safeName}_Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
         $global:backupLabels | Export-Csv -Path $backupPath -NoTypeInformation
-        $progressLabel.Text = "Backup saved: $([System.IO.Path]::GetFileName($backupPath))"
+        $progressLabel.Text = "Backup saved to Documents\KUMO_Labels"
     } catch { }
 
-    # Upload
+    # Upload via real AJA KUMO REST API
     $ip = $ipTextBox.Text.Trim()
     $progressBar.Value = 0
     $progressBar.Maximum = $changes.Count
@@ -1199,43 +1224,37 @@ $btnUpload.Add_Click({
             $progressLabel.Text = "Uploading $($item.Type) $($item.Port): $($item.New_Label)"
             $form.Refresh()
 
-            $endpoint = if ($item.Type -eq "INPUT") { "inputs" } else { "outputs" }
-            $uri = "http://$ip/api/$endpoint/$($item.Port)/label"
-            $body = @{ label = $item.New_Label.Trim() } | ConvertTo-Json
+            # Build the correct eParamID for this port
+            $paramId = if ($item.Type -eq "INPUT") {
+                "eParamID_XPT_Source$($item.Port)_Line_1"
+            } else {
+                "eParamID_XPT_Destination$($item.Port)_Line_1"
+            }
 
-            try {
-                Invoke-SecureRestMethod -Uri $uri -Method PUT -Body $body -Headers @{"Content-Type"="application/json"} -TimeoutSec 5
+            $ok = Set-KumoParam -IP $ip -ParamId $paramId -Value $item.New_Label.Trim()
+            if ($ok) {
                 $successCount++
-            } catch {
-                # Try alternative endpoint
-                $uri2 = "http://$ip/cgi-bin/setlabel"
-                $body2 = @{ type = $item.Type.ToLower(); port = $item.Port; label = $item.New_Label.Trim() } | ConvertTo-Json
+            } else {
+                # Telnet fallback for this port
                 try {
-                    Invoke-SecureRestMethod -Uri $uri2 -Method POST -Body $body2 -Headers @{"Content-Type"="application/json"} -TimeoutSec 5
+                    $tcp = New-Object System.Net.Sockets.TcpClient
+                    $tcp.Connect($ip, 23)
+                    $s = $tcp.GetStream()
+                    $w = New-Object System.IO.StreamWriter($s)
+                    Start-Sleep -Milliseconds 300
+                    $w.WriteLine("LABEL $($item.Type) $($item.Port) `"$($item.New_Label.Trim())`"")
+                    $w.Flush()
+                    Start-Sleep -Milliseconds 200
+                    $w.Close(); $tcp.Close()
                     $successCount++
                 } catch {
-                    # Try Telnet for this one port
-                    try {
-                        $tcp = New-Object System.Net.Sockets.TcpClient
-                        $tcp.Connect($ip, 23)
-                        $s = $tcp.GetStream()
-                        $w = New-Object System.IO.StreamWriter($s)
-                        Start-Sleep -Milliseconds 500
-                        $w.WriteLine("LABEL $($item.Type) $($item.Port) `"$($item.New_Label.Trim())`"")
-                        $w.Flush()
-                        Start-Sleep -Milliseconds 300
-                        $w.Close(); $tcp.Close()
-                        $successCount++
-                    } catch {
-                        $errorCount++
-                    }
+                    $errorCount++
                 }
             }
         } catch {
             $errorCount++
         }
         $progressBar.Value++
-        Start-Sleep -Milliseconds 100
     }
 
     $progressBar.Value = $progressBar.Maximum
@@ -1255,7 +1274,7 @@ $btnUpload.Add_Click({
 
     $icon = if ($errorCount -eq 0) { "Information" } else { "Warning" }
     [System.Windows.Forms.MessageBox]::Show(
-        "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to temp folder.",
+        "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to Documents\KUMO_Labels folder.",
         "Upload Results", "OK", $icon
     )
 })
