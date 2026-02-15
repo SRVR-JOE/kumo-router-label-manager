@@ -1,0 +1,65 @@
+Port,Type,Current_Label,New_Label,Notes
+1,INPUT,Input 1,Camera 1 Main,Main stage camera
+2,INPUT,Input 2,Camera 2 Wide,Wide stage shot
+3,INPUT,Input 3,Camera 3 Close,Artist closeup
+4,INPUT,Input 4,Camera 4 Drum,Drum kit camera
+5,INPUT,Input 5,Camera 5 Crowd,Audience camera
+6,INPUT,Input 6,Playback 1 Pro,Primary playback server
+7,INPUT,Input 7,Playback 2 Bkp,Backup playback server
+8,INPUT,Input 8,Graphics Mac,Graphics computer
+9,INPUT,Input 9,LED Wall Feed,LED wall input
+10,INPUT,Input 10,Record ISO,Recording feed
+11,INPUT,Input 11,Streaming Feed,Live stream source
+12,INPUT,Input 12,Spare Cam 1,Extra camera 1
+13,INPUT,Input 13,Spare Cam 2,Extra camera 2
+14,INPUT,Input 14,VT Playback,Video tape playback
+15,INPUT,Input 15,Laptop 1,Presentation laptop
+16,INPUT,Input 16,Laptop 2,Backup laptop
+17,INPUT,Input 17,Wireless RX1,Wireless camera 1
+18,INPUT,Input 18,Wireless RX2,Wireless camera 2
+19,INPUT,Input 19,DJ Booth Cam,DJ camera
+20,INPUT,Input 20,Backstage Cam,Behind scenes
+21,INPUT,Input 21,Entrance Cam,Venue entrance
+22,INPUT,Input 22,Spare Input,Available input
+23,INPUT,Input 23,Test Signal,Test pattern
+24,INPUT,Input 24,Color Bars,Reference signal
+25,INPUT,Input 25,Black Burst,Timing reference
+26,INPUT,Input 26,House Feed,Venue house feed
+27,INPUT,Input 27,Broadcast In,External broadcast
+28,INPUT,Input 28,Satellite In,Satellite feed
+29,INPUT,Input 29,Fiber In 1,Fiber input 1
+30,INPUT,Input 30,Fiber In 2,Fiber input 2
+31,INPUT,Input 31,Remote Cam 1,Remote camera 1
+32,INPUT,Input 32,Remote Cam 2,Remote camera 2
+1,OUTPUT,Output 1,Program Mon,Main program monitor
+2,OUTPUT,Output 2,Preview Mon,Preview monitor
+3,OUTPUT,Output 3,Director Mon,Director monitor
+4,OUTPUT,Output 4,LED Wall Main,Primary LED wall
+5,OUTPUT,Output 5,LED Wall Bkp,Backup LED wall
+6,OUTPUT,Output 6,IMAG Left,Left IMAG screen
+7,OUTPUT,Output 7,IMAG Right,Right IMAG screen
+8,OUTPUT,Output 8,Streaming Enc,Stream encoder
+9,OUTPUT,Output 9,Record Main,Main recording
+10,OUTPUT,Output 10,Record Backup,Backup recording
+11,OUTPUT,Output 11,Broadcast Out,Broadcast feed
+12,OUTPUT,Output 12,FOH Monitor,Front of house
+13,OUTPUT,Output 13,Band Monitor,Band monitor
+14,OUTPUT,Output 14,Backstage Mon,Backstage display
+15,OUTPUT,Output 15,Green Room,Artist green room
+16,OUTPUT,Output 16,Production Mon,Production office
+17,OUTPUT,Output 17,VIP Monitor,VIP area display
+18,OUTPUT,Output 18,Media Monitor,Media center
+19,OUTPUT,Output 19,Security Mon,Security station
+20,OUTPUT,Output 20,Delay Tower L,Left delay tower
+21,OUTPUT,Output 21,Delay Tower R,Right delay tower
+22,OUTPUT,Output 22,House Mix Mon,House mix position
+23,OUTPUT,Output 23,Mon Mix Mon,Monitor mix position
+24,OUTPUT,Output 24,Spare Output,Available output
+25,OUTPUT,Output 25,Test Monitor,Test display
+26,OUTPUT,Output 26,Engineering,Engineering station
+27,OUTPUT,Output 27,Fiber Out 1,Fiber output 1
+28,OUTPUT,Output 28,Fiber Out 2,Fiber output 2
+29,OUTPUT,Output 29,Remote Mon 1,Remote monitor 1
+30,OUTPUT,Output 30,Remote Mon 2,Remote monitor 2
+31,OUTPUT,Output 31,Archive Out,Archive recording
+32,OUTPUT,Output 32,Spare Out 2,Backup output
