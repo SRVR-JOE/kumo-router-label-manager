@@ -62,12 +62,20 @@ class ExcelHandler:
                 continue
 
             try:
+                port_value = row[0].value
+                if port_value is None:
+                    raise ValueError("Port number is required")
+
+                current_label = str(row[2].value).strip() if row[2].value else ""
+                new_label = str(row[3].value).strip() if row[3].value else None
+                notes = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
+
                 port_data = PortData(
-                    port=int(row[0].value) if row[0].value is not None else 0,
+                    port=int(port_value),
                     type=str(row[1].value).strip() if row[1].value else "INPUT",
-                    current_label=str(row[2].value).strip() if row[2].value else "",
-                    new_label=str(row[3].value).strip() if row[3].value else None,
-                    notes=str(row[4].value).strip() if row[4].value else "",
+                    current_label=current_label,
+                    new_label=new_label,
+                    notes=notes,
                 )
                 ports.append(port_data)
             except (ValueError, TypeError) as e:

@@ -26,6 +26,9 @@ from .router_protocols import (
 
 logger = logging.getLogger(__name__)
 
+# Concurrency limit for parallel requests to avoid overwhelming the router
+MAX_CONCURRENT_REQUESTS = 8
+
 
 class RestClientError(Exception):
     pass
@@ -57,8 +60,15 @@ class RestClient:
 
     async def connect(self) -> None:
         if self._session is None:
+            connector = aiohttp.TCPConnector(
+                limit=MAX_CONCURRENT_REQUESTS,
+                keepalive_timeout=30,
+            )
             timeout = aiohttp.ClientTimeout(total=TIMEOUT_REST_REQUEST)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector,
+            )
 
     async def disconnect(self) -> None:
         if self._session is not None:
@@ -114,6 +124,16 @@ class RestClient:
                 return name
         return "KUMO"
 
+    async def get_firmware_version(self) -> str:
+        """Get the router's firmware version."""
+        endpoint = APIEndpoint.get_firmware_version()
+        result = await self._get(endpoint)
+        if result:
+            version = ResponseParser.parse_param_response(result)
+            if version:
+                return version
+        return "Unknown"
+
     async def detect_port_count(self) -> int:
         """Detect router size (16, 32, or 64 ports)."""
         # Check for 64-port
@@ -133,35 +153,93 @@ class RestClient:
         self._port_count = 16
         return 16
 
-    async def download_labels(self) -> Tuple[Protocol, Optional[Dict[str, List[str]]]]:
-        """Download all labels using the real AJA KUMO REST API.
+    @property
+    def port_count(self) -> int:
+        """Get the detected port count."""
+        return self._port_count
+
+    async def _fetch_label(
+        self, port: int, port_type: str, semaphore: asyncio.Semaphore
+    ) -> Tuple[int, str, Optional[str]]:
+        """Fetch a single label with concurrency control.
+
+        Args:
+            port: Port number
+            port_type: 'input' or 'output'
+            semaphore: Semaphore for concurrency limiting
+
+        Returns:
+            Tuple of (port_number, port_type, label_or_None)
+        """
+        async with semaphore:
+            if port_type == "input":
+                endpoint = APIEndpoint.get_source_name(port)
+            else:
+                endpoint = APIEndpoint.get_dest_name(port)
+
+            result = await self._get(endpoint)
+            label = None
+            if result:
+                label = ResponseParser.parse_param_response(result)
+            return port, port_type, label
+
+    async def download_labels(
+        self, progress_callback=None
+    ) -> Tuple[Protocol, Optional[Dict[str, List[str]]]]:
+        """Download all labels using parallel requests via the AJA KUMO REST API.
+
+        Uses asyncio.gather with a semaphore to download multiple labels
+        concurrently while respecting the router's connection limits.
+
+        Args:
+            progress_callback: Optional async callback(current, total) for progress
 
         Returns:
             Tuple of (protocol_used, labels_dict) where labels_dict has
             'inputs' and 'outputs' lists of label strings
         """
         port_count = self._port_count
-        labels = {"inputs": [], "outputs": []}
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-        # Download source names (inputs)
+        # Build all fetch tasks for inputs and outputs
+        tasks = []
         for port in range(1, port_count + 1):
-            endpoint = APIEndpoint.get_source_name(port)
-            result = await self._get(endpoint)
-            label = None
-            if result:
-                label = ResponseParser.parse_param_response(result)
-            labels["inputs"].append(label or DefaultLabelGenerator.generate_input_label(port))
-
-        # Download destination names (outputs)
+            tasks.append(self._fetch_label(port, "input", semaphore))
         for port in range(1, port_count + 1):
-            endpoint = APIEndpoint.get_dest_name(port)
-            result = await self._get(endpoint)
-            label = None
-            if result:
-                label = ResponseParser.parse_param_response(result)
-            labels["outputs"].append(label or DefaultLabelGenerator.generate_output_label(port))
+            tasks.append(self._fetch_label(port, "output", semaphore))
 
-        # Check if we got any real (non-default) labels for inputs OR outputs
+        # Execute all fetches concurrently
+        total_tasks = len(tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        if progress_callback:
+            await progress_callback(total_tasks, total_tasks)
+
+        # Organize results into labels dict
+        input_labels = [""] * port_count
+        output_labels = [""] * port_count
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning(f"Label fetch error: {result}")
+                continue
+
+            port, port_type, label = result
+            if port_type == "input":
+                input_labels[port - 1] = label or DefaultLabelGenerator.generate_input_label(port)
+            else:
+                output_labels[port - 1] = label or DefaultLabelGenerator.generate_output_label(port)
+
+        # Fill any gaps with defaults
+        for i in range(port_count):
+            if not input_labels[i]:
+                input_labels[i] = DefaultLabelGenerator.generate_input_label(i + 1)
+            if not output_labels[i]:
+                output_labels[i] = DefaultLabelGenerator.generate_output_label(i + 1)
+
+        labels = {"inputs": input_labels, "outputs": output_labels}
+
+        # Check if we got any real (non-default) labels
         has_real_inputs = any(
             l != DefaultLabelGenerator.generate_input_label(i + 1)
             for i, l in enumerate(labels["inputs"])
@@ -192,29 +270,44 @@ class RestClient:
             return True, None
         return False, f"Failed to set {port_type} {port} label"
 
-    async def upload_labels_batch(
-        self, labels: List[Dict[str, Any]], progress_callback=None
-    ) -> Tuple[int, int, List[str]]:
-        """Upload multiple labels."""
-        success_count = 0
-        error_count = 0
-        error_messages = []
-        total = len(labels)
-
-        for idx, label_data in enumerate(labels):
+    async def _upload_single(
+        self, label_data: Dict[str, Any], semaphore: asyncio.Semaphore
+    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+        """Upload a single label with concurrency control."""
+        async with semaphore:
             port = label_data["port"]
             port_type = label_data["type"]
             label = label_data["label"]
-
-            if progress_callback:
-                await progress_callback(idx + 1, total, port_type, port)
-
             success, error_msg = await self.upload_label(port, port_type, label)
-            if success:
-                success_count += 1
-            else:
+            return success, error_msg, label_data
+
+    async def upload_labels_batch(
+        self, labels: List[Dict[str, Any]], progress_callback=None
+    ) -> Tuple[int, int, List[str]]:
+        """Upload multiple labels with parallel execution."""
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+        tasks = [self._upload_single(ld, semaphore) for ld in labels]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        success_count = 0
+        error_count = 0
+        error_messages = []
+
+        for result in results:
+            if isinstance(result, Exception):
                 error_count += 1
-                if error_msg:
-                    error_messages.append(error_msg)
+                error_messages.append(str(result))
+            else:
+                success, error_msg, _ = result
+                if success:
+                    success_count += 1
+                else:
+                    error_count += 1
+                    if error_msg:
+                        error_messages.append(error_msg)
+
+        if progress_callback:
+            await progress_callback(len(labels), len(labels))
 
         return success_count, error_count, error_messages
