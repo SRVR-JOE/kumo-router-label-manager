@@ -119,7 +119,7 @@ class ExcelHandler:
             for i in range(1, 33):
                 self._write_row(worksheet, i + 1, i, "INPUT")
             for i in range(1, 33):
-                self._write_row(worksheet, i + 33, i + 32, "OUTPUT")
+                self._write_row(worksheet, i + 33, i, "OUTPUT")
         else:
             # Write actual data
             for row_idx, port_data in enumerate(data.ports, start=2):

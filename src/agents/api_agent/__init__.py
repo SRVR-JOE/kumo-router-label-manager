@@ -48,6 +48,7 @@ class APIAgent:
         self._rest_client: Optional[RestClient] = None
         self._telnet_client: Optional[TelnetClient] = None
         self._last_protocol: Optional[Protocol] = None
+        self._detected_port_count: int = 32
 
     async def test_connection(self) -> bool:
         """Test connection to the router.
@@ -108,14 +109,16 @@ class APIAgent:
             # Method 1: Try REST API (uses real AJA /config?action=get&paramid= endpoints)
             logger.debug("Attempting REST download via AJA KUMO API")
             async with RestClient(self.router_ip) as rest:
-                await rest.detect_port_count()
+                self._detected_port_count = await rest.detect_port_count()
                 protocol_used, labels_dict = await rest.download_labels()
 
             # Method 3: Try Telnet if REST failed
             if labels_dict is None:
                 logger.debug("REST download failed, trying Telnet")
                 try:
-                    async with TelnetClient(self.router_ip) as telnet:
+                    async with TelnetClient(
+                        self.router_ip, port_count=self._detected_port_count
+                    ) as telnet:
                         protocol_used, labels_dict = await telnet.download_labels()
                 except Exception as e:
                     logger.warning(f"Telnet download failed: {e}")
@@ -123,7 +126,9 @@ class APIAgent:
             # Method 4: Use defaults if all methods failed
             if labels_dict is None:
                 logger.warning("All download methods failed, using defaults")
-                labels_dict = DefaultLabelGenerator.generate_default_labels()
+                labels_dict = DefaultLabelGenerator.generate_default_labels(
+                    self._detected_port_count
+                )
                 protocol_used = Protocol.DEFAULT
 
             # Store the successful protocol for future uploads

@@ -47,15 +47,17 @@ class TelnetClient:
     Implements proper connection handling and command execution with timeouts.
     """
 
-    def __init__(self, router_ip: str, port: int = 23):
+    def __init__(self, router_ip: str, port: int = 23, port_count: int = 32):
         """Initialize Telnet client.
 
         Args:
             router_ip: IP address of the KUMO router
             port: Telnet port (default: 23)
+            port_count: Number of input/output ports (16, 32, or 64)
         """
         self.router_ip = router_ip
         self.port = port
+        self._port_count = port_count
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
@@ -189,9 +191,10 @@ class TelnetClient:
 
         labels = {"inputs": [], "outputs": []}
         success_count = 0
+        port_count = self._port_count
 
         # Query all inputs
-        for port in range(1, 33):
+        for port in range(1, port_count + 1):
             command = TelnetCommand.query_input(port)
             response = await self._send_command(command)
 
@@ -210,7 +213,7 @@ class TelnetClient:
             await asyncio.sleep(DELAY_TELNET_COMMAND)
 
         # Query all outputs
-        for port in range(1, 33):
+        for port in range(1, port_count + 1):
             command = TelnetCommand.query_output(port)
             response = await self._send_command(command)
 
@@ -228,9 +231,10 @@ class TelnetClient:
             # Delay between commands
             await asyncio.sleep(DELAY_TELNET_COMMAND)
 
+        total_ports = port_count * 2
         if success_count > 0:
             logger.info(
-                f"Telnet download successful - {success_count}/64 ports retrieved"
+                f"Telnet download successful - {success_count}/{total_ports} ports retrieved"
             )
             return Protocol.TELNET, labels
         else:

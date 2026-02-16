@@ -27,7 +27,7 @@ from .router_protocols import (
 logger = logging.getLogger(__name__)
 
 # Concurrency limit for parallel requests to avoid overwhelming the router
-MAX_CONCURRENT_REQUESTS = 8
+MAX_CONCURRENT_REQUESTS = 16
 
 
 class RestClientError(Exception):
@@ -239,20 +239,7 @@ class RestClient:
 
         labels = {"inputs": input_labels, "outputs": output_labels}
 
-        # Check if we got any real (non-default) labels
-        has_real_inputs = any(
-            l != DefaultLabelGenerator.generate_input_label(i + 1)
-            for i, l in enumerate(labels["inputs"])
-        )
-        has_real_outputs = any(
-            l != DefaultLabelGenerator.generate_output_label(i + 1)
-            for i, l in enumerate(labels["outputs"])
-        )
-        if has_real_inputs or has_real_outputs:
-            return Protocol.REST, labels
-        else:
-            logger.warning("REST download returned only default labels")
-            return Protocol.REST, None
+        return Protocol.REST, labels
 
     async def upload_label(
         self, port: int, port_type: str, label: str
