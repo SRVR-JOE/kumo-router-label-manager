@@ -206,6 +206,18 @@ class KumoManager:
                 border_style="green",
                 padding=(0, 2),
             ))
+
+            # Show next-step instructions for Excel files
+            if output_path.suffix.lower() == ".xlsx":
+                console.print()
+                console.print(
+                    "[dim]To rename labels:[/dim]\n"
+                    f'  1. Open [cyan]{output_file}[/cyan] in Excel\n'
+                    '  2. Type new names in the yellow [bold]New_Label[/bold] column\n'
+                    "  3. Save the file, then run:\n"
+                    f'     [bold]kumo-cli upload "{output_file}" --ip {self.settings.router_ip}[/bold]'
+                )
+
             return True
 
         except Exception as e:
