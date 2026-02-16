@@ -191,7 +191,7 @@ class JSONHandler:
             )
 
         # Create 32 outputs
-        for i in range(33, 65):
+        for i in range(1, 33):
             ports.append(
                 PortData(
                     port=i,

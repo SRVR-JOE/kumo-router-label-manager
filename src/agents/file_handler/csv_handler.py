@@ -136,7 +136,7 @@ class CSVHandler:
             })
 
         # Create 32 outputs
-        for i in range(33, 65):
+        for i in range(1, 33):
             rows.append({
                 "Port": i,
                 "Type": "OUTPUT",
