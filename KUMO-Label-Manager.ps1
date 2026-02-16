@@ -618,30 +618,75 @@ $connectButton.Add_Click({
         } catch { }
 
         # ── Auto-detect router model by probing ports ──
-        # Step 1: Detect input (source) count
+        # The AJA KUMO REST API returns values even for non-existent ports,
+        # so we use a canary probe (Source100) to detect this behavior,
+        # then compare responses to distinguish real vs phantom ports.
         $inputCount = 32  # default
         $statusText.Text = "Detecting router model..."
         $form.Refresh()
 
+        # Canary: probe a port that cannot exist on any KUMO model
+        $canaryValue = $null
         try {
-            $test64 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source33_Line_1"
-            if ($test64 -ne $null) { $inputCount = 64 }
+            $canaryValue = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source100_Line_1"
         } catch { }
-        if ($inputCount -eq 32) {
+
+        if ($canaryValue -ne $null) {
+            # API returns values for non-existent ports — compare values to detect real ports
+            # Real ports typically have user-set names; phantom ports return a default/placeholder
+            # Use a boundary probe: check if Source33's value differs from the canary's default
+            $probe33 = $null
+            try { $probe33 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source33_Line_1" } catch { }
+
+            if ($probe33 -ne $null -and $probe33 -ne $canaryValue) {
+                # Source33 has a different value than the canary — likely a real 64-port router
+                # Double-check with Source64 (last valid source on KUMO 6464)
+                $probe64 = $null
+                try { $probe64 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source64_Line_1" } catch { }
+                if ($probe64 -ne $null -and $probe64 -ne $canaryValue) {
+                    $inputCount = 64
+                } else {
+                    $inputCount = 32
+                }
+            } else {
+                # Source33 matches canary default — not a real port, router is 16 or 32
+                $probe17 = $null
+                try { $probe17 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source17_Line_1" } catch { }
+                if ($probe17 -ne $null -and $probe17 -ne $canaryValue) {
+                    $inputCount = 32
+                } else {
+                    $inputCount = 16
+                }
+            }
+        } else {
+            # Canary returned null — API correctly rejects non-existent ports
+            # Use simple existence probing
             try {
-                $test17 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source17_Line_1"
-                if ($test17 -eq $null) { $inputCount = 16 }
-            } catch { $inputCount = 16 }
+                $test33 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source33_Line_1"
+                if ($test33 -ne $null) { $inputCount = 64 }
+            } catch { }
+            if ($inputCount -ne 64) {
+                try {
+                    $test17 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source17_Line_1"
+                    if ($test17 -eq $null) { $inputCount = 16 }
+                } catch { $inputCount = 16 }
+            }
         }
 
         # Step 2: Detect output (destination) count
         # KUMO 1604 has 16 inputs but only 4 outputs — probe Dest5 to differentiate
         $outputCount = $inputCount  # assume symmetric by default
         if ($inputCount -eq 16) {
-            try {
-                $testDest5 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination5_Line_1"
+            $destCanary = $null
+            try { $destCanary = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination100_Line_1" } catch { }
+            $testDest5 = $null
+            try { $testDest5 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination5_Line_1" } catch { }
+            if ($destCanary -ne $null) {
+                # API returns phantom values — compare Dest5 to canary
+                if ($testDest5 -eq $null -or $testDest5 -eq $destCanary) { $outputCount = 4 }
+            } else {
                 if ($testDest5 -eq $null) { $outputCount = 4 }
-            } catch { $outputCount = 4 }
+            }
         }
 
         $global:routerInputCount = $inputCount

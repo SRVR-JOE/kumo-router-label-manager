@@ -348,6 +348,19 @@ function Get-KumoCurrentLabels {
     }
 }
 
+# Helper to probe a single KUMO param and return value or $null
+function Get-KumoProbeValue {
+    param([string]$IP, [string]$ParamId)
+    try {
+        $uri = "http://$IP/config?action=get&configid=0&paramid=$ParamId"
+        $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
+        $json = $resp.Content | ConvertFrom-Json
+        if ($json.value_name -and $json.value_name -ne "") { return $json.value_name }
+        if ($json.value -and $json.value -ne "") { return $json.value }
+        return $null
+    } catch { return $null }
+}
+
 # Function to detect KUMO router model from port probing
 function Get-KumoRouterModel {
     param([string]$IP)
@@ -365,41 +378,51 @@ function Get-KumoRouterModel {
         if ($fwJson.value) { $firmware = $fwJson.value }
     } catch { }
 
-    # Probe Source33 for 64-port router
-    try {
-        $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source33_Line_1"
-        $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
-        $json = $resp.Content | ConvertFrom-Json
-        if ($json.value -ne $null -and $json.value -ne "") {
-            $inputCount = 64; $outputCount = 64
-        }
-    } catch { }
+    # The AJA KUMO REST API may return values for non-existent ports.
+    # Use a canary probe (Source100, which never exists) to detect this behavior.
+    $canaryValue = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Source100_Line_1"
 
-    if ($inputCount -lt 64) {
-        # Probe Source17 for 32-port vs 16-port
-        try {
-            $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source17_Line_1"
-            $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
-            $json = $resp.Content | ConvertFrom-Json
-            if ($json.value -eq $null -or $json.value -eq "") {
+    if ($canaryValue -ne $null) {
+        # API returns phantom values for non-existent ports.
+        # Compare probed values to the canary — real ports differ from the default.
+        Write-Host "  API returns phantom port values — using comparison detection..." -ForegroundColor Gray
+
+        $probe33 = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
+        if ($probe33 -ne $null -and $probe33 -ne $canaryValue) {
+            # Source33 differs from canary — might be 64-port. Confirm with Source64.
+            $probe64 = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Source64_Line_1"
+            if ($probe64 -ne $null -and $probe64 -ne $canaryValue) {
+                $inputCount = 64; $outputCount = 64
+            }
+            # else: Source33 real but Source64 phantom → 32-port (default)
+        } else {
+            # Source33 matches canary — phantom port, router is 16 or 32
+            $probe17 = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
+            if ($probe17 -ne $null -and $probe17 -ne $canaryValue) {
+                $inputCount = 32; $outputCount = 32
+            } else {
                 $inputCount = 16; $outputCount = 16
             }
-        } catch {
-            $inputCount = 16; $outputCount = 16
+        }
+    } else {
+        # Canary returned null — API correctly rejects non-existent ports.
+        # Use simple existence probing.
+        $probe33 = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
+        if ($probe33 -ne $null) { $inputCount = 64; $outputCount = 64 }
+        if ($inputCount -ne 64) {
+            $probe17 = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
+            if ($probe17 -eq $null) { $inputCount = 16; $outputCount = 16 }
         }
     }
 
     # For 16-input routers, differentiate KUMO 1604 (4 outputs) vs KUMO 1616 (16 outputs)
     if ($inputCount -eq 16) {
-        try {
-            $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Destination5_Line_1"
-            $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 3 -UseBasicParsing -ForceHTTP:$ForceHTTP
-            $json = $resp.Content | ConvertFrom-Json
-            if ($json.value -eq $null -or $json.value -eq "") {
-                $outputCount = 4  # Only 4 outputs = KUMO 1604
-            }
-        } catch {
-            $outputCount = 4  # If probe fails assume smaller model
+        $destCanary = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Destination100_Line_1"
+        $testDest5 = Get-KumoProbeValue -IP $IP -ParamId "eParamID_XPT_Destination5_Line_1"
+        if ($destCanary -ne $null) {
+            if ($testDest5 -eq $null -or $testDest5 -eq $destCanary) { $outputCount = 4 }
+        } else {
+            if ($testDest5 -eq $null) { $outputCount = 4 }
         }
     }
 
