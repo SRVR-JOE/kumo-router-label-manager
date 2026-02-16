@@ -140,12 +140,18 @@ class JSONHandler:
 
     def _parse_port_dict(self, port_dict: Dict[str, Any]) -> PortData:
         """Parse a single port dictionary into PortData."""
+        if "port" not in port_dict or port_dict["port"] is None:
+            raise ValueError("'port' field is required")
+
+        new_label_raw = port_dict.get("new_label")
+        new_label = str(new_label_raw).strip() if new_label_raw else None
+
         return PortData(
-            port=int(port_dict.get("port", 0)),
-            type=str(port_dict.get("type", "INPUT")),
-            current_label=str(port_dict.get("current_label", "")),
-            new_label=port_dict.get("new_label"),
-            notes=str(port_dict.get("notes", "")),
+            port=int(port_dict["port"]),
+            type=str(port_dict.get("type", "INPUT")).strip(),
+            current_label=str(port_dict.get("current_label", "")).strip(),
+            new_label=new_label,
+            notes=str(port_dict.get("notes", "")).strip(),
         )
 
     def _port_to_dict(self, port_data: PortData) -> Dict[str, Any]:
