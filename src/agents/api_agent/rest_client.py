@@ -116,11 +116,18 @@ class RestClient:
         return None
 
     async def test_connection(self) -> bool:
-        """Test connection by reading the system name."""
+        """Test connection by querying the system name endpoint.
+
+        Checks that the router responds with a valid API response structure,
+        not that the value is non-empty (system name may be unconfigured).
+        """
         endpoint = APIEndpoint.get_system_name()
         result = await self._get(endpoint, timeout=5)
-        if result and ResponseParser.parse_param_response(result):
-            return True
+        if result and isinstance(result, dict):
+            # A valid KUMO API response has paramid or name fields.
+            # An empty system name is still a successful connection.
+            if "value" in result or "value_name" in result or "paramid" in result:
+                return True
         return False
 
     async def get_system_name(self) -> str:
