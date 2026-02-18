@@ -232,14 +232,10 @@ class TelnetClient:
             await asyncio.sleep(DELAY_TELNET_COMMAND)
 
         total_ports = port_count * 2
-        if success_count > 0:
-            logger.info(
-                f"Telnet download successful - {success_count}/{total_ports} ports retrieved"
-            )
-            return Protocol.TELNET, labels
-        else:
-            logger.warning("Telnet label download failed - no valid responses")
-            return Protocol.TELNET, None
+        logger.info(
+            f"Telnet download complete - {success_count}/{total_ports} ports retrieved"
+        )
+        return Protocol.TELNET, labels
 
     async def upload_label(
         self, port: int, port_type: str, label: str
@@ -247,7 +243,7 @@ class TelnetClient:
         """Upload a single label to the router.
 
         Args:
-            port: Port number (1-32)
+            port: Port number (1-64)
             port_type: "INPUT" or "OUTPUT"
             label: Label text to set
 

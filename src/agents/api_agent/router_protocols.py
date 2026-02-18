@@ -207,6 +207,8 @@ class DefaultLabelGenerator:
 
     @staticmethod
     def generate_default_labels(port_count: int = 32) -> Dict[str, List[str]]:
+        if port_count not in (16, 32, 64):
+            port_count = 32
         return {
             "inputs": [f"Source {i + 1}" for i in range(port_count)],
             "outputs": [f"Dest {i + 1}" for i in range(port_count)],

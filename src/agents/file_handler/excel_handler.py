@@ -144,9 +144,10 @@ class ExcelHandler:
         type_validation.errorTitle = "Invalid Type"
 
         # Apply to all data rows
-        max_row = 65 if create_template else len(data.ports) + 1
-        type_validation.add(f"B2:B{max_row}")
-        worksheet.add_data_validation(type_validation)
+        max_row = 65 if create_template else max(len(data.ports) + 1, 2)
+        if max_row >= 2:
+            type_validation.add(f"B2:B{max_row}")
+            worksheet.add_data_validation(type_validation)
 
         # Auto-fit columns
         self._autofit_columns(worksheet)

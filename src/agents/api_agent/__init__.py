@@ -213,10 +213,9 @@ class APIAgent:
                         upload_data, progress_callback
                     )
 
-                    if success_count > 0:
-                        logger.info(f"Upload via REST: {success_count} succeeded, {error_count} failed")
-                        await self._emit_upload_success_event(labels_to_upload, success_count, error_count)
-                        return success_count, error_count, error_messages
+                    logger.info(f"Upload via REST: {success_count} succeeded, {error_count} failed")
+                    await self._emit_upload_success_event(labels_to_upload, success_count, error_count)
+                    return success_count, error_count, error_messages
 
             except Exception as e:
                 logger.warning(f"REST upload failed: {e}")

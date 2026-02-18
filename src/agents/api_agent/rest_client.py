@@ -288,7 +288,12 @@ class RestClient:
 
         result = await self._get(endpoint)
         if result is not None:
-            return True, None
+            # Verify the response contains expected data
+            if isinstance(result, dict) and result.get("value") is not None:
+                return True, None
+            # Even without a value field, a non-error dict response means success
+            if isinstance(result, dict) and "error" not in result:
+                return True, None
         return False, f"Failed to set {port_type} {port} label"
 
     async def _upload_single(

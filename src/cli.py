@@ -103,6 +103,7 @@ def parse_pasted_labels(text: str, port_type: str = "INPUT", start_port: int = 1
     labels = []
     lines = [line for line in text.strip().splitlines() if line.strip()]
 
+    label_idx = 0
     for idx, line in enumerate(lines):
         cols = line.split("\t")
         cols = [c.strip() for c in cols]
@@ -116,7 +117,7 @@ def parse_pasted_labels(text: str, port_type: str = "INPUT", start_port: int = 1
             try:
                 port_num = int(cols[0])
             except ValueError:
-                port_num = start_port + idx
+                port_num = start_port + label_idx
             ptype = cols[1].upper() if cols[1].upper() in ("INPUT", "OUTPUT") else port_type
             label_text = cols[2]
         elif len(cols) == 2:
@@ -129,11 +130,11 @@ def parse_pasted_labels(text: str, port_type: str = "INPUT", start_port: int = 1
                 # First col might be type
                 ptype = cols[0].upper() if cols[0].upper() in ("INPUT", "OUTPUT") else port_type
                 label_text = cols[1]
-                port_num = start_port + idx
+                port_num = start_port + label_idx
         else:
             # Single column: just the label name
             label_text = cols[0]
-            port_num = start_port + idx
+            port_num = start_port + label_idx
             ptype = port_type
 
         if not label_text:
@@ -145,6 +146,7 @@ def parse_pasted_labels(text: str, port_type: str = "INPUT", start_port: int = 1
             current_label="",
             new_label=label_text,
         ))
+        label_idx += 1
 
     return labels
 
