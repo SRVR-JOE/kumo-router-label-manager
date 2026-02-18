@@ -6,6 +6,7 @@ Uses the real AJA KUMO REST API:
 """
 
 import asyncio
+import json
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -88,10 +89,18 @@ class RestClient:
                 async with self._session.get(url, timeout=req_timeout) as response:
                     if response.status == 200:
                         try:
-                            return await response.json()
+                            # KUMO routers return JSON with text/html content-type,
+                            # so skip content-type validation
+                            return await response.json(content_type=None)
                         except Exception:
                             text = await response.text()
-                            return {"value": text.strip()} if text.strip() else None
+                            if text.strip():
+                                # Try parsing as JSON manually
+                                try:
+                                    return json.loads(text.strip())
+                                except json.JSONDecodeError:
+                                    return {"value": text.strip()}
+                            return None
                     else:
                         logger.warning(f"HTTP {response.status}: {endpoint}")
             except asyncio.TimeoutError:
@@ -134,19 +143,44 @@ class RestClient:
                 return version
         return "Unknown"
 
+    async def _probe_port(self, port: int) -> bool:
+        """Check if a port exists on the router (single attempt, no retries).
+
+        Used for port count detection where a failed probe is a definitive
+        answer, not a transient error worth retrying.
+        """
+        if self._session is None:
+            await self.connect()
+
+        endpoint = APIEndpoint.get_source_name(port)
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            req_timeout = aiohttp.ClientTimeout(total=3)
+            async with self._session.get(url, timeout=req_timeout) as response:
+                if response.status == 200:
+                    try:
+                        data = await response.json(content_type=None)
+                    except Exception:
+                        return False
+                    return ResponseParser.parse_param_response(data) is not None
+                return False
+        except Exception:
+            return False
+
     async def detect_port_count(self) -> int:
-        """Detect router size (16, 32, or 64 ports)."""
+        """Detect router size (16, 32, or 64 ports).
+
+        Uses single-attempt probes since a failed probe means the port
+        doesn't exist, not a transient error.
+        """
         # Check for 64-port
-        endpoint = APIEndpoint.get_source_name(33)
-        result = await self._get(endpoint, timeout=3)
-        if result and ResponseParser.parse_param_response(result):
+        if await self._probe_port(33):
             self._port_count = 64
             return 64
 
-        # Check for 32-port (try source 17)
-        endpoint = APIEndpoint.get_source_name(17)
-        result = await self._get(endpoint, timeout=3)
-        if result and ResponseParser.parse_param_response(result):
+        # Check for 32-port
+        if await self._probe_port(17):
             self._port_count = 32
             return 32
 

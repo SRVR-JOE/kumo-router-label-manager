@@ -84,6 +84,71 @@ def filedata_to_labels(data: FileData) -> List[Label]:
     return labels
 
 
+def parse_pasted_labels(text: str, port_type: str = "INPUT", start_port: int = 1) -> List[Label]:
+    """Parse tab-separated text pasted from Excel into Label objects.
+
+    Supports multiple formats:
+    - Single column: just label names (one per line)
+    - Two columns: port_number <tab> label_name
+    - Three+ columns: port_number <tab> type <tab> label_name
+
+    Args:
+        text: Raw pasted text (tab-separated, newline-delimited)
+        port_type: Default port type when not specified in data
+        start_port: Starting port number for single-column format
+
+    Returns:
+        List of Label objects with new_label set
+    """
+    labels = []
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+
+    for idx, line in enumerate(lines):
+        cols = line.split("\t")
+        cols = [c.strip() for c in cols]
+
+        # Skip header rows
+        if idx == 0 and cols[0].lower() in ("port", "#", "number", "port_number"):
+            continue
+
+        if len(cols) >= 3:
+            # Three+ columns: port, type, label (matches Excel template layout)
+            try:
+                port_num = int(cols[0])
+            except ValueError:
+                port_num = start_port + idx
+            ptype = cols[1].upper() if cols[1].upper() in ("INPUT", "OUTPUT") else port_type
+            label_text = cols[2]
+        elif len(cols) == 2:
+            # Two columns: port, label OR type, label
+            try:
+                port_num = int(cols[0])
+                label_text = cols[1]
+                ptype = port_type
+            except ValueError:
+                # First col might be type
+                ptype = cols[0].upper() if cols[0].upper() in ("INPUT", "OUTPUT") else port_type
+                label_text = cols[1]
+                port_num = start_port + idx
+        else:
+            # Single column: just the label name
+            label_text = cols[0]
+            port_num = start_port + idx
+            ptype = port_type
+
+        if not label_text:
+            continue
+
+        labels.append(Label(
+            port_number=port_num,
+            port_type=PortType(ptype),
+            current_label="",
+            new_label=label_text,
+        ))
+
+    return labels
+
+
 def display_labels_table(labels: List[Label], title: str = "Router Labels") -> None:
     """Display labels in a Rich table with inputs and outputs side by side."""
     inputs = [l for l in labels if l.port_type == PortType.INPUT]
@@ -384,6 +449,134 @@ class KumoManager:
             console.print(f"[red bold]Error:[/red bold] {e}")
             return False
 
+    async def paste_labels(
+        self,
+        port_type: str = "INPUT",
+        start_port: int = 1,
+        output_file: Optional[str] = None,
+        upload: bool = False,
+        test_mode: bool = False,
+    ) -> bool:
+        """Paste labels from Excel clipboard and optionally upload or save.
+
+        Reads tab-separated data from stdin (paste from Excel), parses it,
+        and either uploads to router, saves to file, or just displays.
+
+        Args:
+            port_type: Default port type (INPUT or OUTPUT)
+            start_port: Starting port number for single-column paste
+            output_file: Optional file path to save parsed labels
+            upload: If True, upload to router
+            test_mode: If True, show what would happen without uploading
+        """
+        console.print(
+            Panel(
+                "[bold cyan]Paste rows from Excel below[/bold cyan]\n"
+                "[dim]Supported formats:[/dim]\n"
+                "  [dim]-[/dim] Label names (one per line)\n"
+                "  [dim]-[/dim] Port [tab] Label\n"
+                "  [dim]-[/dim] Port [tab] Type [tab] Label\n"
+                "[dim]Press Ctrl+D (Linux/Mac) or Ctrl+Z (Windows) when done[/dim]",
+                border_style="cyan",
+                padding=(0, 2),
+            )
+        )
+
+        try:
+            pasted_text = sys.stdin.read()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            return False
+
+        if not pasted_text.strip():
+            console.print("[yellow]No data pasted.[/yellow]")
+            return False
+
+        try:
+            labels = parse_pasted_labels(pasted_text, port_type, start_port)
+        except Exception as e:
+            console.print(f"[red bold]Error parsing pasted data:[/red bold] {e}")
+            return False
+
+        if not labels:
+            console.print("[yellow]No valid labels found in pasted data.[/yellow]")
+            return False
+
+        console.print(
+            f"\n[green]Parsed [bold]{len(labels)}[/bold] labels from pasted data[/green]"
+        )
+        display_labels_table(labels, title="Pasted Labels")
+
+        # Save to file if requested
+        if output_file:
+            output_path = Path(output_file)
+            try:
+                file_data = labels_to_filedata(labels)
+                self.file_handler.save(output_path, file_data)
+                console.print(Panel(
+                    f"[green bold]Saved to [cyan]{output_file}[/cyan][/green bold]",
+                    border_style="green",
+                    padding=(0, 2),
+                ))
+            except Exception as e:
+                console.print(f"[red bold]Error saving:[/red bold] {e}")
+                return False
+
+        # Upload to router if requested
+        if upload and not test_mode:
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(bar_width=30),
+                    TaskProgressColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(
+                        f"[cyan]Connecting to {self.settings.router_ip}...", total=2
+                    )
+                    await self.api_agent.connect()
+                    progress.update(task, advance=1)
+
+                    changes = [l for l in labels if l.has_changes()]
+                    progress.update(
+                        task,
+                        description=f"[cyan]Uploading {len(changes)} labels...",
+                    )
+                    success_count, error_count, errors = await self.api_agent.upload_labels(labels)
+                    progress.update(task, advance=1)
+
+                console.print()
+                if error_count == 0:
+                    console.print(Panel(
+                        f"[green bold]Uploaded {success_count} labels successfully[/green bold]",
+                        border_style="green",
+                        padding=(0, 2),
+                    ))
+                else:
+                    console.print(Panel(
+                        f"[yellow]Uploaded {success_count}, [red]{error_count} failed[/red][/yellow]",
+                        border_style="yellow",
+                        padding=(0, 2),
+                    ))
+                    for err in errors:
+                        console.print(f"  [red]-[/red] {err}")
+                    return error_count == 0
+            except Exception as e:
+                console.print(f"[red bold]Upload error:[/red bold] {e}")
+                return False
+            finally:
+                await self.api_agent.disconnect()
+
+        elif test_mode:
+            changes = [l for l in labels if l.has_changes()]
+            console.print(
+                f"\n[yellow bold]TEST MODE[/yellow bold] - "
+                f"Would upload [bold]{len(changes)}[/bold] label changes"
+            )
+
+        return True
+
     def view_file(self, input_file: str) -> bool:
         """View labels from a file without connecting to router."""
         input_path = Path(input_file)
@@ -414,6 +607,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  kumo-cli status --ip 192.168.1.100\n"
             "  kumo-cli template labels.xlsx\n"
             "  kumo-cli view labels.csv\n"
+            "  kumo-cli paste --type INPUT --upload --ip 192.168.1.100\n"
+            "  kumo-cli paste --type OUTPUT --save labels.csv\n"
         ),
     )
     parser.add_argument(
@@ -444,6 +639,36 @@ def build_parser() -> argparse.ArgumentParser:
     # View command
     vw = subparsers.add_parser("view", help="View labels from a file")
     vw.add_argument("input", help="Input file path (.xlsx, .csv, .json)")
+
+    # Paste command
+    ps = subparsers.add_parser(
+        "paste",
+        help="Paste labels from Excel clipboard (tab-separated stdin)",
+    )
+    ps.add_argument(
+        "--type",
+        choices=["INPUT", "OUTPUT"],
+        default="INPUT",
+        help="Default port type for pasted labels (default: INPUT)",
+    )
+    ps.add_argument(
+        "--start",
+        type=int,
+        default=1,
+        help="Starting port number for single-column paste (default: 1)",
+    )
+    ps.add_argument(
+        "--save",
+        metavar="FILE",
+        help="Save parsed labels to file (.xlsx, .csv, .json)",
+    )
+    ps.add_argument("--ip", help="KUMO router IP address")
+    ps.add_argument(
+        "--upload", action="store_true", help="Upload pasted labels to router"
+    )
+    ps.add_argument(
+        "--test", action="store_true", help="Dry run (show changes only)"
+    )
 
     return parser
 
@@ -478,6 +703,16 @@ def main() -> None:
             success = manager.create_template(args.output)
         elif args.command == "view":
             success = manager.view_file(args.input)
+        elif args.command == "paste":
+            success = asyncio.run(
+                manager.paste_labels(
+                    port_type=args.type,
+                    start_port=args.start,
+                    output_file=args.save,
+                    upload=args.upload,
+                    test_mode=args.test,
+                )
+            )
         else:
             console.print(f"[red]Unknown command:[/red] {args.command}")
             sys.exit(1)
