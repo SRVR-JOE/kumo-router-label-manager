@@ -5,7 +5,8 @@ Provides unified interface for loading and saving port data across multiple form
 """
 from pathlib import Path
 from typing import Optional, Literal, Union
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 
 from .schema import FileData, PortData
 from .excel_handler import ExcelHandler
@@ -15,6 +16,9 @@ from ...models.events import FileEvent, EventType
 
 
 FileFormat = Literal["excel", "csv", "json"]
+
+
+logger = logging.getLogger(__name__)
 
 
 class FileHandlerAgent:
@@ -95,7 +99,7 @@ class FileHandlerAgent:
                 "port_count": len(data.ports),
                 "input_count": len(data.get_inputs()),
                 "output_count": len(data.get_outputs()),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
             return data
@@ -105,7 +109,7 @@ class FileHandlerAgent:
                 "file_path": str(file_path),
                 "format": file_format,
                 "error": str(e),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             raise
 
@@ -161,7 +165,7 @@ class FileHandlerAgent:
                 "file_path": str(file_path),
                 "format": file_format,
                 "port_count": len(data.ports),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
         except Exception as e:
@@ -169,7 +173,7 @@ class FileHandlerAgent:
                 "file_path": str(file_path),
                 "format": file_format,
                 "error": str(e),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             raise
 
@@ -212,7 +216,7 @@ class FileHandlerAgent:
         self._emit_event("file.template_created", {
             "file_path": str(file_path),
             "format": file_format,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
     def _detect_format(self, file_path: Path) -> FileFormat:
@@ -262,8 +266,8 @@ class FileHandlerAgent:
                     except RuntimeError:
                         # No running event loop - skip async publish
                         pass
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to emit event '%s': %s", event_name, e)
 
     @property
     def last_loaded_file(self) -> Optional[Path]:

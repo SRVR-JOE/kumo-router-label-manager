@@ -155,13 +155,20 @@ class TelnetCommand:
         return cls.QUERY_OUTPUT_LABEL.format(port=port)
 
     @classmethod
+    def _escape_label(cls, label: str) -> str:
+        """Escape special characters to prevent telnet command injection."""
+        escaped = label.replace('"', '\\"')
+        escaped = escaped.replace('\n', '').replace('\r', '')
+        return escaped
+
+    @classmethod
     def set_input(cls, port: int, label: str) -> str:
-        escaped_label = label.replace('"', '\\"')
+        escaped_label = cls._escape_label(label)
         return cls.SET_INPUT_LABEL.format(port=port, label=escaped_label)
 
     @classmethod
     def set_output(cls, port: int, label: str) -> str:
-        escaped_label = label.replace('"', '\\"')
+        escaped_label = cls._escape_label(label)
         return cls.SET_OUTPUT_LABEL.format(port=port, label=escaped_label)
 
     @classmethod

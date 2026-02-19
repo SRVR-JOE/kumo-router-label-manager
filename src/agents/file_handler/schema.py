@@ -10,8 +10,8 @@ class PortData(BaseModel):
 
     port: int = Field(..., ge=1, le=64, description="Port number (1-64)")
     type: Literal["INPUT", "OUTPUT"] = Field(..., description="Port type")
-    current_label: str = Field(default="", max_length=100, description="Current label")
-    new_label: Optional[str] = Field(default=None, max_length=100, description="New label to apply")
+    current_label: str = Field(default="", max_length=50, description="Current label")
+    new_label: Optional[str] = Field(default=None, max_length=50, description="New label to apply")
     notes: str = Field(default="", max_length=500, description="Additional notes")
 
     @field_validator("port")

@@ -5,7 +5,7 @@ through the event bus.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from enum import Enum
 
@@ -30,7 +30,7 @@ class BaseEvent:
         data: Dictionary containing event-specific data
     """
 
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     event_type: EventType = EventType.SYSTEM
     data: Dict[str, Any] = field(default_factory=dict)
 

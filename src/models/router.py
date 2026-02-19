@@ -7,7 +7,7 @@ configuration and state.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class ConnectionStatus(Enum):
@@ -91,7 +91,7 @@ class Router:
     def set_connected(self) -> None:
         """Mark router as connected and update timestamp."""
         self.connection_status = ConnectionStatus.CONNECTED
-        self.last_connected = datetime.utcnow()
+        self.last_connected = datetime.now(timezone.utc)
         self.error_message = None
 
     def set_disconnected(self, error_message: Optional[str] = None) -> None:
