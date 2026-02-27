@@ -9,7 +9,7 @@ param(
     [switch]$InstallAfterDeploy
 )
 
-Write-Host "KUMO Tools Deployment Script v2.0" -ForegroundColor Cyan
+Write-Host "KUMO Tools Deployment Script v2.0" -ForegroundColor Magenta
 Write-Host "Deploying complete package to: $TargetDirectory" -ForegroundColor Yellow
 
 # Create target directory
@@ -52,7 +52,7 @@ $psLauncher = @"
 # KUMO Tools PowerShell Launcher
 Set-Location -Path "$TargetDirectory"
 
-Write-Host "KUMO Router Label Manager v2.0" -ForegroundColor Cyan
+Write-Host "KUMO Router Label Manager v2.0" -ForegroundColor Magenta
 Write-Host "Quick Commands:" -ForegroundColor Yellow
 Write-Host "  gui       - Launch GUI application"
 Write-Host "  download  - Download current labels"

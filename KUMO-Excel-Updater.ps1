@@ -96,7 +96,7 @@ function Get-KumoCurrentLabels {
     $labelsRetrieved = $false
     
     # Method 1: AJA KUMO REST API (correct /config?action=get&paramid= endpoints)
-    Write-Host "Querying KUMO REST API..." -ForegroundColor Cyan
+    Write-Host "Querying KUMO REST API..." -ForegroundColor Magenta
 
     # Get router name
     try {
@@ -160,7 +160,7 @@ function Get-KumoCurrentLabels {
     
     # Method 3: Try Telnet if REST completely failed
     if (-not $labelsRetrieved -or $allLabels.Count -eq 0) {
-        Write-Host "Attempting Telnet method..." -ForegroundColor Cyan
+        Write-Host "Attempting Telnet method..." -ForegroundColor Magenta
         
         try {
             $tcpClient = New-Object System.Net.Sockets.TcpClient
@@ -434,7 +434,7 @@ function New-KumoLabelTemplate {
 
     # If IP provided, auto-detect router model and download current labels
     if ($KumoIP -and $KumoIP -ne "") {
-        Write-Host "Connecting to KUMO at $KumoIP to auto-detect model..." -ForegroundColor Cyan
+        Write-Host "Connecting to KUMO at $KumoIP to auto-detect model..." -ForegroundColor Magenta
 
         # Detect model
         $modelInfo = Get-KumoRouterModel -IP $KumoIP
@@ -447,7 +447,7 @@ function New-KumoLabelTemplate {
         if ($fwVersion) { Write-Host "  Firmware: $fwVersion" -ForegroundColor Green }
 
         # Download current labels
-        Write-Host "Downloading current labels..." -ForegroundColor Cyan
+        Write-Host "Downloading current labels..." -ForegroundColor Magenta
         for ($i = 1; $i -le $inputCount; $i++) {
             try {
                 $uri = "http://$KumoIP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_1"
@@ -634,7 +634,7 @@ function Update-KumoLabelsREST {
 
     foreach ($item in $LabelData) {
         try {
-            Write-Host "Updating $($item.Type) $($item.Port): $($item.New_Label)" -ForegroundColor Cyan
+            Write-Host "Updating $($item.Type) $($item.Port): $($item.New_Label)" -ForegroundColor Magenta
 
             # Build correct eParamID
             $paramId = if ($item.Type.ToUpper() -eq "INPUT") {
@@ -694,7 +694,7 @@ function Update-KumoLabelsTelnet {
         foreach ($item in $LabelData) {
             try {
                 $command = "LABEL $($item.Type) $($item.Port) `"$($item.New_Label)`""
-                Write-Host "Sending: $command" -ForegroundColor Cyan
+                Write-Host "Sending: $command" -ForegroundColor Magenta
                 
                 $writer.WriteLine($command)
                 $writer.Flush()
@@ -739,7 +739,7 @@ if ($DownloadLabels) {
         $docsDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "KUMO_Labels"
         if (-not (Test-Path $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
         $DownloadPath = Join-Path $docsDir "KUMO_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
-        Write-Host "Saving to: $DownloadPath" -ForegroundColor Cyan
+        Write-Host "Saving to: $DownloadPath" -ForegroundColor Magenta
     }
     
     # Test connectivity

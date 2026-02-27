@@ -23,7 +23,7 @@ Write-Host @"
 ║                                                                               ║
 ║  Created for Solotech Live Event Production                                  ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
-"@ -ForegroundColor Cyan
+"@ -ForegroundColor Magenta
 
 # Handle uninstall
 if ($Uninstall) {

@@ -34,17 +34,17 @@ function Invoke-SecureWebRequest {
 
 # ─── Color Theme ─────────────────────────────────────────────────────────────
 
-$clrBg        = [System.Drawing.Color]::FromArgb(30, 30, 34)
-$clrPanel     = [System.Drawing.Color]::FromArgb(42, 42, 48)
-$clrField     = [System.Drawing.Color]::FromArgb(55, 55, 62)
-$clrBorder    = [System.Drawing.Color]::FromArgb(70, 70, 78)
+$clrBg        = [System.Drawing.Color]::FromArgb(30, 25, 40)
+$clrPanel     = [System.Drawing.Color]::FromArgb(40, 35, 55)
+$clrField     = [System.Drawing.Color]::FromArgb(75, 60, 100)
+$clrBorder    = [System.Drawing.Color]::FromArgb(70, 60, 90)
 $clrText      = [System.Drawing.Color]::White
-$clrDimText   = [System.Drawing.Color]::FromArgb(160, 160, 170)
-$clrAccent    = [System.Drawing.Color]::FromArgb(0, 122, 255)
-$clrSuccess   = [System.Drawing.Color]::FromArgb(52, 199, 89)
-$clrWarning   = [System.Drawing.Color]::FromArgb(255, 204, 0)
-$clrDanger    = [System.Drawing.Color]::FromArgb(255, 69, 58)
-$clrChanged   = [System.Drawing.Color]::FromArgb(255, 214, 10)
+$clrDimText   = [System.Drawing.Color]::FromArgb(190, 180, 210)
+$clrAccent    = [System.Drawing.Color]::FromArgb(103, 58, 183)
+$clrSuccess   = [System.Drawing.Color]::FromArgb(0, 133, 117)
+$clrWarning   = [System.Drawing.Color]::FromArgb(247, 99, 12)
+$clrDanger    = [System.Drawing.Color]::FromArgb(232, 17, 35)
+$clrChanged   = [System.Drawing.Color]::FromArgb(179, 136, 255)
 
 # ─── AJA KUMO REST API Helpers ────────────────────────────────────────────────
 # The real KUMO REST API uses /config?action=get|set&paramid=eParamID_*&configid=0
@@ -365,10 +365,10 @@ $dataGrid.ColumnHeadersHeight = 34
 $dataGrid.RowTemplate.Height = 28
 $dataGrid.DefaultCellStyle.BackColor = $clrBg
 $dataGrid.DefaultCellStyle.ForeColor = $clrText
-$dataGrid.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(0, 88, 200)
+$dataGrid.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(103, 58, 183)
 $dataGrid.DefaultCellStyle.SelectionForeColor = $clrText
 $dataGrid.DefaultCellStyle.Padding = New-Object System.Windows.Forms.Padding(4, 2, 4, 2)
-$dataGrid.AlternatingRowsDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(36, 36, 40)
+$dataGrid.AlternatingRowsDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(45, 40, 60)
 $dataGrid.ColumnHeadersDefaultCellStyle.BackColor = $clrPanel
 $dataGrid.ColumnHeadersDefaultCellStyle.ForeColor = $clrDimText
 $dataGrid.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)

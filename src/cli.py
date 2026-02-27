@@ -44,14 +44,14 @@ def setup_logging(verbose: bool = False) -> None:
 def print_banner() -> None:
     """Print the application banner."""
     banner = Text()
-    banner.append("KUMO", style="bold cyan")
+    banner.append("KUMO", style="bold purple")
     banner.append(" Router Label Manager ", style="bold white")
-    banner.append(f"v{APP_VERSION}", style="dim cyan")
+    banner.append(f"v{APP_VERSION}", style="dim purple")
 
     console.print(Panel(
         banner,
         subtitle="[dim]AJA KUMO 16x16 / 32x32 / 64x64[/dim]",
-        border_style="cyan",
+        border_style="purple",
         padding=(0, 2),
     ))
 
@@ -111,10 +111,10 @@ def display_labels_table(labels: List[Label], title: str = "Router Labels") -> N
         )
 
     output_table = Table(
-        title="[bold blue]OUTPUTS (Destinations)[/bold blue]",
+        title="[bold purple]OUTPUTS (Destinations)[/bold purple]",
         box=box.ROUNDED,
-        border_style="blue",
-        header_style="bold blue",
+        border_style="purple",
+        header_style="bold purple",
         show_lines=False,
         padding=(0, 1),
     )
@@ -141,7 +141,7 @@ def display_labels_table(labels: List[Label], title: str = "Router Labels") -> N
     summary = (
         f"  [dim]Total:[/dim] [bold]{total}[/bold] labels"
         f"  [dim]|[/dim]  [dim]Inputs:[/dim] [green]{len(inputs)}[/green]"
-        f"  [dim]|[/dim]  [dim]Outputs:[/dim] [blue]{len(outputs)}[/blue]"
+        f"  [dim]|[/dim]  [dim]Outputs:[/dim] [purple]{len(outputs)}[/purple]"
     )
     if changes:
         summary += f"  [dim]|[/dim]  [dim]Pending changes:[/dim] [yellow]{changes}[/yellow]"
@@ -181,18 +181,18 @@ class KumoManager:
                 console=console,
             ) as progress:
                 task = progress.add_task(
-                    f"[cyan]Connecting to {self.settings.router_ip}...", total=3
+                    f"[purple]Connecting to {self.settings.router_ip}...", total=3
                 )
                 await self.api_agent.connect()
                 progress.update(task, advance=1)
 
-                progress.update(task, description="[cyan]Downloading labels (parallel)...")
+                progress.update(task, description="[purple]Downloading labels (parallel)...")
                 labels = await self.api_agent.download_labels()
                 progress.update(task, advance=1)
 
                 progress.update(
                     task,
-                    description=f"[cyan]Saving to {output_path.name}...",
+                    description=f"[purple]Saving to {output_path.name}...",
                 )
                 file_data = labels_to_filedata(labels)
                 self.file_handler.save(output_path, file_data)
@@ -202,7 +202,7 @@ class KumoManager:
             display_labels_table(labels, title=f"Labels from {self.settings.router_ip}")
             console.print()
             console.print(Panel(
-                f"[green bold]Saved {len(labels)} labels to [cyan]{output_file}[/cyan][/green bold]",
+                f"[green bold]Saved {len(labels)} labels to [purple]{output_file}[/purple][/green bold]",
                 border_style="green",
                 padding=(0, 2),
             ))
@@ -232,7 +232,7 @@ class KumoManager:
                 console=console,
             ) as progress:
                 task = progress.add_task(
-                    f"[cyan]Loading {input_path.name}...", total=3
+                    f"[purple]Loading {input_path.name}...", total=3
                 )
                 file_data = self.file_handler.load(input_path)
                 labels = filedata_to_labels(file_data)
@@ -257,14 +257,14 @@ class KumoManager:
 
                 progress.update(
                     task,
-                    description=f"[cyan]Connecting to {self.settings.router_ip}...",
+                    description=f"[purple]Connecting to {self.settings.router_ip}...",
                 )
                 await self.api_agent.connect()
                 progress.update(task, advance=1)
 
                 progress.update(
                     task,
-                    description=f"[cyan]Uploading {len(changes)} labels (parallel)...",
+                    description=f"[purple]Uploading {len(changes)} labels (parallel)...",
                 )
                 success_count, error_count, errors = await self.api_agent.upload_labels(labels)
                 progress.update(task, advance=1)
@@ -304,7 +304,7 @@ class KumoManager:
                 console=console,
             ) as progress:
                 progress.add_task(
-                    f"[cyan]Querying {self.settings.router_ip}...", total=None
+                    f"[purple]Querying {self.settings.router_ip}...", total=None
                 )
                 async with RestClient(self.settings.router_ip) as rest:
                     connected = await rest.test_connection()
@@ -322,7 +322,7 @@ class KumoManager:
 
             info_table = Table(
                 box=box.ROUNDED,
-                border_style="cyan",
+                border_style="purple",
                 show_header=False,
                 padding=(0, 2),
             )
@@ -349,8 +349,8 @@ class KumoManager:
 
             console.print(Panel(
                 info_table,
-                title="[bold cyan]Router Status[/bold cyan]",
-                border_style="cyan",
+                title="[bold purple]Router Status[/bold purple]",
+                border_style="purple",
                 padding=(1, 1),
             ))
             return connected
@@ -374,7 +374,7 @@ class KumoManager:
         try:
             self.file_handler.create_template(output_path)
             console.print(Panel(
-                f"[green bold]Template created:[/green bold] [cyan]{output_file}[/cyan]\n"
+                f"[green bold]Template created:[/green bold] [purple]{output_file}[/purple]\n"
                 f"[dim]Contains 64 ports (32 inputs + 32 outputs)[/dim]",
                 border_style="green",
                 padding=(0, 2),
