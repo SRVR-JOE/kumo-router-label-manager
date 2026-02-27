@@ -1,0 +1,47 @@
+error:
+
+
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:774 char:49
++             throw "Could not connect to $IP â€” no KUMO (HTTP/80) or  ...
++                                                 ~~
+Unexpected token 'no' in expression or statement.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2194 char:18
++ # â”€â”€â”€ Find & Replace â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ ...
++                  ~
+The ampersand (&) character is not allowed. The & operator is reserved for future use; wrap an ampersand in double
+quotation marks ("&") to pass it as part of a string.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2576 char:52
++         "Template created for $modelName ($inCount inputs / $outCount ...
++                                                    ~~~~~~
+Unexpected token 'inputs' in expression or statement.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2576 char:51
++         "Template created for $modelName ($inCount inputs / $outCount ...
++                                                   ~
+Missing closing ')' in expression.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2561 char:17
++         } catch {
++                 ~
+Missing closing '}' in statement block or type definition.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2555 char:20
++     if ($hasExcel) {
++                    ~
+Missing closing '}' in statement block or type definition.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2448 char:24
++ $btnTemplate.Add_Click({
++                        ~
+Missing closing '}' in statement block or type definition.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2576 char:79
++ ... for $modelName ($inCount inputs / $outCount outputs)`n`nFile: $savedP ...
++                                                         ~~~~~~~~~
+Unexpected token '`n`nFile:' in expression or statement.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2176 char:24
++                 } else {
++                        ~
+Missing closing '}' in statement block or type definition.
+At C:\Users\Solotech\Documents\GitHub\kumo-router-label-manager\KUMO-Label-Manager.ps1:2170 char:49
++             if ($dlg.FileName -match "\.xlsx$") {
++                                                 ~
+Missing closing '}' in statement block or type definition.
+Not all parse errors were reported.  Correct the reported errors and try again.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
