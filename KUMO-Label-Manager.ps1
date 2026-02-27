@@ -171,6 +171,7 @@ public class ConnectionIndicator : Control
         set
         {
             _state = value;
+            if (_pulseTimer == null) { Invalidate(); return; }
             if (value == ConnectionState.Connecting)
             {
                 if (!_pulseTimer.Enabled) _pulseTimer.Start();
@@ -427,25 +428,32 @@ function Connect-KumoRouter {
         if ($fw) { $firmware = $fw }
     } catch { }
 
-    # Detect port count
+    # Detect port count (retry once on failure to avoid misdetection from network glitch)
     $inputCount = 32
-    try {
+    $test64 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
+    if ($test64 -eq $null) {
+        Start-Sleep -Milliseconds 200
         $test64 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
-        if ($test64 -ne $null) { $inputCount = 64 }
-    } catch { }
+    }
+    if ($test64 -ne $null) { $inputCount = 64 }
+
     if ($inputCount -eq 32) {
-        try {
+        $test17 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
+        if ($test17 -eq $null) {
+            Start-Sleep -Milliseconds 200
             $test17 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
-            if ($test17 -eq $null) { $inputCount = 16 }
-        } catch { $inputCount = 16 }
+        }
+        if ($test17 -eq $null) { $inputCount = 16 }
     }
 
     $outputCount = $inputCount
     if ($inputCount -eq 16) {
-        try {
+        $testDest5 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination5_Line_1"
+        if ($testDest5 -eq $null) {
+            Start-Sleep -Milliseconds 200
             $testDest5 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination5_Line_1"
-            if ($testDest5 -eq $null) { $outputCount = 4 }
-        } catch { $outputCount = 4 }
+        }
+        if ($testDest5 -eq $null) { $outputCount = 4 }
     }
 
     $modelName = switch ("$inputCount`x$outputCount") {
@@ -490,9 +498,17 @@ function Download-KumoLabels {
     }
 
     if ($restSuccess) {
+        $consecutiveFailures = 0
         for ($i = 1; $i -le $OutputCount; $i++) {
             $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Line_1"
-            if (-not $label -or $label -eq "") { $label = "Dest $i" }
+            if ($label -eq $null) {
+                $label = "Dest $i"
+                $consecutiveFailures++
+                if ($consecutiveFailures -ge 3) { break }
+            } else {
+                $consecutiveFailures = 0
+                if ($label -eq "") { $label = "Dest $i" }
+            }
             $labels.Add([PSCustomObject]@{
                 Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
             }) | Out-Null
@@ -562,6 +578,8 @@ function Upload-KumoLabels-Telnet {
     param([string]$IP, [array]$Items)
     # Sends all items over a single Telnet connection. Returns list of succeeded items.
     $succeeded = [System.Collections.Generic.List[object]]::new()
+    $tcp = $null
+    $w = $null
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
         $tcp.Connect($IP, 23)
@@ -574,10 +592,16 @@ function Upload-KumoLabels-Telnet {
                 $w.Flush()
                 Start-Sleep -Milliseconds 150
                 $succeeded.Add($item)
-            } catch { }
+            } catch {
+                # Per-label write failed — skip this label but continue with the rest
+            }
         }
-        try { $w.Close(); $tcp.Close() } catch { }
-    } catch { }
+    } catch {
+        # Connection failed — return whatever succeeded so far
+    } finally {
+        try { if ($w)   { $w.Close() } } catch { }
+        try { if ($tcp) { $tcp.Close() } } catch { }
+    }
     return $succeeded
 }
 
@@ -693,6 +717,8 @@ function Download-VideohubLabels {
     # For simplicity, re-connects to get a fresh state dump each time.
     # Closes the old connection first.
     if ($global:videohubTcp -ne $null) {
+        try { $global:videohubWriter.Dispose() } catch { }
+        try { $global:videohubReader.Dispose() } catch { }
         try { $global:videohubTcp.Close() } catch { }
         $global:videohubTcp    = $null
         $global:videohubWriter = $null
@@ -729,6 +755,7 @@ function Connect-Router {
                 }
                 try { $testTcp.Close() } catch { }
             } else {
+                try { $testTcp.EndConnect($connectResult) } catch { }
                 try { $testTcp.Close() } catch { }
             }
         } catch {
@@ -801,6 +828,10 @@ function Download-RouterLabels {
         # Restore snapshot on failure so the grid isn't left empty
         $global:allLabels.Clear()
         foreach ($item in $snapshot) { $global:allLabels.Add($item) | Out-Null }
+        # If Videohub TCP globals were destroyed during the failed attempt, mark disconnected
+        if ($global:routerType -eq "Videohub" -and $global:videohubTcp -eq $null) {
+            $global:routerConnected = $false
+        }
         throw
     }
 
@@ -834,6 +865,10 @@ function Upload-RouterLabels {
         $sendBlock = {
             param([string]$BlockHeader, [array]$Items)
             if ($Items.Count -eq 0) { return $true }
+            # Always read current globals in case of reconnect
+            $writer = $global:videohubWriter
+            $reader = $global:videohubReader
+            $stream = $global:videohubTcp.GetStream()
             $sb = New-Object System.Text.StringBuilder
             $sb.Append("$BlockHeader`n") | Out-Null
             foreach ($item in $Items) {
@@ -1456,20 +1491,24 @@ $dataGrid.Add_CellPainting({
             $badgePath.AddArc($r, $t+$h2-$rad*2, $rad*2, $rad*2, 90, 90)
             $badgePath.CloseFigure()
 
-            $bgBrush = New-Object System.Drawing.SolidBrush($badgeColor)
-            $g.FillPath($bgBrush, $badgePath)
-            $bgBrush.Dispose()
-            $badgePath.Dispose()
+            $bgBrush = $null; $txtBrush = $null; $textFont = $null; $fmt = $null
+            try {
+                $bgBrush = New-Object System.Drawing.SolidBrush($badgeColor)
+                $g.FillPath($bgBrush, $badgePath)
 
-            $txtBrush = New-Object System.Drawing.SolidBrush($textColor)
-            $fmt = New-Object System.Drawing.StringFormat
-            $fmt.Alignment = [System.Drawing.StringAlignment]::Center
-            $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-            $textFont = New-Object System.Drawing.Font("Segoe UI", 7.5, [System.Drawing.FontStyle]::Bold)
-            $g.DrawString($val, $textFont, $txtBrush, $badgeRect, $fmt)
-            $txtBrush.Dispose()
-            $textFont.Dispose()
-            $fmt.Dispose()
+                $txtBrush = New-Object System.Drawing.SolidBrush($textColor)
+                $fmt = New-Object System.Drawing.StringFormat
+                $fmt.Alignment = [System.Drawing.StringAlignment]::Center
+                $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+                $textFont = New-Object System.Drawing.Font("Segoe UI", 7.5, [System.Drawing.FontStyle]::Bold)
+                $g.DrawString($val, $textFont, $txtBrush, $badgeRect, $fmt)
+            } finally {
+                if ($bgBrush)   { $bgBrush.Dispose() }
+                if ($badgePath) { $badgePath.Dispose() }
+                if ($txtBrush)  { $txtBrush.Dispose() }
+                if ($textFont)  { $textFont.Dispose() }
+                if ($fmt)       { $fmt.Dispose() }
+            }
         }
 
         $e.Handled = $true
@@ -1822,7 +1861,7 @@ $form.Add_KeyDown({
             $cmd = $global:undoStack.Pop()
             foreach ($lbl in $global:allLabels) {
                 if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type) {
-                    $global:redoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$cmd.OldValue })
+                    $global:redoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$cmd.NewValue })
                     $lbl.New_Label = $cmd.OldValue
                     break
                 }
@@ -1914,12 +1953,10 @@ $connectButton.Add_Click({
     $form.Refresh()
 
     if ($global:videohubTcp -ne $null) {
-        try {
-            if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
-            $global:videohubWriter.Dispose()
-            $global:videohubReader.Dispose()
-            $global:videohubTcp.Close()
-        } catch { }
+        if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
+        try { $global:videohubWriter.Dispose() } catch { }
+        try { $global:videohubReader.Dispose() } catch { }
+        try { $global:videohubTcp.Close() } catch { }
         $global:videohubTcp    = $null
         $global:videohubWriter = $null
         $global:videohubReader = $null
@@ -2019,7 +2056,7 @@ $btnDownload.Add_Click({
                 Export-Csv -Path $autoSavePath -NoTypeInformation
             Set-StatusMessage "Downloaded $($global:allLabels.Count) labels - saved to Documents\KUMO_Labels" "Success"
         } catch {
-            Set-StatusMessage "Downloaded $($global:allLabels.Count) labels from $($global:routerModel)" "Success"
+            Set-StatusMessage "Downloaded $($global:allLabels.Count) labels (auto-save failed)" "Warning"
         }
 
         Populate-Grid
@@ -2065,7 +2102,8 @@ $btnOpenFile.Add_Click({
                         $wb  = $excel.Workbooks.Open($dlg.FileName)
                         $ws = $null
                         try { $ws = $wb.Worksheets.Item("Videohub_Labels") } catch {}
-                        if (-not $ws) { $ws = $wb.Worksheets.Item("KUMO_Labels") }
+                        if (-not $ws) { try { $ws = $wb.Worksheets.Item("KUMO_Labels") } catch {} }
+                        if (-not $ws) { throw "No compatible worksheet found (expected 'Videohub_Labels' or 'KUMO_Labels')." }
                         $data = @()
                         $lastRow = $ws.UsedRange.Rows.Count
                         for ($row = 2; $row -le $lastRow; $row++) {
@@ -2140,6 +2178,7 @@ $btnSaveFile.Add_Click({
                     $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
                         Export-Csv -Path $csvPath -NoTypeInformation
                     $dlg.FileName = $csvPath
+                    Set-StatusMessage "ImportExcel module not found — saved as CSV instead" "Warning"
                 }
             } else {
                 $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
@@ -2519,7 +2558,10 @@ $btnTemplate.Add_Click({
             $savedPath = Join-Path $docsPath "$templateFileName.xlsx"
             $worksheetName = if ($global:routerType -eq "Videohub") { "Videohub_Labels" } else { "KUMO_Labels" }
             $templateData | Export-Excel -Path $savedPath -WorksheetName $worksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
-        } catch { $savedPath = $null }
+        } catch {
+            $savedPath = $null
+            Set-StatusMessage "Excel export failed — saving as CSV instead" "Warning"
+        }
     }
 
     if (-not $savedPath) {
@@ -2694,11 +2736,13 @@ $btnUpload.Add_Click({
             Port = $lbl.Port; Type = $lbl.Type; Current_Label = $lbl.Current_Label; New_Label = ""; Notes = "Backup"
         }
     }
+    $backupSaved = $false
     try {
         $docsPath    = Get-DocumentsPath
         $safeName    = $global:routerName -replace '[^\w\-]', '_'
         $backupPath  = Join-Path $docsPath "${safeName}_Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
         $global:backupLabels | Export-Csv -Path $backupPath -NoTypeInformation
+        $backupSaved = $true
     } catch { }
 
     $ip = $ipTextBox.Text.Trim()
@@ -2737,8 +2781,9 @@ $btnUpload.Add_Click({
         Set-StatusMessage "Upload complete: $successCount OK, $errorCount failed" $statusColor
 
         $icon = if ($errorCount -eq 0) { "Information" } else { "Warning" }
+        $backupMsg = if ($backupSaved) { "`n`nBackup saved to Documents\KUMO_Labels folder." } else { "`n`nWarning: backup could not be saved." }
         [System.Windows.Forms.MessageBox]::Show(
-            "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to Documents\KUMO_Labels folder.",
+            "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount$backupMsg",
             "Upload Results", "OK", $icon
         )
     } catch {
@@ -2774,7 +2819,7 @@ $keepaliveTimer.Add_Tick({
         }
     }
 })
-$keepaliveTimer.Start()
+# keepaliveTimer is started by the connect handler after a successful Videohub connection
 
 # ─── Form Close: clean up Videohub TCP connection ─────────────────────────────
 

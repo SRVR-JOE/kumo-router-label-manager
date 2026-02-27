@@ -95,6 +95,7 @@ def _recv_until_blank(sock: socket.socket, buf_size: int = 4096, timeout: float 
         # Read initial data
         data = sock.recv(buf_size)
     except socket.timeout:
+        logger.debug("Videohub recv timed out waiting for initial data (%.1fs)", timeout)
         return data.decode("utf-8", errors="replace")
 
     # Keep reading until 300ms of silence
@@ -170,12 +171,12 @@ def _parse_videohub_dump(raw: str) -> VideohubInfo:
                 try:
                     info.video_inputs = int(entry.split(":", 1)[1].strip())
                 except ValueError:
-                    pass
+                    logger.warning("Could not parse video input count: %s", entry)
             elif entry.startswith("Video outputs:"):
                 try:
                     info.video_outputs = int(entry.split(":", 1)[1].strip())
                 except ValueError:
-                    pass
+                    logger.warning("Could not parse video output count: %s", entry)
 
     # --- INPUT LABELS ---
     # Initialise with defaults first, then overwrite with what the device sent.
@@ -280,8 +281,11 @@ def upload_videohub_labels(
         sock.settimeout(VIDEOHUB_TIMEOUT)
         try:
             _recv_until_blank(sock)
-        except Exception:
-            pass
+        except (socket.timeout, BlockingIOError):
+            pass  # No initial data or already silent — safe to proceed
+        except OSError:
+            sock.close()
+            return 0, len(changes), ["Socket error draining initial state dump"]
 
         def send_block(block_name: str, port_labels: List[RouterLabel]) -> Tuple[int, int, List[str]]:
             """Send a single labelled block and wait for ACK."""
@@ -310,6 +314,9 @@ def upload_videohub_labels(
                     ack_buf += chunk
             except socket.timeout:
                 pass
+            except OSError as exc:
+                msgs = [f"{block_name}: connection lost waiting for ACK: {exc}"]
+                return 0, len(port_labels), msgs
 
             ack_text = ack_buf.decode("utf-8", errors="replace").strip().upper()
             if "ACK" in ack_text:
@@ -321,8 +328,9 @@ def upload_videohub_labels(
                 msgs = [f"{block_name}: no response from device (timeout)"]
                 return 0, len(port_labels), msgs
             else:
-                logger.debug("Ambiguous response for %s: %r", block_name, ack_text)
-                return len(port_labels), 0, []
+                logger.warning("Ambiguous response for %s: %r", block_name, ack_text)
+                msgs = [f"{block_name}: ambiguous response from device: {ack_text!r}"]
+                return 0, len(port_labels), msgs
 
         if inputs_to_send:
             ok, fail, msgs = send_block("INPUT LABELS", inputs_to_send)
@@ -1227,9 +1235,10 @@ def main() -> None:
     setup_logging(getattr(args, "verbose", False))
     print_banner()
 
-    settings = Settings()
+    settings_overrides = {}
     if hasattr(args, "ip") and args.ip:
-        settings.router_ip = args.ip
+        settings_overrides["router_ip"] = args.ip
+    settings = Settings(**settings_overrides)
 
     try:
         if args.command == "download":
