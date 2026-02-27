@@ -362,7 +362,7 @@ function Get-KumoParam {
         $json = $r.Content | ConvertFrom-Json
         if ($json.value_name -and $json.value_name -ne "") { return $json.value_name }
         if ($json.value -and $json.value -ne "") { return $json.value }
-        return $null
+        return ""
     } catch { return $null }
 }
 
@@ -470,12 +470,13 @@ function Download-KumoLabels {
 
     for ($i = 1; $i -le $InputCount; $i++) {
         $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source${i}_Line_1"
-        if (-not $label -or $label -eq "") {
+        if ($label -eq $null) {
             $label = "Source $i"
             $consecutiveFailures++
             if ($consecutiveFailures -ge 3) { $restSuccess = $false; break }
         } else {
             $consecutiveFailures = 0
+            if ($label -eq "") { $label = "Source $i" }
         }
         $labels.Add([PSCustomObject]@{
             Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
@@ -599,8 +600,10 @@ function Connect-VideohubRouter {
             if ($line -eq "PROTOCOL PREAMBLE:") { $sawPrelude = $true }
             if ($line -eq "END PRELUDE:") { break }
         } else {
-            if ($silenceStart -eq $null) { $silenceStart = [DateTime]::Now }
-            elseif (([DateTime]::Now - $silenceStart).TotalMilliseconds -ge 300) { break }
+            if ($allLines.Count -gt 0) {
+                if ($silenceStart -eq $null) { $silenceStart = [DateTime]::Now }
+                elseif (([DateTime]::Now - $silenceStart).TotalMilliseconds -ge 300) { break }
+            }
             Start-Sleep -Milliseconds 20
         }
     }
@@ -779,7 +782,9 @@ function Connect-Router {
                         $info = Connect-VideohubRouter -IP $IP -Port 9990
                         return $info
                     }
-                } catch { }
+                } catch {
+                    $global:videohubTcp = $null; $global:videohubWriter = $null; $global:videohubReader = $null
+                }
                 try { $testTcp.Close() } catch { }
             } else {
                 try { $testTcp.Close() } catch { }
@@ -1861,7 +1866,7 @@ $form.Add_KeyDown({
         return
     }
 
-    if ($e.Control -and $e.KeyCode -eq "Z") {
+    if ($e.Control -and -not $e.Shift -and $e.KeyCode -eq "Z") {
         if ($global:undoStack.Count -gt 0) {
             $cmd = $global:undoStack.Pop()
             foreach ($lbl in $global:allLabels) {
@@ -2005,6 +2010,7 @@ $connectButton.Add_Click({
         Update-ChangeCount
         Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
         $connectButton.Enabled = $true
+        if ($global:routerType -eq "Videohub" -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
 
     } catch {
         $global:routerConnected = $false
@@ -2678,6 +2684,8 @@ $dataGrid.Add_CellEndEdit({
         } else {
             $sender.Rows[$e.RowIndex].Cells["Status"].Value = ""
             $sender.Rows[$e.RowIndex].Cells["Chars"].Value  = ""
+            $sender.Rows[$e.RowIndex].Cells["Chars"].Style.ForeColor    = $clrText
+            $sender.Rows[$e.RowIndex].Cells["New_Label"].Style.ForeColor = $clrText
         }
 
         Update-ChangeCount
@@ -2747,6 +2755,7 @@ $btnUpload.Add_Click({
     $btnUpload.Enabled    = $false
     $btnDownload.Enabled  = $false
     $connectButton.Enabled = $false
+    if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
 
     $ulProgressCallback = {
         param([int]$val)
@@ -2777,11 +2786,15 @@ $btnUpload.Add_Click({
             "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to Documents\KUMO_Labels folder.",
             "Upload Results", "OK", $icon
         )
+    } catch {
+        Set-StatusMessage "Upload failed: $_" "Danger"
+        [System.Windows.Forms.MessageBox]::Show("Upload failed:`n`n$($_.Exception.Message)", "Upload Error", "OK", "Error")
     } finally {
         $btnDownload.Enabled   = $global:routerConnected
         $connectButton.Enabled = $true
         $remainingChanges = @($global:allLabels | Where-Object { $_.New_Label -and $_.New_Label.Trim() -ne "" -and $_.New_Label.Trim() -ne $_.Current_Label })
         $btnUpload.Enabled = ($remainingChanges.Count -gt 0)
+        if ($global:routerType -eq "Videohub" -and $global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
     }
 })
 
@@ -2792,7 +2805,7 @@ $keepaliveTimer.Interval = 25000
 $keepaliveTimer.Add_Tick({
     if ($global:routerType -eq "Videohub" -and $global:routerConnected -and $global:videohubWriter) {
         try {
-            $global:videohubWriter.Write("PING`n`n")
+            $global:videohubWriter.Write("PING:`n`n")
             $global:videohubWriter.Flush()
         } catch {
             $global:routerConnected = $false

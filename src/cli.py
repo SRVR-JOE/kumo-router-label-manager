@@ -271,7 +271,7 @@ def upload_videohub_labels(
 
     try:
         sock = socket.create_connection((ip, VIDEOHUB_PORT), timeout=VIDEOHUB_TIMEOUT)
-    except (ConnectionRefusedError, OSError) as exc:
+    except (ConnectionRefusedError, OSError, socket.timeout) as exc:
         msg = f"Cannot connect to {ip}:{VIDEOHUB_PORT} — {exc}"
         return 0, len(changes), [msg]
 
@@ -892,7 +892,7 @@ class VideohubManager:
             )
             if skipped:
                 save_msg += (
-                    f"\n[yellow dim]Note: {skipped} labels beyond port 64 were not saved "
+                    f"\n[yellow dim]Note: {skipped} labels beyond port 120 were not saved "
                     f"(file format limit).[/yellow dim]"
                 )
             console.print(Panel(save_msg, border_style="green", padding=(0, 2)))

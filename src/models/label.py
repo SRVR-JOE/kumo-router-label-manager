@@ -39,18 +39,18 @@ class Label:
         self.validate_label_text()
 
     def validate_port_number(self) -> None:
-        """Validate that port number is within valid range (1-64).
+        """Validate that port number is within valid range (1-120).
 
-        Supports KUMO 16x16, 32x32, and 64x64 router models.
+        Supports KUMO (16x16, 32x32, 64x64) and Videohub (up to 120x120).
 
         Raises:
-            ValueError: If port number is not between 1 and 64
+            ValueError: If port number is not between 1 and 120
         """
         if not isinstance(self.port_number, int):
             raise TypeError(f"Port number must be an integer, got {type(self.port_number)}")
 
-        if not 1 <= self.port_number <= 64:
-            raise ValueError(f"Port number must be between 1 and 64, got {self.port_number}")
+        if not 1 <= self.port_number <= 120:
+            raise ValueError(f"Port number must be between 1 and 120, got {self.port_number}")
 
     def validate_port_type(self) -> None:
         """Validate that port type is a valid PortType enum.
@@ -68,7 +68,7 @@ class Label:
             TypeError: If labels are not strings
             ValueError: If label text exceeds maximum length
         """
-        max_length = 50  # Maximum label length for KUMO routers
+        max_length = 255  # Maximum label length (255 for Videohub, 50 for KUMO)
 
         if not isinstance(self.current_label, str):
             raise TypeError(f"current_label must be a string, got {type(self.current_label)}")
