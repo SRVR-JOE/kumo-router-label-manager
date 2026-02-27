@@ -355,18 +355,25 @@ def detect_router_type(ip: str) -> str:
     Returns:
         "videohub" or "kumo"
     """
+    sock = None
+    sock_file = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2.0)
         sock.connect((ip, VIDEOHUB_PORT))
         sock_file = sock.makefile("r", encoding="utf-8", errors="replace")
         first_line = sock_file.readline()
-        sock_file.close()
-        sock.close()
         if "PROTOCOL PREAMBLE" in first_line:
             return "videohub"
     except (socket.timeout, socket.error, OSError):
         pass
+    finally:
+        if sock_file:
+            try: sock_file.close()
+            except: pass
+        if sock:
+            try: sock.close()
+            except: pass
     return "kumo"
 
 
@@ -523,15 +530,14 @@ def videohub_info_to_router_labels(info: VideohubInfo) -> List[RouterLabel]:
 
 
 def router_labels_to_filedata(labels: List[RouterLabel]) -> Tuple[FileData, int]:
-    """Convert RouterLabel list to FileData, capping at 64 ports per type.
+    """Convert RouterLabel list to FileData, capping at 120 ports per type.
 
-    The existing file schema supports at most 64 inputs + 64 outputs.  For
-    large Videohub matrices (e.g., 80x80) we save as many as possible.
+    Supports up to 120 inputs + 120 outputs to accommodate Videohub 120x120.
 
     Returns:
         Tuple of (FileData, number_of_labels_skipped).
     """
-    MAX_PER_TYPE = 64
+    MAX_PER_TYPE = 120
     ports = []
     skipped = 0
 
@@ -542,8 +548,8 @@ def router_labels_to_filedata(labels: List[RouterLabel]) -> Tuple[FileData, int]
         ports.append(PortData(
             port=lbl.port_number,
             type="INPUT",
-            current_label=lbl.current_label[:50],
-            new_label=lbl.new_label[:50] if lbl.new_label else None,
+            current_label=lbl.current_label[:255],
+            new_label=lbl.new_label[:255] if lbl.new_label else None,
             notes="",
         ))
     skipped += max(0, len(inputs) - MAX_PER_TYPE)
@@ -552,8 +558,8 @@ def router_labels_to_filedata(labels: List[RouterLabel]) -> Tuple[FileData, int]
         ports.append(PortData(
             port=lbl.port_number,
             type="OUTPUT",
-            current_label=lbl.current_label[:50],
-            new_label=lbl.new_label[:50] if lbl.new_label else None,
+            current_label=lbl.current_label[:255],
+            new_label=lbl.new_label[:255] if lbl.new_label else None,
             notes="",
         ))
     skipped += max(0, len(outputs) - MAX_PER_TYPE)
@@ -1040,8 +1046,8 @@ class VideohubManager:
 
         Args:
             output_file: Output file path.
-            size: Number of ports per type (10, 12, 16, 20, 40, 80).
-                  Capped at 64 due to file schema limits.
+            size: Number of ports per type (10, 12, 16, 20, 40, 80, 120).
+                  Capped at 120 to support Videohub 120x120.
         """
         output_path = Path(output_file)
 
@@ -1053,8 +1059,8 @@ class VideohubManager:
             )
             return False
 
-        # Schema max is 64 per type
-        capped = min(size, 64)
+        # Cap at 120 to support Videohub 120x120
+        capped = min(size, 120)
         labels: List[RouterLabel] = []
         for i in range(1, capped + 1):
             labels.append(RouterLabel(port_number=i, port_type="INPUT", current_label=f"Input {i}"))
@@ -1065,8 +1071,8 @@ class VideohubManager:
             file_data, _ = router_labels_to_filedata(labels)
             self.file_handler.save(output_path, file_data)
             note = ""
-            if size > 64:
-                note = f"\n[yellow dim]Note: Template capped at 64 ports (file schema limit). Requested {size}.[/yellow dim]"
+            if size > 120:
+                note = f"\n[yellow dim]Note: Template capped at 120 ports (maximum supported). Requested {size}.[/yellow dim]"
             console.print(Panel(
                 f"[green bold]Videohub template created:[/green bold] [purple]{output_file}[/purple]\n"
                 f"[dim]Contains {capped * 2} ports ({capped} inputs + {capped} outputs)[/dim]{note}",
@@ -1161,7 +1167,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=(
             "Number of ports per type for Videohub templates "
-            "(e.g. 10, 12, 16, 20, 40). Ignored for KUMO templates. Default: 32"
+            "(e.g. 10, 12, 16, 20, 40, 80, 120). Ignored for KUMO templates. Default: 32"
         ),
     )
     tp.add_argument(
@@ -1255,7 +1261,11 @@ def main() -> None:
                 success = asyncio.run(manager.show_status())
 
         elif args.command == "template":
-            router_type = resolve_router_type(args.router_type, settings.router_ip)
+            # For template command, skip network detection if no explicit type given
+            if args.router_type == "auto":
+                router_type = "kumo"  # Default, no network needed
+            else:
+                router_type = args.router_type
             size = getattr(args, "size", 32)
             if router_type == "videohub":
                 manager = VideohubManager(settings)

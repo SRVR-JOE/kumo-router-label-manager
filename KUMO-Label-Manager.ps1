@@ -325,16 +325,9 @@ function Invoke-SecureWebRequest {
         [switch]$UseBasicParsing,
         [switch]$ForceHTTP
     )
-    if (-not $ForceHTTP) {
-        $httpsUri = $Uri -replace "^http://", "https://"
-        try {
-            $p = @{ Uri=$httpsUri; Method=$Method; TimeoutSec=$TimeoutSec; UseBasicParsing=$UseBasicParsing; ErrorAction="Stop" }
-            if ($Body) { $p.Body = $Body }
-            if ($Headers.Count -gt 0) { $p.Headers = $Headers }
-            return Invoke-WebRequest @p
-        } catch { Write-Verbose "HTTPS failed, falling back to HTTP: $_" }
-    }
-    $p = @{ Uri=$Uri; Method=$Method; TimeoutSec=$TimeoutSec; UseBasicParsing=$UseBasicParsing; ErrorAction="Stop" }
+    # KUMO routers only use HTTP/80 on local networks — go straight to HTTP
+    $httpUri = $Uri -replace "^https://", "http://"
+    $p = @{ Uri=$httpUri; Method=$Method; TimeoutSec=$TimeoutSec; UseBasicParsing=$UseBasicParsing; ErrorAction="Stop" }
     if ($Body) { $p.Body = $Body }
     if ($Headers.Count -gt 0) { $p.Headers = $Headers }
     return Invoke-WebRequest @p
@@ -354,9 +347,6 @@ $clrWarning  = [System.Drawing.Color]::FromArgb(247, 99, 12)
 $clrDanger   = [System.Drawing.Color]::FromArgb(232, 17, 35)
 $clrChanged  = [System.Drawing.Color]::FromArgb(179, 136, 255)
 
-$clrAccentHover   = [System.Drawing.Color]::FromArgb(126, 87, 194)
-$clrAccentPressed = [System.Drawing.Color]::FromArgb(69, 39, 160)
-$clrFieldHover    = [System.Drawing.Color]::FromArgb(95, 80, 120)
 $clrSidebarBg     = [System.Drawing.Color]::FromArgb(25, 20, 35)
 $clrStatusBar     = [System.Drawing.Color]::FromArgb(25, 20, 35)
 $clrSelectedRow   = [System.Drawing.Color]::FromArgb(103, 58, 183)
@@ -472,22 +462,25 @@ function Connect-KumoRouter {
 }
 
 function Download-KumoLabels {
-    param([string]$IP, [int]$InputCount, [int]$OutputCount)
+    param([string]$IP, [int]$InputCount, [int]$OutputCount, [scriptblock]$ProgressCallback = $null)
     # Returns an ArrayList of PSCustomObjects compatible with $global:allLabels format.
-    # Calls the provided progress callback $ProgressCallback([int]$done, [int]$total, [string]$msg) if supplied.
     $labels = [System.Collections.ArrayList]::new()
     $restSuccess = $true
+    $consecutiveFailures = 0
 
     for ($i = 1; $i -le $InputCount; $i++) {
         $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source${i}_Line_1"
         if (-not $label -or $label -eq "") {
             $label = "Source $i"
-            if ($i -eq 1) { $restSuccess = $false }
+            $consecutiveFailures++
+            if ($consecutiveFailures -ge 3) { $restSuccess = $false; break }
+        } else {
+            $consecutiveFailures = 0
         }
         $labels.Add([PSCustomObject]@{
             Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
         }) | Out-Null
-        if (-not $restSuccess -and $i -eq 1) { break }
+        if ($ProgressCallback) { & $ProgressCallback $i }
     }
 
     if ($restSuccess) {
@@ -497,6 +490,7 @@ function Download-KumoLabels {
             $labels.Add([PSCustomObject]@{
                 Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
             }) | Out-Null
+            if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
         }
     }
 
@@ -521,6 +515,7 @@ function Download-KumoLabels {
             $labels.Add([PSCustomObject]@{
                 Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
             }) | Out-Null
+            if ($ProgressCallback) { & $ProgressCallback $i }
         }
         for ($i = 1; $i -le $OutputCount; $i++) {
             try {
@@ -532,6 +527,7 @@ function Download-KumoLabels {
             $labels.Add([PSCustomObject]@{
                 Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
             }) | Out-Null
+            if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
         }
         try { $writer.Close(); $reader.Close(); $tcp.Close() } catch { }
     }
@@ -541,29 +537,36 @@ function Download-KumoLabels {
 
 function Upload-KumoLabel {
     param([string]$IP, [string]$Type, [int]$Port, [string]$Label)
-    # Returns $true on success, $false on failure (tries REST then Telnet).
+    # Returns $true on success via REST, $false on failure.
     $paramId = if ($Type -eq "INPUT") {
         "eParamID_XPT_Source${Port}_Line_1"
     } else {
         "eParamID_XPT_Destination${Port}_Line_1"
     }
+    return (Set-KumoParam -IP $IP -ParamId $paramId -Value $Label)
+}
 
-    $ok = Set-KumoParam -IP $IP -ParamId $paramId -Value $Label
-    if ($ok) { return $true }
-
-    # Telnet fallback
+function Upload-KumoLabels-Telnet {
+    param([string]$IP, [array]$Items)
+    # Sends all items over a single Telnet connection. Returns list of succeeded items.
+    $succeeded = [System.Collections.Generic.List[object]]::new()
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
         $tcp.Connect($IP, 23)
         $s = $tcp.GetStream()
         $w = New-Object System.IO.StreamWriter($s)
         Start-Sleep -Milliseconds 300
-        $w.WriteLine("LABEL $Type $Port `"$Label`"")
-        $w.Flush()
-        Start-Sleep -Milliseconds 200
-        $w.Close(); $tcp.Close()
-        return $true
-    } catch { return $false }
+        foreach ($item in $Items) {
+            try {
+                $w.WriteLine("LABEL $($item.Type) $($item.Port) `"$($item.New_Label.Trim())`"")
+                $w.Flush()
+                Start-Sleep -Milliseconds 150
+                $succeeded.Add($item)
+            } catch { }
+        }
+        try { $w.Close(); $tcp.Close() } catch { }
+    } catch { }
+    return $succeeded
 }
 
 function Connect-VideohubRouter {
@@ -611,6 +614,7 @@ function Connect-VideohubRouter {
     $deviceInfo   = @{}
     $inputLabels  = @{}
     $outputLabels = @{}
+    $protocolVersion = "Unknown"
 
     $currentBlock = ""
     foreach ($line in $allLines) {
@@ -624,6 +628,11 @@ function Connect-VideohubRouter {
         }
 
         switch ($currentBlock) {
+            "PROTOCOL PREAMBLE" {
+                if ($line -match '^Version:\s*(.+)$') {
+                    $protocolVersion = $matches[1].Trim()
+                }
+            }
             "VIDEOHUB DEVICE" {
                 if ($line -match '^([^:]+):\s*(.+)$') {
                     $deviceInfo[$matches[1].Trim()] = $matches[2].Trim()
@@ -656,7 +665,7 @@ function Connect-VideohubRouter {
         RouterType    = "Videohub"
         RouterName    = $friendlyName
         RouterModel   = "Blackmagic $modelName"
-        Firmware      = "Protocol 2.8"
+        Firmware      = "Protocol $protocolVersion"
         InputCount    = $inputCount
         OutputCount   = $outputCount
         InputLabels   = $inputLabels
@@ -785,27 +794,33 @@ function Connect-Router {
     }
 
     if ($RouterType -eq "KUMO" -or $RouterType -eq "Auto") {
-        $info = Connect-KumoRouter -IP $IP
-        return $info
+        try {
+            return Connect-KumoRouter -IP $IP
+        } catch {
+            throw "Could not connect to $IP — no KUMO (HTTP/80) or Videohub (TCP/9990) response detected. Verify the IP address and that the router is powered on."
+        }
     }
 
     throw "Unknown router type: $RouterType"
 }
 
 function Download-RouterLabels {
-    param([string]$IP)
+    param([string]$IP, [scriptblock]$ProgressCallback = $null)
     # Downloads labels from whatever router type is currently connected.
     # Populates $global:allLabels directly. Returns count of labels loaded.
 
     $global:allLabels.Clear()
 
     if ($global:routerType -eq "Videohub") {
+        if ($ProgressCallback) { & $ProgressCallback 50 }
         $info = Download-VideohubLabels -IP $IP -Port 9990
 
         $inputLabels  = $info.InputLabels
         $outputLabels = $info.OutputLabels
-        $inputCount   = $global:routerInputCount
-        $outputCount  = $global:routerOutputCount
+        $inputCount   = $info.InputCount
+        $outputCount  = $info.OutputCount
+        $global:routerInputCount  = $inputCount
+        $global:routerOutputCount = $outputCount
 
         for ($i = 1; $i -le $inputCount; $i++) {
             $zeroIdx = $i - 1
@@ -821,9 +836,10 @@ function Download-RouterLabels {
                 Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
             }) | Out-Null
         }
+        if ($ProgressCallback) { & $ProgressCallback 100 }
     } else {
         # KUMO
-        $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
+        $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount -ProgressCallback $ProgressCallback
         foreach ($lbl in $downloaded) {
             $global:allLabels.Add($lbl) | Out-Null
         }
@@ -836,21 +852,93 @@ function Download-RouterLabels {
 }
 
 function Upload-RouterLabels {
-    param([string]$IP, [array]$Changes)
+    param([string]$IP, [array]$Changes, [scriptblock]$ProgressCallback = $null)
     # Uploads an array of changed label objects to the connected router.
-    # Returns hashtable with SuccessCount and ErrorCount.
+    # Returns hashtable with SuccessCount, ErrorCount, and SuccessLabels.
 
     if ($global:routerType -eq "Videohub") {
-        return Upload-VideohubLabels -IP $IP -Port 9990 -Changes $Changes
+        $inputChanges  = @($Changes | Where-Object { $_.Type -eq "INPUT" })
+        $outputChanges = @($Changes | Where-Object { $_.Type -eq "OUTPUT" })
+        $successLabels = [System.Collections.Generic.List[object]]::new()
+
+        # Upload in two blocks; track which blocks succeed
+        $script:vhSuccessCount = 0
+        $script:vhErrorCount   = 0
+
+        if ($global:videohubWriter -eq $null -or $global:videohubTcp -eq $null -or -not $global:videohubTcp.Connected) {
+            try { Connect-VideohubRouter -IP $IP -Port 9990 | Out-Null } catch {
+                return @{ SuccessCount = 0; ErrorCount = $Changes.Count; SuccessLabels = $successLabels }
+            }
+        }
+
+        $writer = $global:videohubWriter
+        $reader = $global:videohubReader
+        $stream = $global:videohubTcp.GetStream()
+
+        $sendBlock = {
+            param([string]$BlockHeader, [array]$Items)
+            if ($Items.Count -eq 0) { return $true }
+            $sb = New-Object System.Text.StringBuilder
+            $sb.Append("$BlockHeader`n") | Out-Null
+            foreach ($item in $Items) {
+                $zeroIndex = $item.Port - 1
+                $sb.Append("$zeroIndex $($item.New_Label.Trim())`n") | Out-Null
+            }
+            $sb.Append("`n") | Out-Null
+            try {
+                $writer.Write($sb.ToString()); $writer.Flush()
+                $deadline = [DateTime]::Now.AddSeconds(5)
+                $response = ""
+                while ([DateTime]::Now -lt $deadline) {
+                    if ($stream.DataAvailable) {
+                        $line = $reader.ReadLine()
+                        if ($line -eq "ACK") { $response = "ACK"; break }
+                        if ($line -eq "NAK") { $response = "NAK"; break }
+                    } else { Start-Sleep -Milliseconds 50 }
+                }
+                return ($response -eq "ACK")
+            } catch { return $false }
+        }
+
+        $blockNum = 0
+        if ($inputChanges.Count -gt 0) {
+            $ok = & $sendBlock "INPUT LABELS:" $inputChanges
+            $blockNum++
+            if ($ok) { foreach ($item in $inputChanges) { $successLabels.Add($item) } ; $script:vhSuccessCount += $inputChanges.Count }
+            else     { $script:vhErrorCount += $inputChanges.Count }
+            if ($ProgressCallback) { & $ProgressCallback ($blockNum * [int]($Changes.Count / [Math]::Max(($inputChanges.Count -gt 0) + ($outputChanges.Count -gt 0), 1))) }
+        }
+        if ($outputChanges.Count -gt 0) {
+            $ok = & $sendBlock "OUTPUT LABELS:" $outputChanges
+            $blockNum++
+            if ($ok) { foreach ($item in $outputChanges) { $successLabels.Add($item) } ; $script:vhSuccessCount += $outputChanges.Count }
+            else     { $script:vhErrorCount += $outputChanges.Count }
+            if ($ProgressCallback) { & $ProgressCallback $Changes.Count }
+        }
+
+        return @{ SuccessCount = $script:vhSuccessCount; ErrorCount = $script:vhErrorCount; SuccessLabels = $successLabels }
     } else {
-        # KUMO: per-label upload
-        $successCount = 0
-        $errorCount   = 0
+        # KUMO: per-label REST upload, then bulk Telnet for any REST failures
+        $successLabels = [System.Collections.Generic.List[object]]::new()
+        $restFailed    = [System.Collections.Generic.List[object]]::new()
+        $doneCount     = 0
+
         foreach ($item in $Changes) {
             $ok = Upload-KumoLabel -IP $IP -Type $item.Type -Port $item.Port -Label $item.New_Label.Trim()
-            if ($ok) { $successCount++ } else { $errorCount++ }
+            if ($ok) { $successLabels.Add($item) } else { $restFailed.Add($item) }
+            $doneCount++
+            if ($ProgressCallback) { & $ProgressCallback $doneCount }
         }
-        return @{ SuccessCount = $successCount; ErrorCount = $errorCount }
+
+        if ($restFailed.Count -gt 0) {
+            $telnetSucceeded = Upload-KumoLabels-Telnet -IP $IP -Items $restFailed
+            foreach ($item in $telnetSucceeded) { $successLabels.Add($item) }
+            $errorCount = $restFailed.Count - $telnetSucceeded.Count
+        } else {
+            $errorCount = 0
+        }
+
+        return @{ SuccessCount = $successLabels.Count; ErrorCount = $errorCount; SuccessLabels = $successLabels }
     }
 }
 
@@ -905,8 +993,6 @@ $lblAppSubtitle.ForeColor = $clrDimText
 $lblAppSubtitle.Location = New-Object System.Drawing.Point(18, 46)
 $lblAppSubtitle.AutoSize = $true
 $appTitlePanel.Controls.Add($lblAppSubtitle)
-
-$sidebarPanel.Controls.Add($appTitlePanel)
 
 # Sidebar thin accent line under title
 $sidebarAccentLine = New-Object System.Windows.Forms.Label
@@ -1039,12 +1125,6 @@ $lblRouterName.Size = New-Object System.Drawing.Size(160, 14)
 $routerInfoCard.Controls.Add($lblRouterName)
 
 $routerInfoWrapper.Controls.Add($routerInfoCard)
-
-# Sidebar spacer
-$sidebarSpacer = New-Object System.Windows.Forms.Panel
-$sidebarSpacer.Dock = "Top"
-$sidebarSpacer.Height = 12
-$sidebarSpacer.BackColor = $clrSidebarBg
 
 # Actions section label
 $lblActSection = New-Object System.Windows.Forms.Label
@@ -1273,7 +1353,9 @@ $searchWatermark = "Search labels..."
 $searchBox.Text = $searchWatermark
 
 $filterRail.Add_Resize({
-    $searchBox.Location = New-Object System.Drawing.Point(($filterRail.Width - 182), 9)
+    # Clamp search box so it never overlaps the Clear All New button (right edge ~800px)
+    $searchX = [Math]::Max($filterRail.Width - 182, 0)
+    $searchBox.Location = New-Object System.Drawing.Point($searchX, 9)
 })
 
 $filterRail.Controls.Add($searchBox)
@@ -1493,7 +1575,9 @@ $ctxCopyCurrentToNew.Add_Click({
         $currentVal = $row.Cells["Current_Label"].Value
         foreach ($lbl in $global:allLabels) {
             if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
-                $lbl.New_Label = if ($currentVal) { $currentVal.ToString() } else { "" }
+                $newVal = if ($currentVal) { $currentVal.ToString() } else { "" }
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$newVal }
+                $lbl.New_Label = $newVal
                 break
             }
         }
@@ -1507,6 +1591,7 @@ $ctxClearNew.Add_Click({
         $type = $row.Cells["Type"].Value
         foreach ($lbl in $global:allLabels) {
             if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue="" }
                 $lbl.New_Label = ""
                 break
             }
@@ -1544,6 +1629,13 @@ $ctxSelectOutputs.Add_Click({
 })
 
 $dataGrid.ContextMenuStrip = $gridContextMenu
+
+$gridContextMenu.Add_Opening({
+    param($sender, $e)
+    $pt = $dataGrid.PointToClient([System.Windows.Forms.Control]::MousePosition)
+    $hit = $dataGrid.HitTest($pt.X, $pt.Y)
+    if ($hit.RowIndex -lt 0) { $e.Cancel = $true }
+})
 
 # ─── Status Bar ──────────────────────────────────────────────────────────────
 
@@ -1731,6 +1823,10 @@ function Push-UndoCommand {
 $form.Add_KeyDown({
     param($sender, $e)
 
+    if ($dataGrid.IsCurrentCellInEditMode) {
+        if ($e.KeyCode -ne "Escape") { return }
+    }
+
     if ($e.Control -and $e.Shift -and $e.KeyCode -eq "Z") {
         if ($global:redoStack.Count -gt 0) {
             $cmd = $global:redoStack.Pop()
@@ -1744,6 +1840,24 @@ $form.Add_KeyDown({
             Populate-Grid
         }
         $e.Handled = $true
+        $e.SuppressKeyPress = $true
+        return
+    }
+
+    if ($e.Control -and $e.KeyCode -eq "Y") {
+        if ($global:redoStack.Count -gt 0) {
+            $cmd = $global:redoStack.Pop()
+            foreach ($lbl in $global:allLabels) {
+                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type) {
+                    $global:undoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$cmd.NewValue })
+                    $lbl.New_Label = $cmd.NewValue
+                    break
+                }
+            }
+            Populate-Grid
+        }
+        $e.Handled = $true
+        $e.SuppressKeyPress = $true
         return
     }
 
@@ -1798,6 +1912,30 @@ $form.Add_KeyDown({
         $e.Handled = $true
         return
     }
+
+    if ($e.Control -and $e.KeyCode -eq "A") {
+        $dataGrid.SelectAll()
+        $e.Handled = $true
+        $e.SuppressKeyPress = $true
+        return
+    }
+
+    if ($e.KeyCode -eq "Delete") {
+        foreach ($row in $dataGrid.SelectedRows) {
+            $port = $row.Cells["Port"].Value
+            $type = $row.Cells["Type"].Value
+            foreach ($lbl in $global:allLabels) {
+                if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.New_Label) {
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue="" }
+                    $lbl.New_Label = ""
+                }
+            }
+        }
+        Populate-Grid
+        $e.Handled = $true
+        $e.SuppressKeyPress = $true
+        return
+    }
 })
 
 # ─── Connection ────────────────────────────────────────────────────────────────
@@ -1805,6 +1943,8 @@ $form.Add_KeyDown({
 $connectButton.Add_Click({
     $ip = $ipTextBox.Text.Trim()
     if (-not $ip) { return }
+
+    $connectButton.Enabled = $false
 
     # Map ComboBox selection to RouterType parameter
     $selectedType = switch ($cboRouterType.SelectedIndex) {
@@ -1816,6 +1956,18 @@ $connectButton.Add_Click({
     $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Connecting
     $connIndicator.StatusText = "Connecting..."
     $form.Refresh()
+
+    if ($global:videohubTcp -ne $null) {
+        try {
+            if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
+            $global:videohubWriter.Dispose()
+            $global:videohubReader.Dispose()
+            $global:videohubTcp.Close()
+        } catch { }
+        $global:videohubTcp    = $null
+        $global:videohubWriter = $null
+        $global:videohubReader = $null
+    }
 
     try {
         $info = Connect-Router -IP $ip -RouterType $selectedType
@@ -1852,6 +2004,7 @@ $connectButton.Add_Click({
 
         Update-ChangeCount
         Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
+        $connectButton.Enabled = $true
 
     } catch {
         $global:routerConnected = $false
@@ -1859,7 +2012,9 @@ $connectButton.Add_Click({
         $connIndicator.StatusText = "Connection failed"
         $connIndicator.ForeColor  = $clrDimText
         $btnDownload.Enabled = $false
+        $progressBar.Value = 0
         Set-StatusMessage "Connection failed" "Danger"
+        $connectButton.Enabled = $true
 
         [System.Windows.Forms.MessageBox]::Show(
             "Cannot connect to router at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 80 (KUMO) or 9990 (Videohub) is accessible`n`nError: $($_.Exception.Message)",
@@ -1874,19 +2029,29 @@ $btnDownload.Add_Click({
     $ip      = $ipTextBox.Text.Trim()
     $total   = $global:routerInputCount + $global:routerOutputCount
 
-    $progressBar.Maximum = $total
-    $progressBar.Value   = 0
+    if ($global:routerType -eq "Videohub") {
+        $progressBar.Maximum = 100
+    } else {
+        $progressBar.Maximum = [Math]::Max($total, 1)
+    }
+    $progressBar.Value = 0
     Set-StatusMessage "Downloading from $($global:routerModel)..." "Dim"
     $form.Refresh()
 
+    $dlProgressCallback = {
+        param([int]$val)
+        $progressBar.Value = [Math]::Min($val, $progressBar.Maximum)
+        $form.Refresh()
+    }
+
     try {
-        $count = Download-RouterLabels -IP $ip
+        $count = Download-RouterLabels -IP $ip -ProgressCallback $dlProgressCallback
 
         if ($count -eq 0) {
             Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
         }
 
-        $progressBar.Value = $total
+        $progressBar.Value = $progressBar.Maximum
 
         # Auto-save
         try {
@@ -1929,12 +2094,20 @@ $btnOpenFile.Add_Click({
             } else {
                 if (Get-Module -ListAvailable -Name ImportExcel) {
                     Import-Module ImportExcel
-                    $data = Import-Excel -Path $dlg.FileName -WorksheetName "KUMO_Labels"
+                    # Try Videohub_Labels first, fall back to KUMO_Labels
+                    try {
+                        $data = Import-Excel -Path $dlg.FileName -WorksheetName "Videohub_Labels"
+                    } catch {
+                        $data = Import-Excel -Path $dlg.FileName -WorksheetName "KUMO_Labels"
+                    }
                 } else {
                     $excel = New-Object -ComObject Excel.Application
                     $excel.Visible = $false
                     $wb  = $excel.Workbooks.Open($dlg.FileName)
-                    $ws  = $wb.Worksheets.Item("KUMO_Labels")
+                    # Try Videohub_Labels first, fall back to KUMO_Labels
+                    $ws = $null
+                    try { $ws = $wb.Worksheets.Item("Videohub_Labels") } catch {}
+                    if (-not $ws) { $ws = $wb.Worksheets.Item("KUMO_Labels") }
                     $data = @()
                     $lastRow = $ws.UsedRange.Rows.Count
                     for ($row = 2; $row -le $lastRow; $row++) {
@@ -1963,6 +2136,14 @@ $btnOpenFile.Add_Click({
                         Notes         = if ($row.Notes) { $row.Notes.ToString() } else { "" }
                     }) | Out-Null
                 }
+                if (-not $global:routerConnected) {
+                    $maxLen = ($global:allLabels | ForEach-Object {
+                        $len1 = if ($_.Current_Label) { $_.Current_Label.Length } else { 0 }
+                        $len2 = if ($_.New_Label) { $_.New_Label.Length } else { 0 }
+                        [Math]::Max($len1, $len2)
+                    } | Measure-Object -Maximum).Maximum
+                    $global:maxLabelLength = if ($maxLen -gt 50) { 255 } else { 50 }
+                }
                 Populate-Grid
                 Set-StatusMessage "Loaded $($global:allLabels.Count) labels from $([System.IO.Path]::GetFileName($dlg.FileName))" "Success"
             }
@@ -1990,8 +2171,9 @@ $btnSaveFile.Add_Click({
             if ($dlg.FileName -match "\.xlsx$") {
                 if (Get-Module -ListAvailable -Name ImportExcel) {
                     Import-Module ImportExcel
+                    $saveWsName = if ($global:routerType -eq "Videohub") { "Videohub_Labels" } else { "KUMO_Labels" }
                     $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
-                        Export-Excel -Path $dlg.FileName -WorksheetName "KUMO_Labels" -AutoSize -TableStyle Medium6 -FreezeTopRow
+                        Export-Excel -Path $dlg.FileName -WorksheetName $saveWsName -AutoSize -TableStyle Medium6 -FreezeTopRow
                 } else {
                     $csvPath = $dlg.FileName -replace "\.xlsx$", ".csv"
                     $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
@@ -2016,7 +2198,7 @@ $btnFindReplace.Add_Click({
 
     $frForm = New-Object System.Windows.Forms.Form
     $frForm.Text = "Find && Replace in Labels"
-    $frForm.Size = New-Object System.Drawing.Size(440, 280)
+    $frForm.Size = New-Object System.Drawing.Size(440, 310)
     $frForm.StartPosition = "CenterParent"
     $frForm.BackColor = $clrPanel
     $frForm.ForeColor = $clrText
@@ -2040,8 +2222,13 @@ $btnFindReplace.Add_Click({
     }
     $frForm.Controls.Add($replaceBox)
 
+    $chkCaseSensitive = New-Object System.Windows.Forms.CheckBox -Property @{
+        Text="Case sensitive"; Location="90,85"; Size="130,20"; Checked=$false; ForeColor=$clrText
+    }
+    $frForm.Controls.Add($chkCaseSensitive)
+
     $scopeGroup = New-Object System.Windows.Forms.GroupBox -Property @{
-        Text="Apply to"; Location="20,90"; Size="380,55"; ForeColor=$clrDimText
+        Text="Apply to"; Location="20,112"; Size="380,55"; ForeColor=$clrDimText
     }
     $rbNewLabels = New-Object System.Windows.Forms.RadioButton -Property @{
         Text="New Label column"; Location="15,22"; Size="150,20"; Checked=$true; ForeColor=$clrText
@@ -2054,7 +2241,7 @@ $btnFindReplace.Add_Click({
     $frForm.Controls.Add($scopeGroup)
 
     $typeGroup = New-Object System.Windows.Forms.GroupBox -Property @{
-        Text="Port type"; Location="20,150"; Size="380,45"; ForeColor=$clrDimText
+        Text="Port type"; Location="20,172"; Size="380,45"; ForeColor=$clrDimText
     }
     $rbAll = New-Object System.Windows.Forms.RadioButton -Property @{
         Text="All"; Location="15,15"; Size="55,20"; Checked=$true; ForeColor=$clrText
@@ -2071,12 +2258,12 @@ $btnFindReplace.Add_Click({
     $frForm.Controls.Add($typeGroup)
 
     $btnDoReplace = New-Object ModernButton -Property @{
-        Text="Replace All"; Location="250,210"; Size="90,30"
+        Text="Replace All"; Location="250,232"; Size="90,30"
     }
     $btnDoReplace.Style = [ModernButton+ButtonStyle]::Primary
 
     $btnCancelFR = New-Object ModernButton -Property @{
-        Text="Cancel"; Location="350,210"; Size="70,30"
+        Text="Cancel"; Location="350,232"; Size="70,30"
     }
     $btnCancelFR.Style = [ModernButton+ButtonStyle]::Secondary
 
@@ -2085,6 +2272,10 @@ $btnFindReplace.Add_Click({
         $replace = $replaceBox.Text
         if (-not $find) { return }
 
+        $caseSensitive = $chkCaseSensitive.Checked
+        $escapedFind   = [regex]::Escape($find)
+        $regexOpts     = if ($caseSensitive) { [System.Text.RegularExpressions.RegexOptions]::None } else { [System.Text.RegularExpressions.RegexOptions]::IgnoreCase }
+
         $count = 0
         foreach ($lbl in $global:allLabels) {
             if ($rbInputOnly.Checked  -and $lbl.Type -ne "INPUT")  { continue }
@@ -2092,15 +2283,30 @@ $btnFindReplace.Add_Click({
 
             if ($rbCurrentToNew.Checked) {
                 $src = if ($lbl.Current_Label) { $lbl.Current_Label } else { "" }
-                $newVal = $src.Replace($find, $replace)
-                if ($newVal -ne $src) {
-                    $lbl.New_Label = $newVal
+                $matched = if ($caseSensitive) { $src -like "*$find*" } else { $src -ilike "*$find*" }
+                if ($matched) {
+                    $result = [regex]::Replace($src, $escapedFind, $replace, $regexOpts)
+                    if ($result.Length -gt $global:maxLabelLength) {
+                        $result = $result.Substring(0, $global:maxLabelLength)
+                    }
+                    $oldVal = $lbl.New_Label
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$oldVal; NewValue=$result }
+                    $lbl.New_Label = $result
                     $count++
                 }
             } else {
-                if ($lbl.New_Label -and $lbl.New_Label.Contains($find)) {
-                    $lbl.New_Label = $lbl.New_Label.Replace($find, $replace)
-                    $count++
+                if ($lbl.New_Label) {
+                    $matched = if ($caseSensitive) { $lbl.New_Label -like "*$find*" } else { $lbl.New_Label -ilike "*$find*" }
+                    if ($matched) {
+                        $result = [regex]::Replace($lbl.New_Label, $escapedFind, $replace, $regexOpts)
+                        if ($result.Length -gt $global:maxLabelLength) {
+                            $result = $result.Substring(0, $global:maxLabelLength)
+                        }
+                        $oldVal = $lbl.New_Label
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$oldVal; NewValue=$result }
+                        $lbl.New_Label = $result
+                        $count++
+                    }
                 }
             }
         }
@@ -2203,7 +2409,12 @@ $btnAutoNumber.Add_Click({
                 $type = $row.Cells["Type"].Value
                 foreach ($lbl in $global:allLabels) {
                     if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
-                        $lbl.New_Label = "$prefix$num"
+                        $label = "$prefix$num"
+                        if ($label.Length -gt $global:maxLabelLength) {
+                            $label = $label.Substring(0, $global:maxLabelLength)
+                        }
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$label }
+                        $lbl.New_Label = $label
                         $num++
                         break
                     }
@@ -2213,7 +2424,12 @@ $btnAutoNumber.Add_Click({
             foreach ($lbl in $global:allLabels) {
                 if ($rbInputs2.Checked  -and $lbl.Type -ne "INPUT")  { continue }
                 if ($rbOutputs2.Checked -and $lbl.Type -ne "OUTPUT") { continue }
-                $lbl.New_Label = "$prefix$num"
+                $label = "$prefix$num"
+                if ($label.Length -gt $global:maxLabelLength) {
+                    $label = $label.Substring(0, $global:maxLabelLength)
+                }
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$label }
+                $lbl.New_Label = $label
                 $num++
             }
         }
@@ -2340,7 +2556,8 @@ $btnTemplate.Add_Click({
         try {
             Import-Module ImportExcel
             $savedPath = Join-Path $docsPath "$templateFileName.xlsx"
-            $templateData | Export-Excel -Path $savedPath -WorksheetName "KUMO_Labels" -AutoSize -TableStyle Medium6 -FreezeTopRow
+            $worksheetName = if ($global:routerType -eq "Videohub") { "Videohub_Labels" } else { "KUMO_Labels" }
+            $templateData | Export-Excel -Path $savedPath -WorksheetName $worksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
         } catch { $savedPath = $null }
     }
 
@@ -2404,6 +2621,14 @@ $searchBox.Add_TextChanged({
 })
 
 # ─── Grid Cell Editing with Undo ─────────────────────────────────────────────
+
+$dataGrid.Add_EditingControlShowing({
+    param($sender, $e)
+    $tb = $e.Control
+    if ($tb -is [System.Windows.Forms.TextBox]) {
+        $tb.MaxLength = $global:maxLabelLength
+    }
+})
 
 $dataGrid.Add_CellBeginEdit({
     param($sender, $e)
@@ -2514,36 +2739,50 @@ $btnUpload.Add_Click({
     } catch { }
 
     $ip = $ipTextBox.Text.Trim()
-    $progressBar.Maximum = $changes.Count
+    $progressBar.Maximum = [Math]::Max($changes.Count, 1)
     $progressBar.Value   = 0
     Set-StatusMessage "Uploading $($changes.Count) labels to $($global:routerModel)..." "Dim"
     $form.Refresh()
 
-    $result = Upload-RouterLabels -IP $ip -Changes $changes
-    $successCount = $result.SuccessCount
-    $errorCount   = $result.ErrorCount
+    $btnUpload.Enabled    = $false
+    $btnDownload.Enabled  = $false
+    $connectButton.Enabled = $false
 
-    $progressBar.Value = $changes.Count
-
-    if ($successCount -gt 0 -and $errorCount -eq 0) {
-        foreach ($lbl in $global:allLabels) {
-            $nl = $lbl.New_Label
-            if ($nl -and $nl.Trim() -ne "" -and $nl.Trim() -ne $lbl.Current_Label) {
-                $lbl.Current_Label = $nl.Trim()
-                $lbl.New_Label     = ""
-            }
-        }
-        Populate-Grid
+    $ulProgressCallback = {
+        param([int]$val)
+        $progressBar.Value = [Math]::Min($val, $progressBar.Maximum)
+        $form.Refresh()
     }
 
-    $statusColor = if ($errorCount -eq 0) { "Success" } else { "Warning" }
-    Set-StatusMessage "Upload complete: $successCount OK, $errorCount failed" $statusColor
+    try {
+        $result       = Upload-RouterLabels -IP $ip -Changes $changes -ProgressCallback $ulProgressCallback
+        $successCount = $result.SuccessCount
+        $errorCount   = $result.ErrorCount
 
-    $icon = if ($errorCount -eq 0) { "Information" } else { "Warning" }
-    [System.Windows.Forms.MessageBox]::Show(
-        "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to Documents\KUMO_Labels folder.",
-        "Upload Results", "OK", $icon
-    )
+        $progressBar.Value = $progressBar.Maximum
+
+        if ($result.SuccessLabels -and $result.SuccessLabels.Count -gt 0) {
+            foreach ($item in $result.SuccessLabels) {
+                $item.Current_Label = $item.New_Label.Trim()
+                $item.New_Label     = ""
+            }
+            Populate-Grid
+        }
+
+        $statusColor = if ($errorCount -eq 0) { "Success" } else { "Warning" }
+        Set-StatusMessage "Upload complete: $successCount OK, $errorCount failed" $statusColor
+
+        $icon = if ($errorCount -eq 0) { "Information" } else { "Warning" }
+        [System.Windows.Forms.MessageBox]::Show(
+            "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to Documents\KUMO_Labels folder.",
+            "Upload Results", "OK", $icon
+        )
+    } finally {
+        $btnDownload.Enabled   = $global:routerConnected
+        $connectButton.Enabled = $true
+        $remainingChanges = @($global:allLabels | Where-Object { $_.New_Label -and $_.New_Label.Trim() -ne "" -and $_.New_Label.Trim() -ne $_.Current_Label })
+        $btnUpload.Enabled = ($remainingChanges.Count -gt 0)
+    }
 })
 
 # ─── Videohub PING Keepalive ──────────────────────────────────────────────────
@@ -2553,11 +2792,17 @@ $keepaliveTimer.Interval = 25000
 $keepaliveTimer.Add_Tick({
     if ($global:routerType -eq "Videohub" -and $global:routerConnected -and $global:videohubWriter) {
         try {
-            $global:videohubWriter.Write("PING:`n`n")
+            $global:videohubWriter.Write("PING`n`n")
             $global:videohubWriter.Flush()
         } catch {
             $global:routerConnected = $false
             $keepaliveTimer.Stop()
+            $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
+            $connIndicator.StatusText = "Connection lost"
+            $connectButton.Text = "Connect"
+            $btnDownload.Enabled = $false
+            $btnUpload.Enabled = $false
+            Set-StatusMessage "Videohub connection lost" "Danger"
         }
     }
 })
@@ -2568,6 +2813,8 @@ $keepaliveTimer.Start()
 $form.Add_FormClosing({
     $keepaliveTimer.Stop()
     if ($global:videohubTcp -ne $null) {
+        try { $global:videohubWriter.Dispose() } catch { }
+        try { $global:videohubReader.Dispose() } catch { }
         try { $global:videohubTcp.Close() } catch { }
         $global:videohubTcp    = $null
         $global:videohubWriter = $null
@@ -2579,7 +2826,8 @@ $form.Add_FormClosing({
 
 $form.Add_Resize({
     Update-SidebarLayout
-    $searchBox.Location = New-Object System.Drawing.Point(($filterRail.Width - 182), 9)
+    $searchX = [Math]::Max($filterRail.Width - 182, 0)
+    $searchBox.Location = New-Object System.Drawing.Point($searchX, 9)
     $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 300), 8)
     $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
     $progressBar.Width = $statusBar.Width

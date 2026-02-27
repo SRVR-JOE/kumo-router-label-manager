@@ -8,18 +8,18 @@ from pydantic import BaseModel, Field, field_validator
 class PortData(BaseModel):
     """Model for a single port row."""
 
-    port: int = Field(..., ge=1, le=64, description="Port number (1-64)")
+    port: int = Field(..., ge=1, le=120, description="Port number (1-120)")
     type: Literal["INPUT", "OUTPUT"] = Field(..., description="Port type")
-    current_label: str = Field(default="", max_length=50, description="Current label")
-    new_label: Optional[str] = Field(default=None, max_length=50, description="New label to apply")
+    current_label: str = Field(default="", max_length=255, description="Current label")
+    new_label: Optional[str] = Field(default=None, max_length=255, description="New label to apply")
     notes: str = Field(default="", max_length=500, description="Additional notes")
 
     @field_validator("port")
     @classmethod
     def validate_port(cls, v: int) -> int:
         """Validate port number is within range."""
-        if not 1 <= v <= 64:
-            raise ValueError(f"Port must be between 1 and 64, got {v}")
+        if not 1 <= v <= 120:
+            raise ValueError(f"Port must be between 1 and 120, got {v}")
         return v
 
     @field_validator("type")
@@ -54,8 +54,8 @@ class FileData(BaseModel):
     @classmethod
     def validate_ports(cls, v: List[PortData]) -> List[PortData]:
         """Validate port list constraints."""
-        if len(v) > 128:
-            raise ValueError(f"Cannot have more than 128 ports (64 inputs + 64 outputs), got {len(v)}")
+        if len(v) > 240:
+            raise ValueError(f"Cannot have more than 240 ports (120 inputs + 120 outputs), got {len(v)}")
 
         # Check for duplicate (port, type) combinations
         # Same port number is valid for INPUT and OUTPUT (e.g., Input 1 and Output 1)
