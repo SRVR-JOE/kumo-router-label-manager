@@ -4,7 +4,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# ─── Custom Controls (C#) ────────────────────────────────────────────────────
+# --- Custom Controls (C#) ----------------------------------------------------
 
 Add-Type -ReferencedAssemblies @('System.Windows.Forms', 'System.Drawing') -TypeDefinition @'
 using System;
@@ -12,7 +12,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
-// ── ModernButton ──────────────────────────────────────────────────────────────
+// -- ModernButton --------------------------------------------------------------
 public class ModernButton : Button
 {
     public enum ButtonStyle { Primary, Secondary, Success, Warning, Danger }
@@ -112,7 +112,7 @@ public class ModernButton : Button
     }
 }
 
-// ── RoundedPanel ─────────────────────────────────────────────────────────────
+// -- RoundedPanel -------------------------------------------------------------
 public class RoundedPanel : Panel
 {
     private int _cornerRadius = 8;
@@ -150,7 +150,7 @@ public class RoundedPanel : Panel
     }
 }
 
-// ── ConnectionIndicator ──────────────────────────────────────────────────────
+// -- ConnectionIndicator ------------------------------------------------------
 public class ConnectionIndicator : Control
 {
     public enum ConnectionState { Disconnected, Connecting, Connected }
@@ -240,7 +240,7 @@ public class ConnectionIndicator : Control
     }
 }
 
-// ── SmoothProgressBar ─────────────────────────────────────────────────────────
+// -- SmoothProgressBar ---------------------------------------------------------
 public class SmoothProgressBar : Control
 {
     private int _maximum = 100;
@@ -319,7 +319,7 @@ public class SmoothProgressBar : Control
 }
 '@ -ErrorAction Stop
 
-# ─── HTTPS Helper Functions ──────────────────────────────────────────────────
+# --- HTTPS Helper Functions --------------------------------------------------
 
 function Invoke-SecureWebRequest {
     param(
@@ -331,7 +331,7 @@ function Invoke-SecureWebRequest {
         [switch]$UseBasicParsing,
         [switch]$ForceHTTP
     )
-    # KUMO routers only use HTTP/80 on local networks — go straight to HTTP
+    # KUMO routers only use HTTP/80 on local networks -- go straight to HTTP
     $httpUri = $Uri -replace "^https://", "http://"
     $p = @{ Uri=$httpUri; Method=$Method; TimeoutSec=$TimeoutSec; UseBasicParsing=$UseBasicParsing; ErrorAction="Stop" }
     if ($Body) { $p.Body = $Body }
@@ -339,7 +339,7 @@ function Invoke-SecureWebRequest {
     return Invoke-WebRequest @p
 }
 
-# ─── Color Theme ─────────────────────────────────────────────────────────────
+# --- Color Theme -------------------------------------------------------------
 
 $clrBg       = [System.Drawing.Color]::FromArgb(30, 25, 40)
 $clrPanel    = [System.Drawing.Color]::FromArgb(40, 35, 55)
@@ -358,7 +358,7 @@ $clrStatusBar     = [System.Drawing.Color]::FromArgb(25, 20, 35)
 $clrSelectedRow   = [System.Drawing.Color]::FromArgb(103, 58, 183)
 $clrAltRow        = [System.Drawing.Color]::FromArgb(45, 40, 60)
 
-# ─── AJA KUMO REST API Helpers ───────────────────────────────────────────────
+# --- AJA KUMO REST API Helpers -----------------------------------------------
 
 function Get-KumoParam {
     param([string]$IP, [string]$ParamId)
@@ -389,7 +389,7 @@ function Get-DocumentsPath {
     return $kumoDir
 }
 
-# ─── Global State ────────────────────────────────────────────────────────────
+# --- Global State ------------------------------------------------------------
 
 $global:routerConnected     = $false
 $global:allLabels         = [System.Collections.ArrayList]::new()
@@ -411,7 +411,7 @@ $global:videohubTcp       = $null    # persistent TCP connection for Videohub
 $global:videohubWriter    = $null
 $global:videohubReader    = $null
 
-# ─── Router Adapter Functions ─────────────────────────────────────────────────
+# --- Router Adapter Functions -------------------------------------------------
 
 function Connect-KumoRouter {
     param([string]$IP)
@@ -593,11 +593,11 @@ function Upload-KumoLabels-Telnet {
                 Start-Sleep -Milliseconds 150
                 $succeeded.Add($item)
             } catch {
-                # Per-label write failed — skip this label but continue with the rest
+                # Per-label write failed -- skip this label but continue with the rest
             }
         }
     } catch {
-        # Connection failed — return whatever succeeded so far
+        # Connection failed -- return whatever succeeded so far
     } finally {
         try { if ($w)   { $w.Close() } } catch { }
         try { if ($tcp) { $tcp.Close() } } catch { }
@@ -746,7 +746,7 @@ function Connect-Router {
                     $testTcp.EndConnect($connectResult)
                     if ($testTcp.Connected) {
                         $testTcp.Close()
-                        # Port is open — try full Videohub connect
+                        # Port is open -- try full Videohub connect
                         $info = Connect-VideohubRouter -IP $IP -Port 9990
                         return $info
                     }
@@ -771,7 +771,7 @@ function Connect-Router {
         try {
             return Connect-KumoRouter -IP $IP
         } catch {
-            throw "Could not connect to $IP — no KUMO (HTTP/80) or Videohub (TCP/9990) response detected. Verify the IP address and that the router is powered on."
+            throw "Could not connect to $IP -- no KUMO (HTTP/80) or Videohub (TCP/9990) response detected. Verify the IP address and that the router is powered on."
         }
     }
 
@@ -933,7 +933,7 @@ function Upload-RouterLabels {
     }
 }
 
-# ─── Main Form ───────────────────────────────────────────────────────────────
+# --- Main Form ---------------------------------------------------------------
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Router Label Manager v4.0"
@@ -947,14 +947,14 @@ $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $form.KeyPreview = $true
 $form.SuspendLayout()
 
-# ─── Enable double-buffering on the form ──────────────────────────────────────
+# --- Enable double-buffering on the form --------------------------------------
 
 $form.GetType().GetProperty(
     "DoubleBuffered",
     [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
 ).SetValue($form, $true)
 
-# ─── Sidebar Panel ───────────────────────────────────────────────────────────
+# --- Sidebar Panel -----------------------------------------------------------
 
 $sidebarPanel = New-Object System.Windows.Forms.Panel
 $sidebarPanel.Dock = "Left"
@@ -1212,7 +1212,7 @@ $sidebarInner.Controls.Add($actionSectionPanel)
 
 $sidebarInner.Add_Resize({ Update-SidebarLayout })
 
-# ─── Content Panel (right side of sidebar) ───────────────────────────────────
+# --- Content Panel (right side of sidebar) -----------------------------------
 
 $contentPanel = New-Object System.Windows.Forms.Panel
 $contentPanel.Dock = "Fill"
@@ -1351,7 +1351,7 @@ $filterRail.Add_Resize({
 
 $filterRail.Controls.Add($searchBox)
 
-# ─── DataGridView ─────────────────────────────────────────────────────────────
+# --- DataGridView -------------------------------------------------------------
 
 $dataGrid = New-Object System.Windows.Forms.DataGridView
 $dataGrid.Dock = "Fill"
@@ -1450,7 +1450,7 @@ $dataGrid.Add_CellPainting({
     param($sender, $e)
     if ($e.RowIndex -lt 0) { return }
 
-    # ── Type column: colored badge ──
+    # -- Type column: colored badge --
     if ($e.ColumnIndex -eq 1) {
         $e.PaintBackground($e.ClipBounds, $true)
         $val = if ($e.Value) { $e.Value.ToString() } else { "" }
@@ -1515,7 +1515,7 @@ $dataGrid.Add_CellPainting({
         return
     }
 
-    # ── Status column: colored dot ──
+    # -- Status column: colored dot --
     if ($e.ColumnIndex -eq 4) {
         $e.PaintBackground($e.ClipBounds, $true)
         $val = if ($e.Value) { $e.Value.ToString() } else { "" }
@@ -1549,7 +1549,7 @@ $dataGrid.Add_CellPainting({
     }
 })
 
-# ─── Context Menu for DataGridView ───────────────────────────────────────────
+# --- Context Menu for DataGridView -------------------------------------------
 
 $gridContextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $gridContextMenu.BackColor = $clrPanel
@@ -1632,7 +1632,7 @@ $gridContextMenu.Add_Opening({
     if ($hit.RowIndex -lt 0) { $e.Cancel = $true }
 })
 
-# ─── Status Bar ──────────────────────────────────────────────────────────────
+# --- Status Bar --------------------------------------------------------------
 
 $statusBar = New-Object System.Windows.Forms.Panel
 $statusBar.Dock = "Bottom"
@@ -1670,7 +1670,7 @@ $statusBar.Add_Resize({
     $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
 })
 
-# ─── Assemble Content Panel (reverse dock order: Bottom first, then Fill, then Top) ──
+# --- Assemble Content Panel (reverse dock order: Bottom first, then Fill, then Top) --
 
 $contentPanel.Controls.Add($dataGrid)       # Dock=Fill
 $contentPanel.Controls.Add($statusBar)      # Dock=Bottom
@@ -1678,12 +1678,12 @@ $contentPanel.Controls.Add($filterRail)     # Dock=Top (below contentHeader)
 $contentPanel.Controls.Add($contentHeader)  # Dock=Top (below headerBar)
 $contentPanel.Controls.Add($headerBar)      # Dock=Top (very top of content)
 
-# ─── Add Sidebar + Content to Form ───────────────────────────────────────────
+# --- Add Sidebar + Content to Form -------------------------------------------
 
 $form.Controls.Add($contentPanel)  # Dock=Fill
 $form.Controls.Add($sidebarPanel)  # Dock=Left
 
-# ─── Helper Functions ─────────────────────────────────────────────────────────
+# --- Helper Functions ---------------------------------------------------------
 
 function Populate-Grid {
     $dataGrid.SuspendLayout()
@@ -1813,7 +1813,7 @@ function Push-UndoCommand {
     $global:redoStack.Clear()
 }
 
-# ─── Keyboard Shortcuts ────────────────────────────────────────────────────────
+# --- Keyboard Shortcuts --------------------------------------------------------
 
 $form.Add_KeyDown({
     param($sender, $e)
@@ -1933,7 +1933,7 @@ $form.Add_KeyDown({
     }
 })
 
-# ─── Connection ────────────────────────────────────────────────────────────────
+# --- Connection ----------------------------------------------------------------
 
 $connectButton.Add_Click({
     $ip = $ipTextBox.Text.Trim()
@@ -2017,7 +2017,7 @@ $connectButton.Add_Click({
     }
 })
 
-# ─── Download Labels ──────────────────────────────────────────────────────────
+# --- Download Labels ----------------------------------------------------------
 
 $btnDownload.Add_Click({
     $ip      = $ipTextBox.Text.Trim()
@@ -2071,7 +2071,7 @@ $btnDownload.Add_Click({
     }
 })
 
-# ─── Open File ────────────────────────────────────────────────────────────────
+# --- Open File ----------------------------------------------------------------
 
 $btnOpenFile.Add_Click({
     $dlg        = New-Object System.Windows.Forms.OpenFileDialog
@@ -2152,7 +2152,7 @@ $btnOpenFile.Add_Click({
     }
 })
 
-# ─── Save File ────────────────────────────────────────────────────────────────
+# --- Save File ----------------------------------------------------------------
 
 $btnSaveFile.Add_Click({
     Sync-GridToData
@@ -2178,7 +2178,7 @@ $btnSaveFile.Add_Click({
                     $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
                         Export-Csv -Path $csvPath -NoTypeInformation
                     $dlg.FileName = $csvPath
-                    Set-StatusMessage "ImportExcel module not found — saved as CSV instead" "Warning"
+                    Set-StatusMessage "ImportExcel module not found -- saved as CSV instead" "Warning"
                 }
             } else {
                 $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
@@ -2191,7 +2191,7 @@ $btnSaveFile.Add_Click({
     }
 })
 
-# ─── Find & Replace ──────────────────────────────────────────────────────────
+# --- Find and Replace --------------------------------------------------------
 
 $btnFindReplace.Add_Click({
     Sync-GridToData
@@ -2320,7 +2320,7 @@ $btnFindReplace.Add_Click({
     $frForm.ShowDialog() | Out-Null
 })
 
-# ─── Auto-Number ──────────────────────────────────────────────────────────────
+# --- Auto-Number --------------------------------------------------------------
 
 $btnAutoNumber.Add_Click({
     Sync-GridToData
@@ -2443,7 +2443,7 @@ $btnAutoNumber.Add_Click({
     $anForm.ShowDialog() | Out-Null
 })
 
-# ─── Create Template ──────────────────────────────────────────────────────────
+# --- Create Template ----------------------------------------------------------
 
 $btnTemplate.Add_Click({
     Sync-GridToData
@@ -2560,7 +2560,7 @@ $btnTemplate.Add_Click({
             $templateData | Export-Excel -Path $savedPath -WorksheetName $worksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
         } catch {
             $savedPath = $null
-            Set-StatusMessage "Excel export failed — saving as CSV instead" "Warning"
+            Set-StatusMessage "Excel export failed -- saving as CSV instead" "Warning"
         }
     }
 
@@ -2573,12 +2573,12 @@ $btnTemplate.Add_Click({
     try { Start-Process $savedPath } catch { }
 
     [System.Windows.Forms.MessageBox]::Show(
-        "Template created for $modelName ($inCount inputs / $outCount outputs)`n`nFile: $savedPath`n`nInstructions:`n1. Fill in the 'New_Label' column with your desired names`n2. Save the file`n3. Use 'Open File' to load it back`n4. Click 'Upload Changes' to apply",
+        "Template created for $modelName - $inCount inputs / $outCount outputs`n`nFile: $savedPath`n`nInstructions:`n1. Fill in the 'New_Label' column with your desired names`n2. Save the file`n3. Use 'Open File' to load it back`n4. Click 'Upload Changes' to apply",
         "Template Created", "OK", "Information"
     )
 })
 
-# ─── Clear All New Labels ─────────────────────────────────────────────────────
+# --- Clear All New Labels -----------------------------------------------------
 
 $btnClearNew.Add_Click({
     $result = [System.Windows.Forms.MessageBox]::Show(
@@ -2593,14 +2593,14 @@ $btnClearNew.Add_Click({
     }
 })
 
-# ─── Tab Filters ──────────────────────────────────────────────────────────────
+# --- Tab Filters --------------------------------------------------------------
 
 $tabAll.Add_Click({     Set-ActiveTab $tabAll })
 $tabInputs.Add_Click({  Set-ActiveTab $tabInputs })
 $tabOutputs.Add_Click({ Set-ActiveTab $tabOutputs })
 $tabChanged.Add_Click({ Set-ActiveTab $tabChanged })
 
-# ─── Search ───────────────────────────────────────────────────────────────────
+# --- Search -------------------------------------------------------------------
 
 $searchBox.Add_GotFocus({
     if ($searchBox.Text -eq $searchWatermark) {
@@ -2623,7 +2623,7 @@ $searchBox.Add_TextChanged({
     }
 })
 
-# ─── Grid Cell Editing with Undo ─────────────────────────────────────────────
+# --- Grid Cell Editing with Undo ---------------------------------------------
 
 $dataGrid.Add_EditingControlShowing({
     param($sender, $e)
@@ -2689,7 +2689,7 @@ $dataGrid.Add_CellEndEdit({
     }
 })
 
-# ─── Upload to Router ─────────────────────────────────────────────────────────
+# --- Upload to Router ---------------------------------------------------------
 
 $btnUpload.Add_Click({
     Sync-GridToData
@@ -2716,7 +2716,7 @@ $btnUpload.Add_Click({
     $tooLong = @($changes | Where-Object { $_.New_Label.Trim().Length -gt $maxLen })
     if ($tooLong.Count -gt 0) {
         $result = [System.Windows.Forms.MessageBox]::Show(
-            "$($tooLong.Count) label(s) exceed the $maxLen-character limit. They may be truncated by the router.`n`nContinue anyway?",
+            "$($tooLong.Count) labels exceed the $maxLen-character limit. They may be truncated by the router.`n`nContinue anyway?",
             "Character Limit Warning", "YesNo", "Warning"
         )
         if ($result -ne "Yes") { return }
@@ -2798,7 +2798,7 @@ $btnUpload.Add_Click({
     }
 })
 
-# ─── Videohub PING Keepalive ──────────────────────────────────────────────────
+# --- Videohub PING Keepalive --------------------------------------------------
 
 $keepaliveTimer = New-Object System.Windows.Forms.Timer
 $keepaliveTimer.Interval = 25000
@@ -2821,7 +2821,7 @@ $keepaliveTimer.Add_Tick({
 })
 # keepaliveTimer is started by the connect handler after a successful Videohub connection
 
-# ─── Form Close: clean up Videohub TCP connection ─────────────────────────────
+# --- Form Close: clean up Videohub TCP connection -----------------------------
 
 $form.Add_FormClosing({
     $keepaliveTimer.Stop()
@@ -2836,7 +2836,7 @@ $form.Add_FormClosing({
     }
 })
 
-# ─── Form Resize Handler ──────────────────────────────────────────────────────
+# --- Form Resize Handler ------------------------------------------------------
 
 $form.Add_Resize({
     Update-SidebarLayout
@@ -2847,7 +2847,7 @@ $form.Add_Resize({
     $progressBar.Width = $statusBar.Width
 })
 
-# ─── Form Load ────────────────────────────────────────────────────────────────
+# --- Form Load ----------------------------------------------------------------
 
 $form.Add_Load({
     Update-SidebarLayout
@@ -2857,7 +2857,7 @@ $form.Add_Load({
     $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
 })
 
-# ─── Initialize ───────────────────────────────────────────────────────────────
+# --- Initialize ---------------------------------------------------------------
 
 Create-DefaultLabels
 Populate-Grid
@@ -2865,6 +2865,6 @@ Populate-Grid
 $form.ResumeLayout($false)
 $form.PerformLayout()
 
-# ─── Show Form ───────────────────────────────────────────────────────────────
+# --- Show Form ---------------------------------------------------------------
 
 $form.ShowDialog() | Out-Null
