@@ -21,7 +21,7 @@ class Label:
     """Represents a label for a router port.
 
     Attributes:
-        port_number: Port number (1-32)
+        port_number: Port number (1-120)
         port_type: Type of port (INPUT or OUTPUT)
         current_label: Current label text on the router
         new_label: New label text to be applied (if any)

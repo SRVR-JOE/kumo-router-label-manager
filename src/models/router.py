@@ -121,14 +121,14 @@ class Router:
         """Update information for a specific port.
 
         Args:
-            port_number: Port number (1-64)
+            port_number: Port number (1-120)
             info: Dictionary containing port information
 
         Raises:
             ValueError: If port number is invalid
         """
-        if not 1 <= port_number <= 64:
-            raise ValueError(f"Port number must be between 1 and 64, got {port_number}")
+        if not 1 <= port_number <= 120:
+            raise ValueError(f"Port number must be between 1 and 120, got {port_number}")
 
         self.port_info[port_number] = info
 
@@ -136,7 +136,7 @@ class Router:
         """Get information for a specific port.
 
         Args:
-            port_number: Port number (1-32)
+            port_number: Port number (1-120)
 
         Returns:
             Dictionary containing port information, or None if not found

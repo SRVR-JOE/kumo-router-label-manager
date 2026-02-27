@@ -14,14 +14,6 @@ class PortData(BaseModel):
     new_label: Optional[str] = Field(default=None, max_length=255, description="New label to apply")
     notes: str = Field(default="", max_length=500, description="Additional notes")
 
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port number is within range."""
-        if not 1 <= v <= 120:
-            raise ValueError(f"Port must be between 1 and 120, got {v}")
-        return v
-
     @field_validator("type")
     @classmethod
     def validate_type(cls, v: str) -> str:
@@ -74,11 +66,17 @@ class FileData(BaseModel):
         """Get all OUTPUT ports."""
         return [p for p in self.ports if p.type == "OUTPUT"]
 
-    def get_port(self, port_number: int) -> Optional[PortData]:
-        """Get port by number."""
+    def get_port(self, port_number: int, port_type: Optional[str] = None) -> Optional[PortData]:
+        """Get port by number and optional type.
+
+        Args:
+            port_number: Port number to find
+            port_type: Optional "INPUT" or "OUTPUT" to disambiguate
+        """
         for port in self.ports:
             if port.port == port_number:
-                return port
+                if port_type is None or port.type == port_type:
+                    return port
         return None
 
     class Config:

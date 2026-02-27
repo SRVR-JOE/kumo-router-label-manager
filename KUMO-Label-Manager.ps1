@@ -282,6 +282,8 @@ public class SmoothProgressBar : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        if (Width <= 0 || Height <= 0) return;
+
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using (SolidBrush bgBrush = new SolidBrush(BackColor))
             e.Graphics.FillRectangle(bgBrush, 0, 0, Width, Height);
@@ -289,10 +291,13 @@ public class SmoothProgressBar : Control
         if (_displayValue > 1)
         {
             Rectangle fillRect = new Rectangle(0, 0, (int)_displayValue, Height);
-            using (LinearGradientBrush gb = new LinearGradientBrush(fillRect.IsEmpty ? new Rectangle(0,0,1,1) : fillRect,
-                AdjustBrightness(_fillColor, 1.3f), _fillColor, LinearGradientMode.Horizontal))
+            if (!fillRect.IsEmpty)
             {
-                e.Graphics.FillRectangle(gb, fillRect);
+                using (LinearGradientBrush gb = new LinearGradientBrush(fillRect,
+                    AdjustBrightness(_fillColor, 1.3f), _fillColor, LinearGradientMode.Horizontal))
+                {
+                    e.Graphics.FillRectangle(gb, fillRect);
+                }
             }
         }
     }
@@ -498,39 +503,45 @@ function Download-KumoLabels {
     if (-not $restSuccess) {
         # Telnet fallback
         $labels.Clear()
-        $tcp    = New-Object System.Net.Sockets.TcpClient
-        $tcp.Connect($IP, 23)
-        $stream = $tcp.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        Start-Sleep -Seconds 1
-        while ($stream.DataAvailable) { $reader.ReadLine() | Out-Null }
+        $tcp = $null
+        try {
+            $tcp    = New-Object System.Net.Sockets.TcpClient
+            $tcp.Connect($IP, 23)
+            $stream = $tcp.GetStream()
+            $writer = New-Object System.IO.StreamWriter($stream)
+            $reader = New-Object System.IO.StreamReader($stream)
+            Start-Sleep -Seconds 1
+            while ($stream.DataAvailable) { $reader.ReadLine() | Out-Null }
 
-        for ($i = 1; $i -le $InputCount; $i++) {
-            try {
-                $writer.WriteLine("LABEL INPUT $i ?"); $writer.Flush()
-                Start-Sleep -Milliseconds 150
-                $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
-                $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
-            } catch { $label = "Input $i" }
-            $labels.Add([PSCustomObject]@{
-                Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
-            }) | Out-Null
-            if ($ProgressCallback) { & $ProgressCallback $i }
+            for ($i = 1; $i -le $InputCount; $i++) {
+                try {
+                    $writer.WriteLine("LABEL INPUT $i ?"); $writer.Flush()
+                    Start-Sleep -Milliseconds 150
+                    $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
+                    $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
+                } catch { $label = "Input $i" }
+                $labels.Add([PSCustomObject]@{
+                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
+                }) | Out-Null
+                if ($ProgressCallback) { & $ProgressCallback $i }
+            }
+            for ($i = 1; $i -le $OutputCount; $i++) {
+                try {
+                    $writer.WriteLine("LABEL OUTPUT $i ?"); $writer.Flush()
+                    Start-Sleep -Milliseconds 150
+                    $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
+                    $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
+                } catch { $label = "Output $i" }
+                $labels.Add([PSCustomObject]@{
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
+                }) | Out-Null
+                if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
+            }
+        } finally {
+            try { if ($writer) { $writer.Close() } } catch { }
+            try { if ($reader) { $reader.Close() } } catch { }
+            try { if ($tcp)    { $tcp.Close() } } catch { }
         }
-        for ($i = 1; $i -le $OutputCount; $i++) {
-            try {
-                $writer.WriteLine("LABEL OUTPUT $i ?"); $writer.Flush()
-                Start-Sleep -Milliseconds 150
-                $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
-                $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
-            } catch { $label = "Output $i" }
-            $labels.Add([PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
-            }) | Out-Null
-            if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
-        }
-        try { $writer.Close(); $reader.Close(); $tcp.Close() } catch { }
     }
 
     return $labels
@@ -692,75 +703,6 @@ function Download-VideohubLabels {
     return $info
 }
 
-function Upload-VideohubLabels {
-    param([string]$IP, [int]$Port = 9990, [array]$Changes)
-    # Sends all input label changes in one block and all output label changes in another.
-    # Returns hashtable with SuccessCount and ErrorCount.
-    if ($global:videohubWriter -eq $null -or $global:videohubTcp -eq $null -or -not $global:videohubTcp.Connected) {
-        # Re-connect
-        try {
-            $info = Connect-VideohubRouter -IP $IP -Port $Port
-        } catch {
-            return @{ SuccessCount = 0; ErrorCount = $Changes.Count }
-        }
-    }
-
-    $writer = $global:videohubWriter
-    $reader = $global:videohubReader
-    $stream = $global:videohubTcp.GetStream()
-
-    $inputChanges  = @($Changes | Where-Object { $_.Type -eq "INPUT" })
-    $outputChanges = @($Changes | Where-Object { $_.Type -eq "OUTPUT" })
-
-    # Helper: send one block of label changes and wait for ACK
-    $sendBlock = {
-        param([string]$BlockHeader, [array]$Items)
-        if ($Items.Count -eq 0) { return }
-
-        $sb = New-Object System.Text.StringBuilder
-        $sb.Append("$BlockHeader`n") | Out-Null
-        foreach ($item in $Items) {
-            # Protocol is 0-based; our Port is 1-based
-            $zeroIndex = $item.Port - 1
-            $sb.Append("$zeroIndex $($item.New_Label.Trim())`n") | Out-Null
-        }
-        $sb.Append("`n") | Out-Null   # blank line terminates block
-
-        try {
-            $writer.Write($sb.ToString())
-            $writer.Flush()
-
-            # Wait for ACK/NAK (up to 5s)
-            $deadline = [DateTime]::Now.AddSeconds(5)
-            $response = ""
-            while ([DateTime]::Now -lt $deadline) {
-                if ($stream.DataAvailable) {
-                    $line = $reader.ReadLine()
-                    if ($line -eq "ACK") { $response = "ACK"; break }
-                    if ($line -eq "NAK") { $response = "NAK"; break }
-                } else {
-                    Start-Sleep -Milliseconds 50
-                }
-            }
-
-            if ($response -eq "ACK") {
-                $script:successCount += $Items.Count
-            } else {
-                $script:errorCount += $Items.Count
-            }
-        } catch {
-            $script:errorCount += $Items.Count
-        }
-    }
-
-    $script:successCount = 0
-    $script:errorCount   = 0
-
-    & $sendBlock "INPUT LABELS:" $inputChanges
-    & $sendBlock "OUTPUT LABELS:" $outputChanges
-
-    return @{ SuccessCount = $script:successCount; ErrorCount = $script:errorCount }
-}
 
 function Connect-Router {
     param([string]$IP, [string]$RouterType = "Auto")
@@ -814,43 +756,52 @@ function Download-RouterLabels {
     # Downloads labels from whatever router type is currently connected.
     # Populates $global:allLabels directly. Returns count of labels loaded.
 
+    # Snapshot existing labels so we can restore on failure
+    $snapshot = [System.Collections.ArrayList]::new($global:allLabels)
     $global:allLabels.Clear()
 
-    if ($global:routerType -eq "Videohub") {
-        if ($ProgressCallback) { & $ProgressCallback 50 }
-        $info = Download-VideohubLabels -IP $IP -Port 9990
+    try {
+        if ($global:routerType -eq "Videohub") {
+            if ($ProgressCallback) { & $ProgressCallback 50 }
+            $info = Download-VideohubLabels -IP $IP -Port 9990
 
-        $inputLabels  = $info.InputLabels
-        $outputLabels = $info.OutputLabels
-        $inputCount   = $info.InputCount
-        $outputCount  = $info.OutputCount
-        $global:routerInputCount  = $inputCount
-        $global:routerOutputCount = $outputCount
+            $inputLabels  = $info.InputLabels
+            $outputLabels = $info.OutputLabels
+            $inputCount   = $info.InputCount
+            $outputCount  = $info.OutputCount
+            $global:routerInputCount  = $inputCount
+            $global:routerOutputCount = $outputCount
 
-        for ($i = 1; $i -le $inputCount; $i++) {
-            $zeroIdx = $i - 1
-            $label = if ($inputLabels.ContainsKey($zeroIdx)) { $inputLabels[$zeroIdx] } else { "Input $i" }
-            $global:allLabels.Add([PSCustomObject]@{
-                Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
-            }) | Out-Null
+            for ($i = 1; $i -le $inputCount; $i++) {
+                $zeroIdx = $i - 1
+                $label = if ($inputLabels.ContainsKey($zeroIdx)) { $inputLabels[$zeroIdx] } else { "Input $i" }
+                $global:allLabels.Add([PSCustomObject]@{
+                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
+                }) | Out-Null
+            }
+            for ($i = 1; $i -le $outputCount; $i++) {
+                $zeroIdx = $i - 1
+                $label = if ($outputLabels.ContainsKey($zeroIdx)) { $outputLabels[$zeroIdx] } else { "Output $i" }
+                $global:allLabels.Add([PSCustomObject]@{
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
+                }) | Out-Null
+            }
+            if ($ProgressCallback) { & $ProgressCallback 100 }
+        } else {
+            # KUMO
+            $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount -ProgressCallback $ProgressCallback
+            foreach ($lbl in $downloaded) {
+                $global:allLabels.Add($lbl) | Out-Null
+            }
+            if ($global:allLabels.Count -eq 0) {
+                Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
+            }
         }
-        for ($i = 1; $i -le $outputCount; $i++) {
-            $zeroIdx = $i - 1
-            $label = if ($outputLabels.ContainsKey($zeroIdx)) { $outputLabels[$zeroIdx] } else { "Output $i" }
-            $global:allLabels.Add([PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
-            }) | Out-Null
-        }
-        if ($ProgressCallback) { & $ProgressCallback 100 }
-    } else {
-        # KUMO
-        $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount -ProgressCallback $ProgressCallback
-        foreach ($lbl in $downloaded) {
-            $global:allLabels.Add($lbl) | Out-Null
-        }
-        if ($global:allLabels.Count -eq 0) {
-            Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
-        }
+    } catch {
+        # Restore snapshot on failure so the grid isn't left empty
+        $global:allLabels.Clear()
+        foreach ($item in $snapshot) { $global:allLabels.Add($item) | Out-Null }
+        throw
     }
 
     return $global:allLabels.Count
@@ -2107,25 +2058,29 @@ $btnOpenFile.Add_Click({
                         $data = Import-Excel -Path $dlg.FileName -WorksheetName "KUMO_Labels"
                     }
                 } else {
-                    $excel = New-Object -ComObject Excel.Application
-                    $excel.Visible = $false
-                    $wb  = $excel.Workbooks.Open($dlg.FileName)
-                    # Try Videohub_Labels first, fall back to KUMO_Labels
-                    $ws = $null
-                    try { $ws = $wb.Worksheets.Item("Videohub_Labels") } catch {}
-                    if (-not $ws) { $ws = $wb.Worksheets.Item("KUMO_Labels") }
-                    $data = @()
-                    $lastRow = $ws.UsedRange.Rows.Count
-                    for ($row = 2; $row -le $lastRow; $row++) {
-                        $data += [PSCustomObject]@{
-                            Port          = $ws.Cells.Item($row,1).Value2
-                            Type          = $ws.Cells.Item($row,2).Value2
-                            Current_Label = $ws.Cells.Item($row,3).Value2
-                            New_Label     = $ws.Cells.Item($row,4).Value2
+                    $excel = $null; $wb = $null
+                    try {
+                        $excel = New-Object -ComObject Excel.Application
+                        $excel.Visible = $false
+                        $wb  = $excel.Workbooks.Open($dlg.FileName)
+                        $ws = $null
+                        try { $ws = $wb.Worksheets.Item("Videohub_Labels") } catch {}
+                        if (-not $ws) { $ws = $wb.Worksheets.Item("KUMO_Labels") }
+                        $data = @()
+                        $lastRow = $ws.UsedRange.Rows.Count
+                        for ($row = 2; $row -le $lastRow; $row++) {
+                            $data += [PSCustomObject]@{
+                                Port          = $ws.Cells.Item($row,1).Value2
+                                Type          = $ws.Cells.Item($row,2).Value2
+                                Current_Label = $ws.Cells.Item($row,3).Value2
+                                New_Label     = $ws.Cells.Item($row,4).Value2
+                            }
                         }
+                    } finally {
+                        if ($wb)    { try { $wb.Close($false); [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wb) | Out-Null } catch {} }
+                        if ($excel) { try { $excel.Quit(); [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null } catch {} }
+                        $wb = $null; $excel = $null
                     }
-                    $wb.Close(); $excel.Quit()
-                    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
                 }
             }
 
@@ -2825,6 +2780,7 @@ $keepaliveTimer.Start()
 
 $form.Add_FormClosing({
     $keepaliveTimer.Stop()
+    $keepaliveTimer.Dispose()
     if ($global:videohubTcp -ne $null) {
         try { $global:videohubWriter.Dispose() } catch { }
         try { $global:videohubReader.Dispose() } catch { }

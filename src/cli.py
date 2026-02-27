@@ -799,7 +799,7 @@ class KumoManager:
             self.file_handler.create_template(output_path)
             console.print(Panel(
                 f"[green bold]Template created:[/green bold] [purple]{output_file}[/purple]\n"
-                f"[dim]Contains 64 ports (32 inputs + 32 outputs)[/dim]",
+                f"[dim]Contains ports for inputs and outputs[/dim]",
                 border_style="green",
                 padding=(0, 2),
             ))
@@ -1007,7 +1007,6 @@ class VideohubManager:
 
         if success and info is not None:
             status_text = "[green bold]Connected[/green bold]"
-            display_name = info.friendly_name or info.model_name
 
             info_table.add_row("Status", status_text)
             info_table.add_row("Router Type", "Blackmagic Videohub")

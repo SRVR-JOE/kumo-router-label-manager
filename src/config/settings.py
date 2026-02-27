@@ -66,20 +66,20 @@ class Settings(BaseSettings):
     min_port_number: int = Field(
         default=1,
         ge=1,
-        le=64,
+        le=120,
         description="Minimum valid port number"
     )
     max_port_number: int = Field(
-        default=64,
+        default=120,
         ge=1,
-        le=64,
-        description="Maximum valid port number (supports 16, 32, or 64 port routers)"
+        le=120,
+        description="Maximum valid port number (supports KUMO 16/32/64 and Videohub up to 120)"
     )
     max_label_length: int = Field(
-        default=50,
+        default=255,
         ge=1,
-        le=200,
-        description="Maximum length for port labels"
+        le=255,
+        description="Maximum length for port labels (50 for KUMO, 255 for Videohub)"
     )
     allowed_port_types: List[str] = Field(
         default=["INPUT", "OUTPUT"],
