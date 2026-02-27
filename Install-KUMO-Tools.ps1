@@ -1,6 +1,6 @@
-# KUMO Router Label Manager - Installation Script
+# Router Label Manager - Installation Script
 # Professional AV Production Tool for Solotech
-# Version 2.0 - Enhanced with Download Functionality
+# Version 4.0 - Supports AJA KUMO and Blackmagic Videohub
 
 param(
     [string]$InstallPath = "C:\KUMO-Tools",
@@ -11,15 +11,15 @@ param(
 
 Write-Host @"
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                    KUMO Router Label Manager v2.0                            ║
+║                      Router Label Manager v4.0                               ║
 ║                   Professional AV Production Tool                            ║
 ║                                                                               ║
 ║  Features:                                                                    ║
-║  • Download current labels from KUMO router                                  ║
+║  • Download current labels from KUMO / Videohub routers                     ║
 ║  • Bulk update labels via Excel spreadsheet                                  ║
 ║  • Professional GUI and command-line interfaces                              ║
-║  • Support for 32x32 router configurations                                   ║
-║  • Multiple connection methods (REST API, Telnet)                            ║
+║  • AJA KUMO (REST API / Telnet) and Blackmagic Videohub (TCP 9990)          ║
+║  • Auto-detects router type on connect                                       ║
 ║                                                                               ║
 ║  Created for Solotech Live Event Production                                  ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
@@ -27,7 +27,7 @@ Write-Host @"
 
 # Handle uninstall
 if ($Uninstall) {
-    Write-Host "`nUninstalling KUMO Tools..." -ForegroundColor Yellow
+    Write-Host "`nUninstalling Router Label Manager Tools..." -ForegroundColor Yellow
     
     if (Test-Path $InstallPath) {
         Remove-Item $InstallPath -Recurse -Force
@@ -47,7 +47,7 @@ if ($Uninstall) {
         }
     }
     
-    Write-Host "✓ KUMO Tools uninstalled successfully!" -ForegroundColor Green
+    Write-Host "✓ Router Label Manager Tools uninstalled successfully!" -ForegroundColor Green
     exit 0
 }
 
@@ -73,6 +73,9 @@ if (-not (Test-Path $InstallPath)) {
     Write-Host "✓ Directory exists: $InstallPath" -ForegroundColor Green
 }
 
+# Support note for Videohub users
+Write-Host "  Supports AJA KUMO / Videohub routers - auto-detected on connect" -ForegroundColor Gray
+
 # Install Excel module if requested
 if ($InstallExcelModule) {
     Write-Host "`nInstalling ImportExcel module..." -ForegroundColor Yellow
@@ -90,7 +93,7 @@ if ($InstallExcelModule) {
 }
 
 # Copy files (in a real deployment, these would be copied from the source)
-Write-Host "`nInstalling KUMO Tools..." -ForegroundColor Yellow
+Write-Host "`nInstalling Router Label Manager Tools..." -ForegroundColor Yellow
 
 # Create batch file for easy GUI launch
 $batchContent = @"
@@ -106,7 +109,7 @@ Write-Host "✓ Created GUI launcher: Launch-KUMO-GUI.bat" -ForegroundColor Gree
 # Create PowerShell profile addition for easy command access
 $profileAddition = @"
 
-# KUMO Tools - Added by installer
+# Router Label Manager Tools - Added by installer
 `$env:PATH += ";$InstallPath"
 function kumo-download { & "$InstallPath\KUMO-Excel-Updater.ps1" -DownloadLabels @args }
 function kumo-update { & "$InstallPath\KUMO-Excel-Updater.ps1" @args }
@@ -117,16 +120,20 @@ function kumo-gui { & "$InstallPath\Launch-KUMO-GUI.bat" }
 
 # Create quick start script
 $quickStartContent = @'
-# KUMO Quick Start Examples
+# Router Label Manager - Quick Start Examples
+# Supports AJA KUMO and Blackmagic Videohub routers
 # Run these commands from PowerShell
 
-# Download current labels from your KUMO router:
+# Download current labels (router type auto-detected):
 kumo-download -KumoIP "192.168.1.100" -DownloadPath "C:\temp\current_labels.xlsx"
+
+# Download from a Videohub explicitly:
+# .\KUMO-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "C:\temp\vh_labels.csv"
 
 # Create a blank template:
 kumo-template
 
-# Update labels from Excel file:
+# Update labels from Excel file (KUMO / Videohub auto-detected):
 kumo-update -KumoIP "192.168.1.100" -ExcelFile "C:\temp\labels.xlsx"
 
 # Test connection without making changes:
@@ -156,7 +163,7 @@ if ($CreateDesktopShortcuts) {
         $Shortcut.TargetPath = "powershell.exe"
         $Shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$InstallPath\KUMO-Label-Manager.ps1`""
         $Shortcut.WorkingDirectory = $InstallPath
-        $Shortcut.Description = "KUMO Router Label Manager - GUI"
+        $Shortcut.Description = "Router Label Manager - GUI (KUMO / Videohub)"
         $Shortcut.Save()
         
         Write-Host "✓ Created desktop shortcut: KUMO Label Manager" -ForegroundColor Green
@@ -168,15 +175,16 @@ if ($CreateDesktopShortcuts) {
 
 # Create configuration file
 $configContent = @{
-    Version = "2.0"
+    Version = "4.0"
     InstallPath = $InstallPath
     InstallDate = Get-Date
     Features = @(
-        "Download current labels",
-        "Upload labels from Excel",
-        "Multiple connection methods",
-        "GUI and command-line interfaces",
-        "32x32 router support"
+        "Download current labels from KUMO / Videohub routers",
+        "Upload labels from Excel or CSV",
+        "AJA KUMO: REST API and Telnet",
+        "Blackmagic Videohub: TCP 9990 protocol",
+        "Auto-detects router type on connect",
+        "GUI and command-line interfaces"
     )
 } | ConvertTo-Json -Depth 3
 
@@ -190,24 +198,26 @@ Write-Host @"
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
 Installation Directory: $InstallPath
+Supported Routers: AJA KUMO (REST/Telnet) and Blackmagic Videohub (TCP 9990)
 
 Quick Commands (add to PowerShell profile):
 • kumo-download -KumoIP "192.168.1.100" -DownloadPath "labels.xlsx"
-• kumo-update -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"  
+• kumo-update -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
 • kumo-template
 • kumo-gui
 
 Files Created:
 • KUMO-Label-Manager.ps1     (GUI Application)
-• KUMO-Excel-Updater.ps1     (Command Line Tool)  
+• KUMO-Excel-Updater.ps1     (Command Line Tool - KUMO + Videohub)
 • Launch-KUMO-GUI.bat        (Easy GUI Launcher)
-• Quick-Start-Examples.ps1    (Usage Examples)
+• Quick-Start-Examples.ps1   (Usage Examples)
 • KUMO-Setup-Guide.md        (Complete Documentation)
 
 Next Steps:
 1. Copy the main PowerShell files to: $InstallPath
 2. Run: .\Launch-KUMO-GUI.bat (for GUI)
-3. Or use command line: kumo-download -KumoIP "YOUR_KUMO_IP" -DownloadPath "labels.xlsx"
+3. Or use command line: kumo-download -KumoIP "YOUR_ROUTER_IP" -DownloadPath "labels.xlsx"
+   (Router type is auto-detected. Use -RouterType Videohub to force Videohub mode.)
 
 For support: Check KUMO-Setup-Guide.md for troubleshooting
 "@ -ForegroundColor Green
@@ -233,5 +243,6 @@ if ($addToProfile -eq 'y' -or $addToProfile -eq 'Y') {
     }
 }
 
-Write-Host "`n🎉 KUMO Router Label Manager is ready to use!" -ForegroundColor Magenta
-Write-Host "   Perfect for live event production and professional AV workflows" -ForegroundColor White
+Write-Host "`nRouter Label Manager is ready to use!" -ForegroundColor Magenta
+Write-Host "  AJA KUMO and Blackmagic Videohub support included." -ForegroundColor White
+Write-Host "  Perfect for live event production and professional AV workflows." -ForegroundColor White

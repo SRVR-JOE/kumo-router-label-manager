@@ -1,10 +1,10 @@
 @echo off
-title KUMO Router Label Manager - Solotech Production Tools
+title Router Label Manager - Solotech Production Tools
 
 echo.
 echo  ╔═══════════════════════════════════════════════════════════════════════════════╗
-echo  ║                    KUMO Router Label Manager v2.0                            ║
-echo  ║                   Professional AV Production Tool                            ║
+echo  ║                       Router Label Manager v4.0                              ║
+echo  ║                  AJA KUMO ^& Blackmagic Videohub                             ║
 echo  ╚═══════════════════════════════════════════════════════════════════════════════╝
 echo.
 
@@ -42,37 +42,37 @@ goto menu
 
 :download
 echo.
-set /p kumo_ip="Enter KUMO IP address (e.g., 192.168.1.100): "
+set /p kumo_ip="Enter router IP address (e.g., 192.168.1.100): "
 set /p output_file="Enter output file path (e.g., C:\temp\labels.xlsx): "
 echo.
-echo Downloading current labels from %kumo_ip%...
+echo Downloading current labels from %kumo_ip% (router type auto-detected)...
 powershell -ExecutionPolicy Bypass -File "KUMO-Excel-Updater.ps1" -DownloadLabels -KumoIP "%kumo_ip%" -DownloadPath "%output_file%"
 pause
 goto menu
 
 :template
 echo.
-set /p template_file="Enter template file path (e.g., C:\temp\template.xlsx): "
+set /p template_file="Enter output file path (e.g., C:\temp\template.xlsx): "
 echo.
 echo Creating template file...
-powershell -ExecutionPolicy Bypass -File "KUMO-Excel-Updater.ps1" -CreateTemplate
+powershell -ExecutionPolicy Bypass -File "KUMO-Excel-Updater.ps1" -CreateTemplate -DownloadPath "%template_file%"
 pause
 goto menu
 
 :update
 echo.
-set /p kumo_ip="Enter KUMO IP address (e.g., 192.168.1.100): "
-set /p excel_file="Enter Excel file path (e.g., C:\temp\labels.xlsx): "
+set /p kumo_ip="Enter router IP address (e.g., 192.168.1.100): "
+set /p excel_file="Enter label file path (e.g., C:\temp\labels.xlsx): "
 echo.
-echo Updating labels on %kumo_ip% from %excel_file%...
+echo Updating labels on %kumo_ip% from %excel_file% (router type auto-detected)...
 powershell -ExecutionPolicy Bypass -File "KUMO-Excel-Updater.ps1" -KumoIP "%kumo_ip%" -ExcelFile "%excel_file%"
 pause
 goto menu
 
 :test
 echo.
-set /p kumo_ip="Enter KUMO IP address (e.g., 192.168.1.100): "
-set /p excel_file="Enter Excel file path (e.g., C:\temp\labels.xlsx): "
+set /p kumo_ip="Enter router IP address (e.g., 192.168.1.100): "
+set /p excel_file="Enter label file path (e.g., C:\temp\labels.xlsx): "
 echo.
 echo Testing connection and validating file...
 powershell -ExecutionPolicy Bypass -File "KUMO-Excel-Updater.ps1" -KumoIP "%kumo_ip%" -ExcelFile "%excel_file%" -TestOnly
@@ -82,15 +82,18 @@ goto menu
 :examples
 echo.
 echo  ╔═══════════════════════════════════════════════════════════════════════════════╗
-echo  ║                            Quick Examples                                     ║
+echo  ║                            Quick Examples                                    ║
 echo  ╚═══════════════════════════════════════════════════════════════════════════════╝
 echo.
-echo  PowerShell Commands:
+echo  PowerShell Commands (router type auto-detected):
 echo.
-echo  Download current labels:
+echo  Download labels from KUMO or Videohub:
 echo    .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "labels.xlsx"
 echo.
-echo  Update from Excel file:
+echo  Download from Videohub (explicit):
+echo    .\KUMO-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "vh.csv"
+echo.
+echo  Update from Excel/CSV file:
 echo    .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
 echo.
 echo  Test only (no changes):
@@ -110,7 +113,8 @@ goto menu
 
 :exit
 echo.
-echo Thank you for using KUMO Router Label Manager!
-echo For support, check the KUMO-Setup-Guide.md file.
+echo Thank you for using Router Label Manager!
+echo Supports AJA KUMO and Blackmagic Videohub routers.
+echo For support, check the README.md file.
 pause
 exit

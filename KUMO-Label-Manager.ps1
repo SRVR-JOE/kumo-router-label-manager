@@ -1,5 +1,5 @@
-# KUMO Router Label Manager v4.0
-# Redesigned with modern sidebar layout, custom controls, and improved UX.
+# Router Label Manager v4.0
+# Supports AJA KUMO and Blackmagic Videohub matrix routers.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -395,7 +395,7 @@ function Get-DocumentsPath {
 
 # ─── Global State ────────────────────────────────────────────────────────────
 
-$global:kumoConnected     = $false
+$global:routerConnected     = $false
 $global:allLabels         = [System.Collections.ArrayList]::new()
 $global:backupLabels      = $null
 $global:currentFilter     = "ALL"
@@ -408,10 +408,456 @@ $global:undoStack         = [System.Collections.Generic.Stack[hashtable]]::new()
 $global:redoStack         = [System.Collections.Generic.Stack[hashtable]]::new()
 $global:cellEditOldValue  = ""
 
+# New globals for multi-router support
+$global:routerType        = ""       # "KUMO" or "Videohub"
+$global:maxLabelLength    = 50       # 50 for KUMO, 255 for Videohub
+$global:videohubTcp       = $null    # persistent TCP connection for Videohub
+$global:videohubWriter    = $null
+$global:videohubReader    = $null
+
+# ─── Router Adapter Functions ─────────────────────────────────────────────────
+
+function Connect-KumoRouter {
+    param([string]$IP)
+    # Returns a hashtable with connection info or throws on failure.
+    $testUri  = "http://$IP/config?action=get&configid=0&paramid=eParamID_SysName"
+    $response = Invoke-SecureWebRequest -Uri $testUri -TimeoutSec 8 -UseBasicParsing -ErrorAction Stop
+    $json     = $response.Content | ConvertFrom-Json
+
+    $routerName = if ($json.value -and $json.value -ne "") { $json.value } else { "KUMO" }
+
+    $firmware = ""
+    try {
+        $fw = Get-KumoParam -IP $IP -ParamId "eParamID_SWVersion"
+        if ($fw) { $firmware = $fw }
+    } catch { }
+
+    # Detect port count
+    $inputCount = 32
+    try {
+        $test64 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
+        if ($test64 -ne $null) { $inputCount = 64 }
+    } catch { }
+    if ($inputCount -eq 32) {
+        try {
+            $test17 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
+            if ($test17 -eq $null) { $inputCount = 16 }
+        } catch { $inputCount = 16 }
+    }
+
+    $outputCount = $inputCount
+    if ($inputCount -eq 16) {
+        try {
+            $testDest5 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination5_Line_1"
+            if ($testDest5 -eq $null) { $outputCount = 4 }
+        } catch { $outputCount = 4 }
+    }
+
+    $modelName = switch ("$inputCount`x$outputCount") {
+        "16x4"  { "KUMO 1604" }
+        "16x16" { "KUMO 1616" }
+        "32x32" { "KUMO 3232" }
+        "64x64" { "KUMO 6464" }
+        default { "KUMO ${inputCount}x${outputCount}" }
+    }
+
+    return @{
+        RouterType   = "KUMO"
+        RouterName   = $routerName
+        RouterModel  = $modelName
+        Firmware     = $firmware
+        InputCount   = $inputCount
+        OutputCount  = $outputCount
+    }
+}
+
+function Download-KumoLabels {
+    param([string]$IP, [int]$InputCount, [int]$OutputCount)
+    # Returns an ArrayList of PSCustomObjects compatible with $global:allLabels format.
+    # Calls the provided progress callback $ProgressCallback([int]$done, [int]$total, [string]$msg) if supplied.
+    $labels = [System.Collections.ArrayList]::new()
+    $restSuccess = $true
+
+    for ($i = 1; $i -le $InputCount; $i++) {
+        $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source${i}_Line_1"
+        if (-not $label -or $label -eq "") {
+            $label = "Source $i"
+            if ($i -eq 1) { $restSuccess = $false }
+        }
+        $labels.Add([PSCustomObject]@{
+            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
+        }) | Out-Null
+        if (-not $restSuccess -and $i -eq 1) { break }
+    }
+
+    if ($restSuccess) {
+        for ($i = 1; $i -le $OutputCount; $i++) {
+            $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Line_1"
+            if (-not $label -or $label -eq "") { $label = "Dest $i" }
+            $labels.Add([PSCustomObject]@{
+                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From KUMO"
+            }) | Out-Null
+        }
+    }
+
+    if (-not $restSuccess) {
+        # Telnet fallback
+        $labels.Clear()
+        $tcp    = New-Object System.Net.Sockets.TcpClient
+        $tcp.Connect($IP, 23)
+        $stream = $tcp.GetStream()
+        $writer = New-Object System.IO.StreamWriter($stream)
+        $reader = New-Object System.IO.StreamReader($stream)
+        Start-Sleep -Seconds 1
+        while ($stream.DataAvailable) { $reader.ReadLine() | Out-Null }
+
+        for ($i = 1; $i -le $InputCount; $i++) {
+            try {
+                $writer.WriteLine("LABEL INPUT $i ?"); $writer.Flush()
+                Start-Sleep -Milliseconds 150
+                $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
+                $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
+            } catch { $label = "Input $i" }
+            $labels.Add([PSCustomObject]@{
+                Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
+            }) | Out-Null
+        }
+        for ($i = 1; $i -le $OutputCount; $i++) {
+            try {
+                $writer.WriteLine("LABEL OUTPUT $i ?"); $writer.Flush()
+                Start-Sleep -Milliseconds 150
+                $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
+                $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
+            } catch { $label = "Output $i" }
+            $labels.Add([PSCustomObject]@{
+                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
+            }) | Out-Null
+        }
+        try { $writer.Close(); $reader.Close(); $tcp.Close() } catch { }
+    }
+
+    return $labels
+}
+
+function Upload-KumoLabel {
+    param([string]$IP, [string]$Type, [int]$Port, [string]$Label)
+    # Returns $true on success, $false on failure (tries REST then Telnet).
+    $paramId = if ($Type -eq "INPUT") {
+        "eParamID_XPT_Source${Port}_Line_1"
+    } else {
+        "eParamID_XPT_Destination${Port}_Line_1"
+    }
+
+    $ok = Set-KumoParam -IP $IP -ParamId $paramId -Value $Label
+    if ($ok) { return $true }
+
+    # Telnet fallback
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $tcp.Connect($IP, 23)
+        $s = $tcp.GetStream()
+        $w = New-Object System.IO.StreamWriter($s)
+        Start-Sleep -Milliseconds 300
+        $w.WriteLine("LABEL $Type $Port `"$Label`"")
+        $w.Flush()
+        Start-Sleep -Milliseconds 200
+        $w.Close(); $tcp.Close()
+        return $true
+    } catch { return $false }
+}
+
+function Connect-VideohubRouter {
+    param([string]$IP, [int]$Port = 9990)
+    # Opens a persistent TCP connection to the Videohub and parses the initial state dump.
+    # Stores connection objects in globals. Returns info hashtable or throws on failure.
+
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.ReceiveTimeout = 5000
+    $tcp.SendTimeout    = 5000
+    $tcp.Connect($IP, $Port)
+
+    $stream = $tcp.GetStream()
+    $reader = New-Object System.IO.StreamReader($stream)
+    $writer = New-Object System.IO.StreamWriter($stream)
+    $writer.AutoFlush = $true
+
+    # Read the initial state dump until END PRELUDE or 300ms of silence
+    $allLines    = [System.Collections.Generic.List[string]]::new()
+    $deadline    = [DateTime]::Now.AddSeconds(8)
+    $sawPrelude  = $false
+    $silenceStart = $null
+
+    while ([DateTime]::Now -lt $deadline) {
+        if ($stream.DataAvailable) {
+            $line = $reader.ReadLine()
+            if ($line -eq $null) { break }
+            $allLines.Add($line)
+            $silenceStart = $null  # reset silence timer
+            if ($line -eq "PROTOCOL PREAMBLE:") { $sawPrelude = $true }
+            if ($line -eq "END PRELUDE:") { break }
+        } else {
+            if ($silenceStart -eq $null) { $silenceStart = [DateTime]::Now }
+            elseif (([DateTime]::Now - $silenceStart).TotalMilliseconds -ge 300) { break }
+            Start-Sleep -Milliseconds 20
+        }
+    }
+
+    if (-not $sawPrelude) {
+        try { $tcp.Close() } catch { }
+        throw "Device at ${IP}:${Port} did not respond with a Videohub protocol preamble."
+    }
+
+    # Parse blocks
+    $deviceInfo   = @{}
+    $inputLabels  = @{}
+    $outputLabels = @{}
+
+    $currentBlock = ""
+    foreach ($line in $allLines) {
+        if ($line -match '^([A-Z][A-Z0-9 ]+):$') {
+            $currentBlock = $matches[1]
+            continue
+        }
+        if ($line.Trim() -eq "") {
+            $currentBlock = ""
+            continue
+        }
+
+        switch ($currentBlock) {
+            "VIDEOHUB DEVICE" {
+                if ($line -match '^([^:]+):\s*(.+)$') {
+                    $deviceInfo[$matches[1].Trim()] = $matches[2].Trim()
+                }
+            }
+            "INPUT LABELS" {
+                if ($line -match '^(\d+)\s+(.*)$') {
+                    $inputLabels[[int]$matches[1]] = $matches[2]
+                }
+            }
+            "OUTPUT LABELS" {
+                if ($line -match '^(\d+)\s+(.*)$') {
+                    $outputLabels[[int]$matches[1]] = $matches[2]
+                }
+            }
+        }
+    }
+
+    $modelName    = if ($deviceInfo["Model name"])    { $deviceInfo["Model name"] }    else { "Blackmagic Videohub" }
+    $friendlyName = if ($deviceInfo["Friendly name"]) { $deviceInfo["Friendly name"] } else { $modelName }
+    $inputCount   = if ($deviceInfo["Video inputs"])  { [int]$deviceInfo["Video inputs"] }  else { $inputLabels.Count }
+    $outputCount  = if ($deviceInfo["Video outputs"]) { [int]$deviceInfo["Video outputs"] } else { $outputLabels.Count }
+
+    # Store persistent connection
+    $global:videohubTcp    = $tcp
+    $global:videohubWriter = $writer
+    $global:videohubReader = $reader
+
+    return @{
+        RouterType    = "Videohub"
+        RouterName    = $friendlyName
+        RouterModel   = "Blackmagic $modelName"
+        Firmware      = "Protocol 2.8"
+        InputCount    = $inputCount
+        OutputCount   = $outputCount
+        InputLabels   = $inputLabels
+        OutputLabels  = $outputLabels
+    }
+}
+
+function Download-VideohubLabels {
+    param([string]$IP, [int]$Port = 9990)
+    # If a persistent connection exists, reads current labels from it via re-connect.
+    # For simplicity, re-connects to get a fresh state dump each time.
+    # Closes the old connection first.
+    if ($global:videohubTcp -ne $null) {
+        try { $global:videohubTcp.Close() } catch { }
+        $global:videohubTcp    = $null
+        $global:videohubWriter = $null
+        $global:videohubReader = $null
+    }
+
+    $info = Connect-VideohubRouter -IP $IP -Port $Port
+    return $info
+}
+
+function Upload-VideohubLabels {
+    param([string]$IP, [int]$Port = 9990, [array]$Changes)
+    # Sends all input label changes in one block and all output label changes in another.
+    # Returns hashtable with SuccessCount and ErrorCount.
+    if ($global:videohubWriter -eq $null -or $global:videohubTcp -eq $null -or -not $global:videohubTcp.Connected) {
+        # Re-connect
+        try {
+            $info = Connect-VideohubRouter -IP $IP -Port $Port
+        } catch {
+            return @{ SuccessCount = 0; ErrorCount = $Changes.Count }
+        }
+    }
+
+    $writer = $global:videohubWriter
+    $reader = $global:videohubReader
+    $stream = $global:videohubTcp.GetStream()
+
+    $inputChanges  = @($Changes | Where-Object { $_.Type -eq "INPUT" })
+    $outputChanges = @($Changes | Where-Object { $_.Type -eq "OUTPUT" })
+
+    # Helper: send one block of label changes and wait for ACK
+    $sendBlock = {
+        param([string]$BlockHeader, [array]$Items)
+        if ($Items.Count -eq 0) { return }
+
+        $sb = New-Object System.Text.StringBuilder
+        $sb.Append("$BlockHeader`n") | Out-Null
+        foreach ($item in $Items) {
+            # Protocol is 0-based; our Port is 1-based
+            $zeroIndex = $item.Port - 1
+            $sb.Append("$zeroIndex $($item.New_Label.Trim())`n") | Out-Null
+        }
+        $sb.Append("`n") | Out-Null   # blank line terminates block
+
+        try {
+            $writer.Write($sb.ToString())
+            $writer.Flush()
+
+            # Wait for ACK/NAK (up to 5s)
+            $deadline = [DateTime]::Now.AddSeconds(5)
+            $response = ""
+            while ([DateTime]::Now -lt $deadline) {
+                if ($stream.DataAvailable) {
+                    $line = $reader.ReadLine()
+                    if ($line -eq "ACK") { $response = "ACK"; break }
+                    if ($line -eq "NAK") { $response = "NAK"; break }
+                } else {
+                    Start-Sleep -Milliseconds 50
+                }
+            }
+
+            if ($response -eq "ACK") {
+                $script:successCount += $Items.Count
+            } else {
+                $script:errorCount += $Items.Count
+            }
+        } catch {
+            $script:errorCount += $Items.Count
+        }
+    }
+
+    $script:successCount = 0
+    $script:errorCount   = 0
+
+    & $sendBlock "INPUT LABELS:" $inputChanges
+    & $sendBlock "OUTPUT LABELS:" $outputChanges
+
+    return @{ SuccessCount = $script:successCount; ErrorCount = $script:errorCount }
+}
+
+function Connect-Router {
+    param([string]$IP, [string]$RouterType = "Auto")
+    # Auto-detects or uses the specified router type.
+    # Returns a hashtable with connection info.
+
+    if ($RouterType -eq "Videohub" -or $RouterType -eq "Auto") {
+        # Try Videohub TCP first
+        try {
+            $testTcp = New-Object System.Net.Sockets.TcpClient
+            $connectResult = $testTcp.BeginConnect($IP, 9990, $null, $null)
+            $waited = $connectResult.AsyncWaitHandle.WaitOne(2000)
+            if ($waited) {
+                try {
+                    $testTcp.EndConnect($connectResult)
+                    if ($testTcp.Connected) {
+                        $testTcp.Close()
+                        # Port is open — try full Videohub connect
+                        $info = Connect-VideohubRouter -IP $IP -Port 9990
+                        return $info
+                    }
+                } catch { }
+                try { $testTcp.Close() } catch { }
+            } else {
+                try { $testTcp.Close() } catch { }
+            }
+        } catch {
+            # Videohub not available
+        }
+
+        if ($RouterType -eq "Videohub") {
+            throw "Cannot connect to Blackmagic Videohub at $IP on port 9990."
+        }
+    }
+
+    if ($RouterType -eq "KUMO" -or $RouterType -eq "Auto") {
+        $info = Connect-KumoRouter -IP $IP
+        return $info
+    }
+
+    throw "Unknown router type: $RouterType"
+}
+
+function Download-RouterLabels {
+    param([string]$IP)
+    # Downloads labels from whatever router type is currently connected.
+    # Populates $global:allLabels directly. Returns count of labels loaded.
+
+    $global:allLabels.Clear()
+
+    if ($global:routerType -eq "Videohub") {
+        $info = Download-VideohubLabels -IP $IP -Port 9990
+
+        $inputLabels  = $info.InputLabels
+        $outputLabels = $info.OutputLabels
+        $inputCount   = $global:routerInputCount
+        $outputCount  = $global:routerOutputCount
+
+        for ($i = 1; $i -le $inputCount; $i++) {
+            $zeroIdx = $i - 1
+            $label = if ($inputLabels.ContainsKey($zeroIdx)) { $inputLabels[$zeroIdx] } else { "Input $i" }
+            $global:allLabels.Add([PSCustomObject]@{
+                Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
+            }) | Out-Null
+        }
+        for ($i = 1; $i -le $outputCount; $i++) {
+            $zeroIdx = $i - 1
+            $label = if ($outputLabels.ContainsKey($zeroIdx)) { $outputLabels[$zeroIdx] } else { "Output $i" }
+            $global:allLabels.Add([PSCustomObject]@{
+                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From Videohub"
+            }) | Out-Null
+        }
+    } else {
+        # KUMO
+        $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
+        foreach ($lbl in $downloaded) {
+            $global:allLabels.Add($lbl) | Out-Null
+        }
+        if ($global:allLabels.Count -eq 0) {
+            Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
+        }
+    }
+
+    return $global:allLabels.Count
+}
+
+function Upload-RouterLabels {
+    param([string]$IP, [array]$Changes)
+    # Uploads an array of changed label objects to the connected router.
+    # Returns hashtable with SuccessCount and ErrorCount.
+
+    if ($global:routerType -eq "Videohub") {
+        return Upload-VideohubLabels -IP $IP -Port 9990 -Changes $Changes
+    } else {
+        # KUMO: per-label upload
+        $successCount = 0
+        $errorCount   = 0
+        foreach ($item in $Changes) {
+            $ok = Upload-KumoLabel -IP $IP -Type $item.Type -Port $item.Port -Label $item.New_Label.Trim()
+            if ($ok) { $successCount++ } else { $errorCount++ }
+        }
+        return @{ SuccessCount = $successCount; ErrorCount = $errorCount }
+    }
+}
+
 # ─── Main Form ───────────────────────────────────────────────────────────────
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "KUMO Router Label Manager v4.0"
+$form.Text = "Router Label Manager v4.0"
 $form.Size = New-Object System.Drawing.Size(1100, 750)
 $form.MinimumSize = New-Object System.Drawing.Size(900, 650)
 $form.StartPosition = "CenterScreen"
@@ -445,7 +891,7 @@ $appTitlePanel.BackColor = $clrSidebarBg
 $appTitlePanel.Padding = New-Object System.Windows.Forms.Padding(16, 14, 16, 8)
 
 $lblAppTitle = New-Object System.Windows.Forms.Label
-$lblAppTitle.Text = "KUMO"
+$lblAppTitle.Text = "Router"
 $lblAppTitle.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
 $lblAppTitle.ForeColor = $clrAccent
 $lblAppTitle.Location = New-Object System.Drawing.Point(16, 12)
@@ -477,24 +923,46 @@ $lblConnSection.Location = New-Object System.Drawing.Point(16, 6)
 $lblConnSection.Size = New-Object System.Drawing.Size(168, 16)
 
 $connSectionPanel = New-Object System.Windows.Forms.Panel
-$connSectionPanel.Height = 170
+$connSectionPanel.Height = 210
 $connSectionPanel.BackColor = $clrSidebarBg
 $connSectionPanel.Padding = New-Object System.Windows.Forms.Padding(12, 4, 12, 8)
 $connSectionPanel.Controls.Add($lblConnSection)
+
+# Router type selector label
+$lblRouterType = New-Object System.Windows.Forms.Label
+$lblRouterType.Text = "Router Type"
+$lblRouterType.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblRouterType.ForeColor = $clrDimText
+$lblRouterType.Location = New-Object System.Drawing.Point(14, 26)
+$lblRouterType.Size = New-Object System.Drawing.Size(80, 16)
+$connSectionPanel.Controls.Add($lblRouterType)
+
+# Router type ComboBox
+$cboRouterType = New-Object System.Windows.Forms.ComboBox
+$cboRouterType.Location = New-Object System.Drawing.Point(14, 44)
+$cboRouterType.Size = New-Object System.Drawing.Size(172, 24)
+$cboRouterType.BackColor = $clrField
+$cboRouterType.ForeColor = $clrText
+$cboRouterType.FlatStyle = "Flat"
+$cboRouterType.DropDownStyle = "DropDownList"
+$cboRouterType.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$cboRouterType.Items.AddRange(@("Auto-detect", "AJA KUMO", "BMD Videohub"))
+$cboRouterType.SelectedIndex = 0
+$connSectionPanel.Controls.Add($cboRouterType)
 
 # IP label
 $lblIp = New-Object System.Windows.Forms.Label
 $lblIp.Text = "Router IP"
 $lblIp.Font = New-Object System.Drawing.Font("Segoe UI", 8)
 $lblIp.ForeColor = $clrDimText
-$lblIp.Location = New-Object System.Drawing.Point(14, 26)
+$lblIp.Location = New-Object System.Drawing.Point(14, 74)
 $lblIp.Size = New-Object System.Drawing.Size(80, 16)
 $connSectionPanel.Controls.Add($lblIp)
 
 # IP textbox
 $ipTextBox = New-Object System.Windows.Forms.TextBox
 $ipTextBox.Text = "192.168.1.100"
-$ipTextBox.Location = New-Object System.Drawing.Point(14, 44)
+$ipTextBox.Location = New-Object System.Drawing.Point(14, 92)
 $ipTextBox.Size = New-Object System.Drawing.Size(172, 24)
 $ipTextBox.BackColor = $clrField
 $ipTextBox.ForeColor = $clrText
@@ -506,13 +974,13 @@ $connSectionPanel.Controls.Add($ipTextBox)
 $connectButton = New-Object ModernButton
 $connectButton.Text = "Connect"
 $connectButton.Style = [ModernButton+ButtonStyle]::Primary
-$connectButton.Location = New-Object System.Drawing.Point(14, 76)
+$connectButton.Location = New-Object System.Drawing.Point(14, 124)
 $connectButton.Size = New-Object System.Drawing.Size(172, 30)
 $connSectionPanel.Controls.Add($connectButton)
 
 # Connection indicator
 $connIndicator = New-Object ConnectionIndicator
-$connIndicator.Location = New-Object System.Drawing.Point(14, 116)
+$connIndicator.Location = New-Object System.Drawing.Point(14, 164)
 $connIndicator.Size = New-Object System.Drawing.Size(172, 20)
 $connIndicator.BackColor = $clrSidebarBg
 $connSectionPanel.Controls.Add($connIndicator)
@@ -572,7 +1040,7 @@ $routerInfoCard.Controls.Add($lblRouterName)
 
 $routerInfoWrapper.Controls.Add($routerInfoCard)
 
-# Sidebar spacer (flexible) — achieved with a panel that fills remaining space before action buttons
+# Sidebar spacer
 $sidebarSpacer = New-Object System.Windows.Forms.Panel
 $sidebarSpacer.Dock = "Top"
 $sidebarSpacer.Height = 12
@@ -633,18 +1101,15 @@ $btnUpload.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.
 $btnUpload.Enabled = $false
 $actionSectionPanel.Controls.Add($btnUpload)
 
-# Assemble sidebar (Dock=Top panels added in reverse visual order for WinForms)
-# They dock to top from bottom of list upward — we use a FlowLayoutPanel trick instead:
-# Simply add in the order we want them to appear and use a container.
+# Assemble sidebar inner panel with manual layout
 $sidebarInner = New-Object System.Windows.Forms.Panel
 $sidebarInner.Dock = "Fill"
 $sidebarInner.BackColor = $clrSidebarBg
 $sidebarInner.AutoScroll = $false
 
-# We'll position everything manually in the sidebar inner panel
 $sidebarPanel.Controls.Add($sidebarInner)
-$sidebarPanel.Controls.Add($sidebarAccentLine)   # Dock=Top, goes right after appTitlePanel
-$sidebarPanel.Controls.Add($appTitlePanel)        # Dock=Top, goes to very top
+$sidebarPanel.Controls.Add($sidebarAccentLine)
+$sidebarPanel.Controls.Add($appTitlePanel)
 
 function Update-SidebarLayout {
     $y = 0
@@ -747,7 +1212,7 @@ $filterRail.Controls.Add($tabInputs)
 $filterRail.Controls.Add($tabOutputs)
 $filterRail.Controls.Add($tabChanged)
 
-# Batch tools (moved from old toolbar into filter rail)
+# Batch tools
 $btnFindReplace = New-Object System.Windows.Forms.Button
 $btnFindReplace.Text = "Find && Replace"
 $btnFindReplace.Location = New-Object System.Drawing.Point(356, 7)
@@ -900,11 +1365,11 @@ $colCharCount.FillWeight = 6
 $colCharCount.MinimumWidth = 40
 $colCharCount.DefaultCellStyle.Alignment = "MiddleCenter"
 
-$dataGrid.Columns.Add($colPort)    | Out-Null
-$dataGrid.Columns.Add($colType)    | Out-Null
-$dataGrid.Columns.Add($colCurrent) | Out-Null
-$dataGrid.Columns.Add($colNew)     | Out-Null
-$dataGrid.Columns.Add($colStatus)  | Out-Null
+$dataGrid.Columns.Add($colPort)     | Out-Null
+$dataGrid.Columns.Add($colType)     | Out-Null
+$dataGrid.Columns.Add($colCurrent)  | Out-Null
+$dataGrid.Columns.Add($colNew)      | Out-Null
+$dataGrid.Columns.Add($colStatus)   | Out-Null
 $dataGrid.Columns.Add($colCharCount) | Out-Null
 
 # CellPainting: Type column badge + Status column dot
@@ -940,13 +1405,13 @@ $dataGrid.Add_CellPainting({
             $g = $e.Graphics
             $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
 
-            # Badge background
             $badgePath = New-Object System.Drawing.Drawing2D.GraphicsPath
             $r = [int]$badgeRect.X
             $t = [int]$badgeRect.Y
             $w2 = [int]$badgeRect.Width
             $h2 = [int]$badgeRect.Height
             $rad = 4
+
             $badgePath.AddArc($r, $t, $rad*2, $rad*2, 180, 90)
             $badgePath.AddArc($r+$w2-$rad*2, $t, $rad*2, $rad*2, 270, 90)
             $badgePath.AddArc($r+$w2-$rad*2, $t+$h2-$rad*2, $rad*2, $rad*2, 0, 90)
@@ -1140,6 +1605,8 @@ function Populate-Grid {
     $searchTerm = ""
     if ($searchBox.Text -ne $searchWatermark) { $searchTerm = $searchBox.Text.Trim().ToLower() }
 
+    $maxLen = $global:maxLabelLength
+
     foreach ($lbl in $global:allLabels) {
         if ($global:currentFilter -eq "INPUT"  -and $lbl.Type -ne "INPUT")  { continue }
         if ($global:currentFilter -eq "OUTPUT" -and $lbl.Type -ne "OUTPUT") { continue }
@@ -1160,12 +1627,12 @@ function Populate-Grid {
         $charCount = ""
         if ($newLabel -and $newLabel.Trim() -ne "" -and $newLabel.Trim() -ne $lbl.Current_Label) {
             $status    = "Changed"
-            $charCount = "$($newLabel.Trim().Length)/50"
+            $charCount = "$($newLabel.Trim().Length)/$maxLen"
         }
 
         $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $lbl.Current_Label, $newLabel, $status, $charCount)
 
-        if ($newLabel -and $newLabel.Trim().Length -gt 50) {
+        if ($newLabel -and $newLabel.Trim().Length -gt $maxLen) {
             $dataGrid.Rows[$rowIndex].Cells["Chars"].Style.ForeColor     = $clrDanger
             $dataGrid.Rows[$rowIndex].Cells["New_Label"].Style.ForeColor = $clrDanger
         }
@@ -1185,7 +1652,7 @@ function Update-ChangeCount {
     if ($count -gt 0) {
         $changesCount.Text      = "$count change$(if($count -ne 1){'s'}) pending"
         $changesCount.ForeColor = $clrChanged
-        $btnUpload.Enabled      = $global:kumoConnected
+        $btnUpload.Enabled      = $global:routerConnected
         $btnUpload.Text         = "Upload Changes ($count)"
     } else {
         $changesCount.Text      = "No changes pending"
@@ -1194,7 +1661,6 @@ function Update-ChangeCount {
         $btnUpload.Text         = "Upload Changes"
     }
 
-    # Update status bar right label
     $totalLabels = $global:allLabels.Count
     $lblStatusRight.Text = "$totalLabels labels | $count changed"
 }
@@ -1266,7 +1732,6 @@ $form.Add_KeyDown({
     param($sender, $e)
 
     if ($e.Control -and $e.Shift -and $e.KeyCode -eq "Z") {
-        # Ctrl+Shift+Z → Redo
         if ($global:redoStack.Count -gt 0) {
             $cmd = $global:redoStack.Pop()
             foreach ($lbl in $global:allLabels) {
@@ -1283,7 +1748,6 @@ $form.Add_KeyDown({
     }
 
     if ($e.Control -and $e.KeyCode -eq "Z") {
-        # Ctrl+Z → Undo
         if ($global:undoStack.Count -gt 0) {
             $cmd = $global:undoStack.Pop()
             foreach ($lbl in $global:allLabels) {
@@ -1318,7 +1782,6 @@ $form.Add_KeyDown({
     }
 
     if ($e.Control -and $e.KeyCode -eq "K") {
-        # Placeholder for command palette
         Set-StatusMessage "Command palette coming soon (Ctrl+K)" "Dim"
         $e.Handled = $true
         return
@@ -1343,84 +1806,55 @@ $connectButton.Add_Click({
     $ip = $ipTextBox.Text.Trim()
     if (-not $ip) { return }
 
+    # Map ComboBox selection to RouterType parameter
+    $selectedType = switch ($cboRouterType.SelectedIndex) {
+        1 { "KUMO" }
+        2 { "Videohub" }
+        default { "Auto" }
+    }
+
     $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Connecting
     $connIndicator.StatusText = "Connecting..."
     $form.Refresh()
 
     try {
-        $testUri  = "http://$ip/config?action=get&configid=0&paramid=eParamID_SysName"
-        $response = Invoke-SecureWebRequest -Uri $testUri -TimeoutSec 8 -UseBasicParsing
-        $json     = $response.Content | ConvertFrom-Json
+        $info = Connect-Router -IP $ip -RouterType $selectedType
 
-        $global:kumoConnected = $true
-        $global:routerName    = if ($json.value -and $json.value -ne "") { $json.value } else { "KUMO" }
+        $global:routerConnected     = $true
+        $global:routerType        = $info.RouterType
+        $global:routerName        = $info.RouterName
+        $global:routerModel       = $info.RouterModel
+        $global:routerFirmware    = $info.Firmware
+        $global:routerInputCount  = $info.InputCount
+        $global:routerOutputCount = $info.OutputCount
+        $global:maxLabelLength    = if ($info.RouterType -eq "Videohub") { 255 } else { 50 }
 
-        $global:routerFirmware = ""
-        try {
-            $fw = Get-KumoParam -IP $ip -ParamId "eParamID_SWVersion"
-            if ($fw) { $global:routerFirmware = $fw }
-        } catch { }
-
-        $inputCount = 32
-        $connIndicator.StatusText = "Detecting model..."
-        $form.Refresh()
-
-        try {
-            $test64 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source33_Line_1"
-            if ($test64 -ne $null) { $inputCount = 64 }
-        } catch { }
-        if ($inputCount -eq 32) {
-            try {
-                $test17 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source17_Line_1"
-                if ($test17 -eq $null) { $inputCount = 16 }
-            } catch { $inputCount = 16 }
-        }
-
-        $outputCount = $inputCount
-        if ($inputCount -eq 16) {
-            try {
-                $testDest5 = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination5_Line_1"
-                if ($testDest5 -eq $null) { $outputCount = 4 }
-            } catch { $outputCount = 4 }
-        }
-
-        $global:routerInputCount  = $inputCount
-        $global:routerOutputCount = $outputCount
-
-        $global:routerModel = switch ("$inputCount`x$outputCount") {
-            "16x4"  { "KUMO 1604" }
-            "16x16" { "KUMO 1616" }
-            "32x32" { "KUMO 3232" }
-            "64x64" { "KUMO 6464" }
-            default { "KUMO ${inputCount}x${outputCount}" }
-        }
-
-        $fwText = if ($global:routerFirmware) { " | FW $($global:routerFirmware)" } else { "" }
+        $fwText = if ($global:routerFirmware) { " | $($global:routerFirmware)" } else { "" }
 
         $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Connected
         $connIndicator.StatusText = "Connected"
         $connIndicator.ForeColor  = $clrSuccess
 
-        $connectButton.Text = "Reconnect"
+        $connectButton.Text  = "Reconnect"
         $btnDownload.Enabled = $true
 
         # Update router info card
-        $lblRouterModel.Text  = $global:routerModel
-        $lblRouterPorts.Text  = "$inputCount inputs / $outputCount outputs"
-        $lblRouterFw.Text     = if ($global:routerFirmware) { "Firmware: $($global:routerFirmware)" } else { "" }
-        $lblRouterName.Text   = "`"$($global:routerName)`""
+        $lblRouterModel.Text = $global:routerModel
+        $lblRouterPorts.Text = "$($info.InputCount) inputs / $($info.OutputCount) outputs"
+        $lblRouterFw.Text    = if ($global:routerFirmware) { $global:routerFirmware } else { "" }
+        $lblRouterName.Text  = "`"$($global:routerName)`""
         $routerInfoWrapper.Visible = $true
         $routerInfoCard.Visible    = $true
         Update-SidebarLayout
 
         $lblContentTitle.Text = "$($global:routerModel)  `"$($global:routerName)`""
-        $form.Text = "KUMO Label Manager - $($global:routerModel) `"$($global:routerName)`""
+        $form.Text = "Router Label Manager - $($global:routerModel) `"$($global:routerName)`""
 
         Update-ChangeCount
         Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
 
     } catch {
-        $global:kumoConnected = $false
+        $global:routerConnected = $false
         $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Disconnected
         $connIndicator.StatusText = "Connection failed"
         $connIndicator.ForeColor  = $clrDimText
@@ -1428,7 +1862,7 @@ $connectButton.Add_Click({
         Set-StatusMessage "Connection failed" "Danger"
 
         [System.Windows.Forms.MessageBox]::Show(
-            "Cannot connect to KUMO at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 80 (HTTP) is accessible",
+            "Cannot connect to router at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 80 (KUMO) or 9990 (Videohub) is accessible`n`nError: $($_.Exception.Message)",
             "Connection Failed", "OK", "Error"
         )
     }
@@ -1437,113 +1871,45 @@ $connectButton.Add_Click({
 # ─── Download Labels ──────────────────────────────────────────────────────────
 
 $btnDownload.Add_Click({
-    $ip       = $ipTextBox.Text.Trim()
-    $inCount  = $global:routerInputCount
-    $outCount = $global:routerOutputCount
-    $total    = $inCount + $outCount
+    $ip      = $ipTextBox.Text.Trim()
+    $total   = $global:routerInputCount + $global:routerOutputCount
 
-    $global:allLabels.Clear()
     $progressBar.Maximum = $total
     $progressBar.Value   = 0
     Set-StatusMessage "Downloading from $($global:routerModel)..." "Dim"
     $form.Refresh()
 
-    $restSuccess = $true
-
-    for ($i = 1; $i -le $inCount; $i++) {
-        $label = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Source${i}_Line_1"
-        if (-not $label -or $label -eq "") {
-            $label = "Source $i"
-            if ($i -eq 1) { $restSuccess = $false }
-        }
-        $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From $($global:routerModel)"
-        }) | Out-Null
-        $progressBar.Value = $i
-        Set-StatusMessage "Source $i / $inCount..." "Dim"
-        $form.Refresh()
-        if (-not $restSuccess -and $i -eq 1) { break }
-    }
-
-    if ($restSuccess) {
-        for ($i = 1; $i -le $outCount; $i++) {
-            $label = Get-KumoParam -IP $ip -ParamId "eParamID_XPT_Destination${i}_Line_1"
-            if (-not $label -or $label -eq "") { $label = "Dest $i" }
-            $global:allLabels.Add([PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From $($global:routerModel)"
-            }) | Out-Null
-            $progressBar.Value = $inCount + $i
-            Set-StatusMessage "Dest $i / $outCount..." "Dim"
-            $form.Refresh()
-        }
-    }
-
-    if (-not $restSuccess) {
-        $global:allLabels.Clear()
-        $progressBar.Value = 0
-        Set-StatusMessage "REST API failed, trying Telnet..." "Warning"
-        $form.Refresh()
-
-        try {
-            $tcp    = New-Object System.Net.Sockets.TcpClient
-            $tcp.Connect($ip, 23)
-            $stream = $tcp.GetStream()
-            $writer = New-Object System.IO.StreamWriter($stream)
-            $reader = New-Object System.IO.StreamReader($stream)
-            Start-Sleep -Seconds 1
-            while ($stream.DataAvailable) { $reader.ReadLine() | Out-Null }
-
-            for ($i = 1; $i -le $inCount; $i++) {
-                try {
-                    $writer.WriteLine("LABEL INPUT $i ?"); $writer.Flush()
-                    Start-Sleep -Milliseconds 150
-                    $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
-                    $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
-                } catch { $label = "Input $i" }
-                $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
-                }) | Out-Null
-                $progressBar.Value = $i
-                Set-StatusMessage "Telnet: Input $i / $inCount..." "Dim"
-                $form.Refresh()
-            }
-            for ($i = 1; $i -le $outCount; $i++) {
-                try {
-                    $writer.WriteLine("LABEL OUTPUT $i ?"); $writer.Flush()
-                    Start-Sleep -Milliseconds 150
-                    $resp  = if ($stream.DataAvailable) { $reader.ReadLine() } else { "" }
-                    $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
-                } catch { $label = "Output $i" }
-                $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "Via Telnet"
-                }) | Out-Null
-                $progressBar.Value = $inCount + $i
-                Set-StatusMessage "Telnet: Output $i / $outCount..." "Dim"
-                $form.Refresh()
-            }
-            $writer.Close(); $reader.Close(); $tcp.Close()
-        } catch {
-            Create-DefaultLabels -InputCount $inCount -OutputCount $outCount
-        }
-    }
-
-    if ($global:allLabels.Count -eq 0) { Create-DefaultLabels -InputCount $inCount -OutputCount $outCount }
-
-    $progressBar.Value = $total
-
-    # Auto-save
     try {
-        $docsPath    = Get-DocumentsPath
-        $safeName    = $global:routerName -replace '[^\w\-]', '_'
-        $autoSavePath = Join-Path $docsPath "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
-        $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
-            Export-Csv -Path $autoSavePath -NoTypeInformation
-        Set-StatusMessage "Downloaded $($global:allLabels.Count) labels - saved to Documents\KUMO_Labels" "Success"
-    } catch {
-        Set-StatusMessage "Downloaded $($global:allLabels.Count) labels from $($global:routerModel)" "Success"
-    }
+        $count = Download-RouterLabels -IP $ip
 
-    Populate-Grid
+        if ($count -eq 0) {
+            Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
+        }
+
+        $progressBar.Value = $total
+
+        # Auto-save
+        try {
+            $docsPath     = Get-DocumentsPath
+            $safeName     = $global:routerName -replace '[^\w\-]', '_'
+            $autoSavePath = Join-Path $docsPath "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
+            $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
+                Export-Csv -Path $autoSavePath -NoTypeInformation
+            Set-StatusMessage "Downloaded $($global:allLabels.Count) labels - saved to Documents\KUMO_Labels" "Success"
+        } catch {
+            Set-StatusMessage "Downloaded $($global:allLabels.Count) labels from $($global:routerModel)" "Success"
+        }
+
+        Populate-Grid
+
+    } catch {
+        $progressBar.Value = 0
+        Set-StatusMessage "Download failed: $($_.Exception.Message)" "Danger"
+        [System.Windows.Forms.MessageBox]::Show(
+            "Error downloading labels: $($_.Exception.Message)",
+            "Download Error", "OK", "Error"
+        )
+    }
 })
 
 # ─── Open File ────────────────────────────────────────────────────────────────
@@ -1614,7 +1980,7 @@ $btnSaveFile.Add_Click({
     $dlg            = New-Object System.Windows.Forms.SaveFileDialog
     $dlg.Filter     = "CSV files (*.csv)|*.csv|Excel files (*.xlsx)|*.xlsx"
     $dlg.DefaultExt = "csv"
-    $safeName        = if ($global:routerName) { $global:routerName -replace '[^\w\-]', '_' } else { "KUMO" }
+    $safeName        = if ($global:routerName) { $global:routerName -replace '[^\w\-]', '_' } else { "Router" }
     $dlg.FileName   = "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm')"
     $dlg.InitialDirectory = Get-DocumentsPath
     $dlg.Title      = "Save Label File"
@@ -1870,10 +2236,10 @@ $btnTemplate.Add_Click({
     $outCount  = $global:routerOutputCount
     $modelName = $global:routerModel
 
-    if (-not $global:kumoConnected) {
+    if (-not $global:routerConnected) {
         $pickForm = New-Object System.Windows.Forms.Form
         $pickForm.Text = "Select Router Model"
-        $pickForm.Size = New-Object System.Drawing.Size(320, 200)
+        $pickForm.Size = New-Object System.Drawing.Size(340, 210)
         $pickForm.StartPosition = "CenterParent"
         $pickForm.BackColor = $clrPanel
         $pickForm.ForeColor = $clrText
@@ -1882,28 +2248,35 @@ $btnTemplate.Add_Click({
         $pickForm.MinimizeBox = $false
 
         $pickForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
-            Text="No router connected. Select your model:"; Location="20,15"; Size="270,20"; ForeColor=$clrText
+            Text="No router connected. Select your model:"; Location="20,15"; Size="290,20"; ForeColor=$clrText
         }))
 
         $modelCombo = New-Object System.Windows.Forms.ComboBox -Property @{
-            Location="20,45"; Size="270,28"; BackColor=$clrField; ForeColor=$clrText; DropDownStyle="DropDownList"
+            Location="20,45"; Size="290,28"; BackColor=$clrField; ForeColor=$clrText; DropDownStyle="DropDownList"
         }
         $modelCombo.Items.AddRange(@(
             "KUMO 1604 (16 in / 4 out)",
             "KUMO 1616 (16 in / 16 out)",
             "KUMO 3232 (32 in / 32 out)",
-            "KUMO 6464 (64 in / 64 out)"
+            "KUMO 6464 (64 in / 64 out)",
+            "Videohub 10x10 (10 in / 10 out)",
+            "Videohub 20x20 (20 in / 20 out)",
+            "Videohub 40x40 (40 in / 40 out)",
+            "Videohub 80x80 (80 in / 80 out)",
+            "Videohub 120x120 (120 in / 120 out)",
+            "Smart Videohub 12x12 (12 in / 12 out)",
+            "Micro Videohub 16x16 (16 in / 16 out)"
         ))
         $modelCombo.SelectedIndex = 2
         $pickForm.Controls.Add($modelCombo)
 
         $btnPickOK = New-Object ModernButton -Property @{
-            Text="OK"; Location="130,95"; Size="70,28"; DialogResult="OK"
+            Text="OK"; Location="150,105"; Size="70,28"; DialogResult="OK"
         }
         $btnPickOK.Style = [ModernButton+ButtonStyle]::Primary
 
         $btnPickCancel = New-Object ModernButton -Property @{
-            Text="Cancel"; Location="210,95"; Size="80,28"; DialogResult="Cancel"
+            Text="Cancel"; Location="230,105"; Size="80,28"; DialogResult="Cancel"
         }
         $btnPickCancel.Style = [ModernButton+ButtonStyle]::Secondary
 
@@ -1915,10 +2288,17 @@ $btnTemplate.Add_Click({
         if ($pickForm.ShowDialog() -ne "OK") { return }
 
         switch ($modelCombo.SelectedIndex) {
-            0 { $inCount = 16; $outCount = 4;  $modelName = "KUMO 1604" }
-            1 { $inCount = 16; $outCount = 16; $modelName = "KUMO 1616" }
-            2 { $inCount = 32; $outCount = 32; $modelName = "KUMO 3232" }
-            3 { $inCount = 64; $outCount = 64; $modelName = "KUMO 6464" }
+            0  { $inCount = 16;  $outCount = 4;   $modelName = "KUMO 1604" }
+            1  { $inCount = 16;  $outCount = 16;  $modelName = "KUMO 1616" }
+            2  { $inCount = 32;  $outCount = 32;  $modelName = "KUMO 3232" }
+            3  { $inCount = 64;  $outCount = 64;  $modelName = "KUMO 6464" }
+            4  { $inCount = 10;  $outCount = 10;  $modelName = "Videohub 10x10" }
+            5  { $inCount = 20;  $outCount = 20;  $modelName = "Videohub 20x20" }
+            6  { $inCount = 40;  $outCount = 40;  $modelName = "Videohub 40x40" }
+            7  { $inCount = 80;  $outCount = 80;  $modelName = "Videohub 80x80" }
+            8  { $inCount = 120; $outCount = 120; $modelName = "Videohub 120x120" }
+            9  { $inCount = 12;  $outCount = 12;  $modelName = "Smart Videohub 12x12" }
+            10 { $inCount = 16;  $outCount = 16;  $modelName = "Micro Videohub 16x16" }
         }
     }
 
@@ -2041,7 +2421,6 @@ $dataGrid.Add_CellEndEdit({
         $newVal = $sender.Rows[$e.RowIndex].Cells["New_Label"].Value
         $newStr = if ($newVal) { $newVal.ToString() } else { "" }
 
-        # Push undo command if value actually changed
         if ($newStr -ne $global:cellEditOldValue) {
             Push-UndoCommand @{
                 Port     = $port
@@ -2058,12 +2437,13 @@ $dataGrid.Add_CellEndEdit({
             }
         }
 
+        $maxLen = $global:maxLabelLength
         $currentLabel = $sender.Rows[$e.RowIndex].Cells["Current_Label"].Value
         if ($newStr.Trim() -ne "" -and $newStr.Trim() -ne $currentLabel) {
             $sender.Rows[$e.RowIndex].Cells["Status"].Value = "Changed"
             $len = $newStr.Trim().Length
-            $sender.Rows[$e.RowIndex].Cells["Chars"].Value  = "$len/50"
-            if ($len -gt 50) {
+            $sender.Rows[$e.RowIndex].Cells["Chars"].Value  = "$len/$maxLen"
+            if ($len -gt $maxLen) {
                 $sender.Rows[$e.RowIndex].Cells["Chars"].Style.ForeColor    = $clrDanger
                 $sender.Rows[$e.RowIndex].Cells["New_Label"].Style.ForeColor = $clrDanger
             } else {
@@ -2084,8 +2464,8 @@ $dataGrid.Add_CellEndEdit({
 $btnUpload.Add_Click({
     Sync-GridToData
 
-    if (-not $global:kumoConnected) {
-        [System.Windows.Forms.MessageBox]::Show("Please connect to a KUMO router first.", "Not Connected", "OK", "Warning")
+    if (-not $global:routerConnected) {
+        [System.Windows.Forms.MessageBox]::Show("Please connect to a router first.", "Not Connected", "OK", "Warning")
         return
     }
 
@@ -2102,17 +2482,19 @@ $btnUpload.Add_Click({
         return
     }
 
-    $tooLong = @($changes | Where-Object { $_.New_Label.Trim().Length -gt 50 })
+    $maxLen = $global:maxLabelLength
+    $tooLong = @($changes | Where-Object { $_.New_Label.Trim().Length -gt $maxLen })
     if ($tooLong.Count -gt 0) {
         $result = [System.Windows.Forms.MessageBox]::Show(
-            "$($tooLong.Count) label(s) exceed the 50-character limit. They may be truncated by the router.`n`nContinue anyway?",
+            "$($tooLong.Count) label(s) exceed the $maxLen-character limit. They may be truncated by the router.`n`nContinue anyway?",
             "Character Limit Warning", "YesNo", "Warning"
         )
         if ($result -ne "Yes") { return }
     }
 
+    $routerTypeLabel = if ($global:routerType -eq "Videohub") { "Blackmagic Videohub" } else { "KUMO" }
     $result = [System.Windows.Forms.MessageBox]::Show(
-        "Upload $($changes.Count) label changes to KUMO at $($ipTextBox.Text)?`n`nThis will modify the router's port names immediately.`n`nA backup of current labels will be saved automatically.",
+        "Upload $($changes.Count) label changes to $routerTypeLabel at $($ipTextBox.Text)?`n`nThis will modify the router's port names immediately.`n`nA backup of current labels will be saved automatically.",
         "Confirm Upload", "YesNo", "Question"
     )
     if ($result -ne "Yes") { return }
@@ -2131,47 +2513,19 @@ $btnUpload.Add_Click({
         $global:backupLabels | Export-Csv -Path $backupPath -NoTypeInformation
     } catch { }
 
-    $ip           = $ipTextBox.Text.Trim()
+    $ip = $ipTextBox.Text.Trim()
     $progressBar.Maximum = $changes.Count
     $progressBar.Value   = 0
-    $successCount = 0
-    $errorCount   = 0
+    Set-StatusMessage "Uploading $($changes.Count) labels to $($global:routerModel)..." "Dim"
+    $form.Refresh()
 
-    foreach ($item in $changes) {
-        try {
-            Set-StatusMessage "Uploading $($item.Type) $($item.Port): $($item.New_Label)" "Dim"
-            $form.Refresh()
-
-            $paramId = if ($item.Type -eq "INPUT") {
-                "eParamID_XPT_Source$($item.Port)_Line_1"
-            } else {
-                "eParamID_XPT_Destination$($item.Port)_Line_1"
-            }
-
-            $ok = Set-KumoParam -IP $ip -ParamId $paramId -Value $item.New_Label.Trim()
-            if ($ok) {
-                $successCount++
-            } else {
-                try {
-                    $tcp = New-Object System.Net.Sockets.TcpClient
-                    $tcp.Connect($ip, 23)
-                    $s = $tcp.GetStream()
-                    $w = New-Object System.IO.StreamWriter($s)
-                    Start-Sleep -Milliseconds 300
-                    $w.WriteLine("LABEL $($item.Type) $($item.Port) `"$($item.New_Label.Trim())`"")
-                    $w.Flush()
-                    Start-Sleep -Milliseconds 200
-                    $w.Close(); $tcp.Close()
-                    $successCount++
-                } catch { $errorCount++ }
-            }
-        } catch { $errorCount++ }
-        $progressBar.Value++
-    }
+    $result = Upload-RouterLabels -IP $ip -Changes $changes
+    $successCount = $result.SuccessCount
+    $errorCount   = $result.ErrorCount
 
     $progressBar.Value = $changes.Count
 
-    if ($successCount -gt 0) {
+    if ($successCount -gt 0 -and $errorCount -eq 0) {
         foreach ($lbl in $global:allLabels) {
             $nl = $lbl.New_Label
             if ($nl -and $nl.Trim() -ne "" -and $nl.Trim() -ne $lbl.Current_Label) {
@@ -2190,6 +2544,35 @@ $btnUpload.Add_Click({
         "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount`n`nBackup saved to Documents\KUMO_Labels folder.",
         "Upload Results", "OK", $icon
     )
+})
+
+# ─── Videohub PING Keepalive ──────────────────────────────────────────────────
+
+$keepaliveTimer = New-Object System.Windows.Forms.Timer
+$keepaliveTimer.Interval = 25000
+$keepaliveTimer.Add_Tick({
+    if ($global:routerType -eq "Videohub" -and $global:routerConnected -and $global:videohubWriter) {
+        try {
+            $global:videohubWriter.Write("PING:`n`n")
+            $global:videohubWriter.Flush()
+        } catch {
+            $global:routerConnected = $false
+            $keepaliveTimer.Stop()
+        }
+    }
+})
+$keepaliveTimer.Start()
+
+# ─── Form Close: clean up Videohub TCP connection ─────────────────────────────
+
+$form.Add_FormClosing({
+    $keepaliveTimer.Stop()
+    if ($global:videohubTcp -ne $null) {
+        try { $global:videohubTcp.Close() } catch { }
+        $global:videohubTcp    = $null
+        $global:videohubWriter = $null
+        $global:videohubReader = $null
+    }
 })
 
 # ─── Form Resize Handler ──────────────────────────────────────────────────────
