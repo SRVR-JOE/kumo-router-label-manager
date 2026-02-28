@@ -30,7 +30,11 @@ function Write-ErrorLog {
 
 # Global trap: catch any unhandled terminating error and log it
 trap {
-    Write-ErrorLog "UNHANDLED" "$($_.Exception.GetType().Name): $($_.Exception.Message)`n  at $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)`n  $($_.InvocationInfo.Line.Trim())"
+    $errMsg = "$($_.Exception.GetType().Name): $($_.Exception.Message)"
+    $errLoc = "at line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
+    Write-ErrorLog "UNHANDLED" "$errMsg`n  $errLoc"
+    Write-Host "ERROR: $errMsg" -ForegroundColor Red
+    Write-Host "  $errLoc" -ForegroundColor Yellow
     continue
 }
 
@@ -3241,11 +3245,29 @@ try {
     $form.ShowDialog() | Out-Null
 } catch {
     Write-ErrorLog "FORM" "Form crashed: $($_.Exception.GetType().Name): $($_.Exception.Message)`n  Stack: $($_.Exception.StackTrace)"
-    [System.Windows.Forms.MessageBox]::Show(
-        "An unexpected error occurred.`n`nDetails have been saved to:`n$($global:errorLogPath)`n`nError: $($_.Exception.Message)",
-        "Router Label Manager Error", "OK", "Error"
-    )
+    Write-Host ""
+    Write-Host "=== FORM CRASH ===" -ForegroundColor Red
+    Write-Host "Error: $($_.Exception.GetType().Name): $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Stack: $($_.Exception.StackTrace)" -ForegroundColor Yellow
 } finally {
-    # Log clean shutdown
     Write-ErrorLog "APP" "Application closed" "INFO"
+}
+
+# Show any errors that occurred and pause so the window stays open
+if ($Error.Count -gt 0) {
+    Write-Host ""
+    Write-Host "=== $($Error.Count) error(s) occurred ===" -ForegroundColor Red
+    foreach ($err in $Error) {
+        Write-Host "  - $($err.Exception.Message)" -ForegroundColor Yellow
+        if ($err.InvocationInfo) {
+            Write-Host "    at line $($err.InvocationInfo.ScriptLineNumber): $($err.InvocationInfo.Line.Trim())" -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ""
+    Write-Host "Error log saved to: $($global:errorLogPath)" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor White
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+} else {
+    Write-ErrorLog "APP" "Clean exit with no errors" "INFO"
 }
