@@ -605,6 +605,176 @@ function Upload-KumoLabels-Telnet {
     return $succeeded
 }
 
+function Send-LW3Command {
+    param([string]$Command)
+    # Frames a command with the current request ID, sends it, reads the response block.
+    # Returns an array of response lines (without the wrapper braces).
+    $global:lightwareSendId = ($global:lightwareSendId % 9999) + 1
+    $idStr = "{0:D4}" -f $global:lightwareSendId
+    $framed = "$idStr#$Command`r`n"
+
+    $global:lightwareWriter.Write($framed)
+    $global:lightwareWriter.Flush()
+
+    $lines    = [System.Collections.Generic.List[string]]::new()
+    $deadline = [DateTime]::Now.AddSeconds(5)
+    $inBlock  = $false
+
+    while ([DateTime]::Now -lt $deadline) {
+        if ($global:lightwareTcp -eq $null -or -not $global:lightwareTcp.Connected) { break }
+        $stream = $global:lightwareTcp.GetStream()
+        if ($stream.DataAvailable) {
+            $line = $global:lightwareReader.ReadLine()
+            if ($line -eq $null) { break }
+            $trimmed = $line.Trim()
+            if ($trimmed -match "^\{$idStr") {
+                $inBlock = $true
+                continue
+            }
+            if ($inBlock -and $trimmed -eq "}") { break }
+            if ($inBlock) { $lines.Add($trimmed) }
+        } else {
+            Start-Sleep -Milliseconds 20
+        }
+    }
+
+    return $lines.ToArray()
+}
+
+function Connect-LightwareRouter {
+    param([string]$IP, [int]$Port = 6107)
+    # Opens a persistent TCP connection to the Lightware MX2 and queries device info.
+    # Stores connection objects in globals. Returns info hashtable or throws on failure.
+
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.ReceiveTimeout = 5000
+    $tcp.SendTimeout    = 5000
+    $tcp.Connect($IP, $Port)
+
+    $stream = $tcp.GetStream()
+    $encoding = [System.Text.Encoding]::ASCII
+    $reader = New-Object System.IO.StreamReader($stream, $encoding)
+    $writer = New-Object System.IO.StreamWriter($stream, $encoding)
+    $writer.AutoFlush = $false
+    $writer.NewLine   = "`r`n"
+
+    $global:lightwareTcp    = $tcp
+    $global:lightwareWriter = $writer
+    $global:lightwareReader = $reader
+    $global:lightwareSendId = 0
+
+    # Drain any welcome banner (up to 500ms)
+    $drainDeadline = [DateTime]::Now.AddMilliseconds(500)
+    while ([DateTime]::Now -lt $drainDeadline -and $stream.DataAvailable) {
+        $reader.ReadLine() | Out-Null
+        Start-Sleep -Milliseconds 10
+    }
+
+    # Get product name
+    $productName = "Lightware MX2"
+    try {
+        $resp = Send-LW3Command "GET /.ProductName"
+        foreach ($line in $resp) {
+            if ($line -match "\.ProductName=(.+)") {
+                $productName = $matches[1].Trim()
+            }
+        }
+    } catch { }
+
+    # Get port counts
+    $inputCount  = 0
+    $outputCount = 0
+    try {
+        $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.SourcePortCount"
+        foreach ($line in $resp) {
+            if ($line -match "SourcePortCount=(\d+)") {
+                $inputCount = [int]$matches[1]
+            }
+        }
+    } catch { }
+    try {
+        $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.DestinationPortCount"
+        foreach ($line in $resp) {
+            if ($line -match "DestinationPortCount=(\d+)") {
+                $outputCount = [int]$matches[1]
+            }
+        }
+    } catch { }
+
+    if ($inputCount -eq 0)  { $inputCount  = 8 }
+    if ($outputCount -eq 0) { $outputCount = 8 }
+
+    return @{
+        RouterType   = "Lightware"
+        RouterName   = $productName
+        RouterModel  = "Lightware $productName"
+        Firmware     = ""
+        InputCount   = $inputCount
+        OutputCount  = $outputCount
+    }
+}
+
+function Download-LightwareLabels {
+    param([string]$IP)
+    # Closes any existing Lightware TCP session, reconnects, fetches all port labels.
+    # Returns hashtable with InputLabels, OutputLabels, InputCount, OutputCount.
+
+    if ($global:lightwareTcp -ne $null) {
+        try { $global:lightwareWriter.Dispose() } catch { }
+        try { $global:lightwareReader.Dispose() } catch { }
+        try { $global:lightwareTcp.Close() }       catch { }
+        $global:lightwareTcp    = $null
+        $global:lightwareWriter = $null
+        $global:lightwareReader = $null
+    }
+
+    $info = Connect-LightwareRouter -IP $IP -Port 6107
+
+    $inputLabels  = @{}
+    $outputLabels = @{}
+
+    try {
+        $resp = Send-LW3Command "GET /MEDIA/NAMES/VIDEO.*"
+        foreach ($line in $resp) {
+            # Lines look like:  pr /MEDIA/NAMES/VIDEO.I3=2;Label Text
+            if ($line -match "MEDIA/NAMES/VIDEO\.(I|O)(\d+)=\d+;(.*)") {
+                $portType = $matches[1]
+                $portNum  = [int]$matches[2]
+                $label    = $matches[3].Trim()
+                if ($portType -eq "I") {
+                    $inputLabels[$portNum] = $label
+                } else {
+                    $outputLabels[$portNum] = $label
+                }
+            }
+        }
+    } catch { }
+
+    return @{
+        InputLabels  = $inputLabels
+        OutputLabels = $outputLabels
+        InputCount   = $info.InputCount
+        OutputCount  = $info.OutputCount
+    }
+}
+
+function Upload-LightwareLabel {
+    param([string]$Type, [int]$Port, [string]$Label)
+    # Sends a SET command to update a single port label.
+    # Returns $true on success, $false on error.
+
+    $prefix = if ($Type -eq "INPUT") { "I" } else { "O" }
+    try {
+        $resp = Send-LW3Command "SET /MEDIA/NAMES/VIDEO.$prefix${Port}=1;$Label"
+        foreach ($line in $resp) {
+            if ($line -match "^(pE|nE)") { return $false }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Connect-VideohubRouter {
     param([string]$IP, [int]$Port = 9990)
     # Opens a persistent TCP connection to the Videohub and parses the initial state dump.
