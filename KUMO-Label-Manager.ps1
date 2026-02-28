@@ -1,6 +1,39 @@
 # Router Label Manager v5.0
 # Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
 
+# --- Error Logging -----------------------------------------------------------
+# Captures all errors and warnings to error-log.txt in the script directory.
+# This file can be shared for remote debugging.
+
+$global:scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $global:scriptDir) { $global:scriptDir = (Get-Location).Path }
+$global:errorLogPath = Join-Path $global:scriptDir "error-log.txt"
+
+# Clear previous log and write header
+try {
+    "=== Router Label Manager Error Log ===" | Out-File $global:errorLogPath -Encoding ascii
+    "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $global:errorLogPath -Append -Encoding ascii
+    "PowerShell: $($PSVersionTable.PSVersion)" | Out-File $global:errorLogPath -Append -Encoding ascii
+    "OS: $([System.Environment]::OSVersion.VersionString)" | Out-File $global:errorLogPath -Append -Encoding ascii
+    "" | Out-File $global:errorLogPath -Append -Encoding ascii
+} catch {
+    # If we cannot write the log, continue without logging
+}
+
+function Write-ErrorLog {
+    param([string]$Source, [string]$Message, [string]$Level = "ERROR")
+    try {
+        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        "[$ts] [$Level] [$Source] $Message" | Out-File $global:errorLogPath -Append -Encoding ascii
+    } catch { }
+}
+
+# Global trap: catch any unhandled terminating error and log it
+trap {
+    Write-ErrorLog "UNHANDLED" "$($_.Exception.GetType().Name): $($_.Exception.Message)`n  at $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)`n  $($_.InvocationInfo.Line.Trim())"
+    continue
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -2274,6 +2307,7 @@ $connectButton.Add_Click({
         if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
 
     } catch {
+        Write-ErrorLog "CONNECT" "Connection to $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
         $global:routerConnected = $false
         $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Disconnected
         $connIndicator.StatusText = "Connection failed"
@@ -2335,6 +2369,7 @@ $btnDownload.Add_Click({
         Populate-Grid
 
     } catch {
+        Write-ErrorLog "DOWNLOAD" "Download from $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
         $progressBar.Value = 0
         Set-StatusMessage "Download failed: $($_.Exception.Message)" "Danger"
         [System.Windows.Forms.MessageBox]::Show(
@@ -2424,6 +2459,7 @@ $btnOpenFile.Add_Click({
                 Set-StatusMessage "Loaded $($global:allLabels.Count) labels from $([System.IO.Path]::GetFileName($dlg.FileName))" "Success"
             }
         } catch {
+            Write-ErrorLog "FILE-OPEN" "Error loading file: $($_.Exception.GetType().Name): $($_.Exception.Message)"
             [System.Windows.Forms.MessageBox]::Show("Error loading file: $($_.Exception.Message)", "Load Error", "OK", "Error")
         }
     }
@@ -2467,6 +2503,7 @@ $btnSaveFile.Add_Click({
             }
             Set-StatusMessage "Saved to $([System.IO.Path]::GetFileName($dlg.FileName))" "Success"
         } catch {
+            Write-ErrorLog "FILE-SAVE" "Error saving file: $($_.Exception.GetType().Name): $($_.Exception.Message)"
             [System.Windows.Forms.MessageBox]::Show("Error saving file: $($_.Exception.Message)", "Save Error", "OK", "Error")
         }
     }
@@ -3090,6 +3127,7 @@ $btnUpload.Add_Click({
             "Upload Results", "OK", $icon
         )
     } catch {
+        Write-ErrorLog "UPLOAD" "Upload failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
         Set-StatusMessage "Upload failed: $_" "Danger"
         [System.Windows.Forms.MessageBox]::Show("Upload failed:`n`n$($_.Exception.Message)", "Upload Error", "OK", "Error")
     } finally {
@@ -3111,6 +3149,7 @@ $keepaliveTimer.Add_Tick({
             $global:videohubWriter.Write("PING:`n`n")
             $global:videohubWriter.Flush()
         } catch {
+            Write-ErrorLog "KEEPALIVE" "Videohub keepalive failed: $($_.Exception.Message)"
             $global:routerConnected = $false
             $keepaliveTimer.Stop()
             $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
@@ -3125,6 +3164,7 @@ $keepaliveTimer.Add_Tick({
         try {
             Send-LW3Command "GET /.ProductName" | Out-Null
         } catch {
+            Write-ErrorLog "KEEPALIVE" "Lightware keepalive failed: $($_.Exception.Message)"
             $global:routerConnected = $false
             $keepaliveTimer.Stop()
             $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
@@ -3192,4 +3232,15 @@ $form.PerformLayout()
 
 # --- Show Form ---------------------------------------------------------------
 
-$form.ShowDialog() | Out-Null
+try {
+    $form.ShowDialog() | Out-Null
+} catch {
+    Write-ErrorLog "FORM" "Form crashed: $($_.Exception.GetType().Name): $($_.Exception.Message)`n  Stack: $($_.Exception.StackTrace)"
+    [System.Windows.Forms.MessageBox]::Show(
+        "An unexpected error occurred.`n`nDetails have been saved to:`n$($global:errorLogPath)`n`nError: $($_.Exception.Message)",
+        "Router Label Manager Error", "OK", "Error"
+    )
+} finally {
+    # Log clean shutdown
+    Write-ErrorLog "APP" "Application closed" "INFO"
+}
