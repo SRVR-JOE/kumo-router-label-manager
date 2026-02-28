@@ -1568,7 +1568,7 @@ function New-TabChip {
     $btn.ForeColor = $clrText
     $btn.FlatStyle = "Flat"
     $btn.FlatAppearance.BorderSize = 0
-    $btn.Cursor = "Hand"
+    $btn.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btn.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
     return $btn
 }
@@ -1594,7 +1594,7 @@ $btnFindReplace.BackColor = $clrField
 $btnFindReplace.ForeColor = $clrText
 $btnFindReplace.FlatStyle = "Flat"
 $btnFindReplace.FlatAppearance.BorderColor = $clrBorder
-$btnFindReplace.Cursor = "Hand"
+$btnFindReplace.Cursor = [System.Windows.Forms.Cursors]::Hand
 $btnFindReplace.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $filterRail.Controls.Add($btnFindReplace)
 
@@ -1606,7 +1606,7 @@ $btnAutoNumber.BackColor = $clrField
 $btnAutoNumber.ForeColor = $clrText
 $btnAutoNumber.FlatStyle = "Flat"
 $btnAutoNumber.FlatAppearance.BorderColor = $clrBorder
-$btnAutoNumber.Cursor = "Hand"
+$btnAutoNumber.Cursor = [System.Windows.Forms.Cursors]::Hand
 $btnAutoNumber.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $filterRail.Controls.Add($btnAutoNumber)
 
@@ -1618,7 +1618,7 @@ $btnTemplate.BackColor = $clrField
 $btnTemplate.ForeColor = $clrText
 $btnTemplate.FlatStyle = "Flat"
 $btnTemplate.FlatAppearance.BorderColor = $clrBorder
-$btnTemplate.Cursor = "Hand"
+$btnTemplate.Cursor = [System.Windows.Forms.Cursors]::Hand
 $btnTemplate.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $filterRail.Controls.Add($btnTemplate)
 
@@ -1630,7 +1630,7 @@ $btnClearNew.BackColor = $clrField
 $btnClearNew.ForeColor = $clrText
 $btnClearNew.FlatStyle = "Flat"
 $btnClearNew.FlatAppearance.BorderColor = $clrBorder
-$btnClearNew.Cursor = "Hand"
+$btnClearNew.Cursor = [System.Windows.Forms.Cursors]::Hand
 $btnClearNew.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $filterRail.Controls.Add($btnClearNew)
 
