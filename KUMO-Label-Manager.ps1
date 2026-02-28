@@ -1557,6 +1557,173 @@ function Upload-RouterLabels {
     }
 }
 
+# --- Crosspoint Query/Switch Functions ----------------------------------------
+
+function Get-KumoCrosspoints {
+    param([string]$IP, [int]$OutputCount)
+    # Queries AJA KUMO for current crosspoint routing state.
+    # Returns int array: index=output (0-based), value=input (0-based), -1=none.
+    $xp = @()
+    for ($i = 1; $i -le $OutputCount; $i++) {
+        $val = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Status"
+        if ($val -ne $null -and $val -match '^\d+$') {
+            $xp += ([int]$val - 1)  # KUMO is 1-based, convert to 0-based
+        } else {
+            $xp += -1
+        }
+    }
+    return $xp
+}
+
+function Get-VideohubCrosspoints {
+    param([string]$IP, [int]$Port = 9990, [int]$OutputCount)
+    # Queries Videohub for VIDEO OUTPUT ROUTING block.
+    # Must re-read from connection; sends empty command to trigger state re-dump.
+    $routing = @()
+    for ($i = 0; $i -lt $OutputCount; $i++) { $routing += -1 }
+
+    if ($global:videohubTcp -eq $null -or -not $global:videohubTcp.Connected) { return $routing }
+    $stream = $global:videohubTcp.GetStream()
+    $writer = $global:videohubWriter
+    $reader = $global:videohubReader
+
+    # Send request for routing state
+    $writer.WriteLine("VIDEO OUTPUT ROUTING:")
+    $writer.WriteLine("")
+    $writer.Flush()
+
+    $deadline = [DateTime]::Now.AddSeconds(3)
+    $inBlock  = $false
+    while ([DateTime]::Now -lt $deadline) {
+        if ($stream.DataAvailable) {
+            $line = $reader.ReadLine()
+            if ($line -eq $null) { break }
+            if ($line -eq "VIDEO OUTPUT ROUTING:") { $inBlock = $true; continue }
+            if ($inBlock -and $line.Trim() -eq "") { break }
+            if ($inBlock -and $line -match '^(\d+)\s+(\d+)') {
+                $outIdx = [int]$matches[1]
+                $inIdx  = [int]$matches[2]
+                if ($outIdx -ge 0 -and $outIdx -lt $OutputCount) {
+                    $routing[$outIdx] = $inIdx
+                }
+            }
+        } else {
+            Start-Sleep -Milliseconds 20
+        }
+    }
+    return $routing
+}
+
+function Get-LightwareCrosspoints {
+    param([int]$OutputCount)
+    # Queries Lightware for crosspoint routing via DestinationConnectionList.
+    $routing = @()
+    for ($i = 0; $i -lt $OutputCount; $i++) { $routing += -1 }
+
+    try {
+        $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.DestinationConnectionList"
+        foreach ($line in $resp) {
+            # Response like: /MEDIA/XP/VIDEO.DestinationConnectionList=I5:O1;I3:O2;...
+            if ($line -match "DestinationConnectionList=(.+)") {
+                $pairs = $matches[1] -split ";"
+                foreach ($pair in $pairs) {
+                    if ($pair -match "I(\d+):O(\d+)") {
+                        $inPort  = [int]$matches[1] - 1  # convert to 0-based
+                        $outPort = [int]$matches[2] - 1
+                        if ($outPort -ge 0 -and $outPort -lt $OutputCount) {
+                            $routing[$outPort] = $inPort
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        Write-ErrorLog "LW3-XP" "Failed to query crosspoints: $($_.Exception.Message)"
+    }
+    return $routing
+}
+
+function Get-RouterCrosspoints {
+    # Unified crosspoint query - dispatches to correct device handler.
+    $ip = $ipTextBox.Text.Trim()
+    $outCount = $global:routerOutputCount
+
+    switch ($global:routerType) {
+        "KUMO"      { return Get-KumoCrosspoints -IP $ip -OutputCount $outCount }
+        "Videohub"  { return Get-VideohubCrosspoints -IP $ip -OutputCount $outCount }
+        "Lightware" { return Get-LightwareCrosspoints -OutputCount $outCount }
+        default     { return @() }
+    }
+}
+
+function Switch-KumoCrosspoint {
+    param([string]$IP, [int]$OutputPort1, [int]$InputPort1)
+    # Switches a KUMO crosspoint. Ports are 1-based.
+    $result = Set-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${OutputPort1}_Status" -Value "$InputPort1"
+    return $result
+}
+
+function Switch-VideohubCrosspoint {
+    param([int]$OutputPort0, [int]$InputPort0)
+    # Switches a Videohub crosspoint. Ports are 0-based.
+    if ($global:videohubWriter -eq $null -or $global:videohubTcp -eq $null) { return $false }
+    try {
+        $writer = $global:videohubWriter
+        $reader = $global:videohubReader
+        $stream = $global:videohubTcp.GetStream()
+
+        $writer.WriteLine("VIDEO OUTPUT ROUTING:")
+        $writer.WriteLine("$OutputPort0 $InputPort0")
+        $writer.WriteLine("")
+        $writer.Flush()
+
+        # Wait for ACK
+        $deadline = [DateTime]::Now.AddSeconds(3)
+        while ([DateTime]::Now -lt $deadline) {
+            if ($stream.DataAvailable) {
+                $line = $reader.ReadLine()
+                if ($line -eq "ACK") { return $true }
+                if ($line -eq "NAK") { return $false }
+            } else {
+                Start-Sleep -Milliseconds 20
+            }
+        }
+        return $true  # timeout but likely succeeded
+    } catch {
+        Write-ErrorLog "VH-XP" "Switch failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Switch-LightwareCrosspoint {
+    param([int]$OutputPort1, [int]$InputPort1)
+    # Switches a Lightware crosspoint. Ports are 1-based.
+    try {
+        $resp = Send-LW3Command "CALL /MEDIA/XP/VIDEO:switch(I${InputPort1}:O${OutputPort1})"
+        foreach ($line in $resp) {
+            if ($line -match "^pE" -or $line -match "^nE") { return $false }
+        }
+        return $true
+    } catch {
+        Write-ErrorLog "LW3-XP" "Switch failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Switch-RouterCrosspoint {
+    param([int]$OutputIndex0, [int]$InputIndex0)
+    # Unified crosspoint switch - dispatches to correct device handler.
+    # Both params are 0-based. Converts to 1-based for KUMO/Lightware.
+    $ip = $ipTextBox.Text.Trim()
+
+    switch ($global:routerType) {
+        "KUMO"      { return Switch-KumoCrosspoint -IP $ip -OutputPort1 ($OutputIndex0 + 1) -InputPort1 ($InputIndex0 + 1) }
+        "Videohub"  { return Switch-VideohubCrosspoint -OutputPort0 $OutputIndex0 -InputPort0 $InputIndex0 }
+        "Lightware" { return Switch-LightwareCrosspoint -OutputPort1 ($OutputIndex0 + 1) -InputPort1 ($InputIndex0 + 1) }
+        default     { return $false }
+    }
+}
+
 # --- Main Form ---------------------------------------------------------------
 
 $form = New-Object System.Windows.Forms.Form
