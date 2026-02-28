@@ -410,6 +410,10 @@ $global:maxLabelLength    = 50       # 50 for KUMO, 255 for Videohub
 $global:videohubTcp       = $null    # persistent TCP connection for Videohub
 $global:videohubWriter    = $null
 $global:videohubReader    = $null
+$global:lightwareTcp      = $null    # persistent TCP connection for Lightware
+$global:lightwareWriter   = $null
+$global:lightwareReader   = $null
+$global:lightwareSendId   = 0
 
 # --- Router Adapter Functions -------------------------------------------------
 
@@ -905,8 +909,40 @@ function Connect-Router {
     # Auto-detects or uses the specified router type.
     # Returns a hashtable with connection info.
 
+    if ($RouterType -eq "Lightware" -or $RouterType -eq "Auto") {
+        # Try Lightware TCP 6107 first
+        try {
+            $testTcp = New-Object System.Net.Sockets.TcpClient
+            $connectResult = $testTcp.BeginConnect($IP, 6107, $null, $null)
+            $waited = $connectResult.AsyncWaitHandle.WaitOne(2000)
+            if ($waited) {
+                try {
+                    $testTcp.EndConnect($connectResult)
+                    if ($testTcp.Connected) {
+                        $testTcp.Close()
+                        # Port is open -- try full Lightware connect
+                        $info = Connect-LightwareRouter -IP $IP -Port 6107
+                        return $info
+                    }
+                } catch {
+                    $global:lightwareTcp = $null; $global:lightwareWriter = $null; $global:lightwareReader = $null
+                }
+                try { $testTcp.Close() } catch { }
+            } else {
+                try { $testTcp.EndConnect($connectResult) } catch { }
+                try { $testTcp.Close() } catch { }
+            }
+        } catch {
+            # Lightware not available
+        }
+
+        if ($RouterType -eq "Lightware") {
+            throw "Cannot connect to Lightware MX2 at $IP on port 6107."
+        }
+    }
+
     if ($RouterType -eq "Videohub" -or $RouterType -eq "Auto") {
-        # Try Videohub TCP first
+        # Try Videohub TCP 9990
         try {
             $testTcp = New-Object System.Net.Sockets.TcpClient
             $connectResult = $testTcp.BeginConnect($IP, 9990, $null, $null)
@@ -941,7 +977,7 @@ function Connect-Router {
         try {
             return Connect-KumoRouter -IP $IP
         } catch {
-            throw "Could not connect to $IP -- no KUMO (HTTP/80) or Videohub (TCP/9990) response detected. Verify the IP address and that the router is powered on."
+            throw "Could not connect to $IP -- no Lightware (TCP/6107), Videohub (TCP/9990), or KUMO (HTTP/80) response detected. Verify the IP address and that the router is powered on."
         }
     }
 
@@ -984,6 +1020,31 @@ function Download-RouterLabels {
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
+        } elseif ($global:routerType -eq "Lightware") {
+            if ($ProgressCallback) { & $ProgressCallback 50 }
+            $info = Download-LightwareLabels -IP $IP
+
+            $inputLabels  = $info.InputLabels
+            $outputLabels = $info.OutputLabels
+            $inputCount   = $info.InputCount
+            $outputCount  = $info.OutputCount
+            $global:routerInputCount  = $inputCount
+            $global:routerOutputCount = $outputCount
+
+            # Lightware uses 1-based port numbering -- no index translation needed
+            for ($i = 1; $i -le $inputCount; $i++) {
+                $label = if ($inputLabels.ContainsKey($i)) { $inputLabels[$i] } else { "Input $i" }
+                $global:allLabels.Add([PSCustomObject]@{
+                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From Lightware"
+                }) | Out-Null
+            }
+            for ($i = 1; $i -le $outputCount; $i++) {
+                $label = if ($outputLabels.ContainsKey($i)) { $outputLabels[$i] } else { "Output $i" }
+                $global:allLabels.Add([PSCustomObject]@{
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From Lightware"
+                }) | Out-Null
+            }
+            if ($ProgressCallback) { & $ProgressCallback 100 }
         } else {
             # KUMO
             $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount -ProgressCallback $ProgressCallback
@@ -998,8 +1059,11 @@ function Download-RouterLabels {
         # Restore snapshot on failure so the grid isn't left empty
         $global:allLabels.Clear()
         foreach ($item in $snapshot) { $global:allLabels.Add($item) | Out-Null }
-        # If Videohub TCP globals were destroyed during the failed attempt, mark disconnected
+        # If TCP globals were destroyed during the failed attempt, mark disconnected
         if ($global:routerType -eq "Videohub" -and $global:videohubTcp -eq $null) {
+            $global:routerConnected = $false
+        }
+        if ($global:routerType -eq "Lightware" -and $global:lightwareTcp -eq $null) {
             $global:routerConnected = $false
         }
         throw
