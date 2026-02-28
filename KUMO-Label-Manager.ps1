@@ -1142,6 +1142,28 @@ function Upload-RouterLabels {
         }
 
         return @{ SuccessCount = $script:vhSuccessCount; ErrorCount = $script:vhErrorCount; SuccessLabels = $successLabels }
+    } elseif ($global:routerType -eq "Lightware") {
+        # Lightware: per-label LW3 SET command via persistent TCP
+        $successLabels = [System.Collections.Generic.List[object]]::new()
+        $lwSuccessCount = 0
+        $lwErrorCount   = 0
+        $doneCount      = 0
+
+        # Reconnect if TCP is gone or disconnected
+        if ($global:lightwareTcp -eq $null -or -not $global:lightwareTcp.Connected) {
+            try { Connect-LightwareRouter -IP $IP -Port 6107 | Out-Null } catch {
+                return @{ SuccessCount = 0; ErrorCount = $Changes.Count; SuccessLabels = $successLabels }
+            }
+        }
+
+        foreach ($item in $Changes) {
+            $ok = Upload-LightwareLabel -Type $item.Type -Port $item.Port -Label $item.New_Label.Trim()
+            if ($ok) { $successLabels.Add($item); $lwSuccessCount++ } else { $lwErrorCount++ }
+            $doneCount++
+            if ($ProgressCallback) { & $ProgressCallback $doneCount }
+        }
+
+        return @{ SuccessCount = $lwSuccessCount; ErrorCount = $lwErrorCount; SuccessLabels = $successLabels }
     } else {
         # KUMO: per-label REST upload, then bulk Telnet for any REST failures
         $successLabels = [System.Collections.Generic.List[object]]::new()
