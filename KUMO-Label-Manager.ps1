@@ -1193,6 +1193,7 @@ function Connect-VideohubRouter {
     $deviceInfo   = @{}
     $inputLabels  = @{}
     $outputLabels = @{}
+    $routingMap   = @{}
     $protocolVersion = "Unknown"
 
     $currentBlock = ""
@@ -1227,6 +1228,11 @@ function Connect-VideohubRouter {
                     $outputLabels[[int]$matches[1]] = $matches[2]
                 }
             }
+            "VIDEO OUTPUT ROUTING" {
+                if ($line -match '^(\d+)\s+(\d+)') {
+                    $routingMap[[int]$matches[1]] = [int]$matches[2]
+                }
+            }
         }
     }
 
@@ -1249,6 +1255,7 @@ function Connect-VideohubRouter {
         OutputCount   = $outputCount
         InputLabels   = $inputLabels
         OutputLabels  = $outputLabels
+        Routing       = $routingMap
     }
 }
 
@@ -1388,6 +1395,15 @@ function Download-RouterLabels {
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
+            # Store routing data if available
+            if ($info.Routing -and $info.Routing.Count -gt 0) {
+                $xp = @()
+                for ($i = 0; $i -lt $outputCount; $i++) {
+                    if ($info.Routing.ContainsKey($i)) { $xp += $info.Routing[$i] }
+                    else { $xp += -1 }
+                }
+                $global:crosspoints = $xp
+            }
         } elseif ($global:routerType -eq "Lightware") {
             if ($ProgressCallback) { & $ProgressCallback 50 }
             $info = Download-LightwareLabels -IP $IP
@@ -2906,6 +2922,15 @@ $connectButton.Add_Click({
 
         Update-ChangeCount
         Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
+
+        # Pre-fetch crosspoint state for matrix view
+        try {
+            $global:crosspoints = Get-RouterCrosspoints
+        } catch {
+            Write-ErrorLog "CONNECT" "Crosspoint query failed (non-fatal): $($_.Exception.Message)" "WARN"
+            $global:crosspoints = @()
+        }
+
         $connectButton.Enabled = $true
         if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
 
@@ -2970,6 +2995,14 @@ $btnDownload.Add_Click({
         }
 
         Populate-Grid
+
+        # Refresh crosspoint state
+        try {
+            $global:crosspoints = Get-RouterCrosspoints
+            if ($global:matrixViewActive) { Update-MatrixPanel }
+        } catch {
+            Write-ErrorLog "DOWNLOAD" "Crosspoint refresh failed (non-fatal): $($_.Exception.Message)" "WARN"
+        }
 
     } catch {
         Write-ErrorLog "DOWNLOAD" "Download from $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
