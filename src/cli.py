@@ -412,7 +412,7 @@ def detect_router_type(ip: str) -> str:
     finally:
         if lw_sock:
             try: lw_sock.close()
-            except: pass
+            except OSError: pass
 
     # --- Probe Videohub (port 9990) ---
     sock = None
@@ -430,10 +430,10 @@ def detect_router_type(ip: str) -> str:
     finally:
         if sock_file:
             try: sock_file.close()
-            except: pass
+            except OSError: pass
         if sock:
             try: sock.close()
-            except: pass
+            except OSError: pass
     return "kumo"
 
 
@@ -505,11 +505,10 @@ def _lw3_send_command(
             if text.strip() == expected_close:
                 return lines
 
-            # Strip the two-character line-type prefix (pw, pr, mO, pE, nE)
-            # and the space separator that follows it.
-            # Lines look like: "pw /MEDIA/NAMES/VIDEO.I1=1;Label"
-            stripped = text[2:].lstrip() if len(text) >= 2 else text
-            lines.append(stripped)
+            # Keep the full line (including any pw/pr/pE/nE prefix) so
+            # callers can detect error prefixes.  Callers use substring
+            # matching (re.search / "=" in line) which works with prefixes.
+            lines.append(text)
 
     return lines
 
@@ -571,18 +570,18 @@ def connect_lightware(
         # --- Labels (wildcard GET returns all at once) ---
         label_lines = _lw3_send_command(sock, "GET /MEDIA/NAMES/VIDEO.*", send_id)
         # Each line looks like:
-        #   /MEDIA/NAMES/VIDEO.I1=1;Label Text
-        #   /MEDIA/NAMES/VIDEO.O3=3;Dest Label
+        #   pw /MEDIA/NAMES/VIDEO.I1=1;Label Text
+        #   pw /MEDIA/NAMES/VIDEO.O3=3;Dest Label
         input_re = re.compile(r"/MEDIA/NAMES/VIDEO\.I(\d+)=\d+;(.*)")
         output_re = re.compile(r"/MEDIA/NAMES/VIDEO\.O(\d+)=\d+;(.*)")
 
         for line in label_lines:
-            m = input_re.match(line)
+            m = input_re.search(line)
             if m:
                 port_num = int(m.group(1))
                 info.input_labels[port_num] = m.group(2)
                 continue
-            m = output_re.match(line)
+            m = output_re.search(line)
             if m:
                 port_num = int(m.group(1))
                 info.output_labels[port_num] = m.group(2)
@@ -648,7 +647,7 @@ def upload_lightware_label(
     type_char = "I" if port_type == "INPUT" else "O"
     # LW3 label path format: /MEDIA/NAMES/VIDEO.I1=1;Label Text
     label_text = label[:LIGHTWARE_MAX_LABEL_LENGTH]
-    path = f"/MEDIA/NAMES/VIDEO.{type_char}{port_num}=1;{label_text}"
+    path = f"/MEDIA/NAMES/VIDEO.{type_char}{port_num}={port_num};{label_text}"
     command = f"SET {path}"
 
     try:
@@ -669,12 +668,10 @@ def upload_lightware_label(
         except OSError:
             pass
 
-    # A successful SET echoes back a line containing the path.  An error
+    # A successful SET echoes back a "pw" line containing the path.  An error
     # response starts with "pE" (parameter error) or "nE" (node error).
-    # After prefix stripping in _lw3_send_command, error lines begin with
-    # the bare path or an error keyword; we check for the absence of errors.
     for line in response_lines:
-        if line.startswith("E") or "error" in line.lower():
+        if line.startswith("pE") or line.startswith("nE") or line.startswith("-E"):
             logger.warning("LW3 SET error response for %s%d: %r", type_char, port_num, line)
             return False
 

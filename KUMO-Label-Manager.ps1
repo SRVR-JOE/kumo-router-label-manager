@@ -729,7 +729,9 @@ function Connect-LightwareRouter {
                     $inputCount = [int]$matches[1]
                 }
             }
-        } catch { }
+        } catch {
+            Write-ErrorLog "LW3-CONNECT" "Failed to query SourcePortCount: $($_.Exception.Message)"
+        }
         try {
             $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.DestinationPortCount"
             foreach ($line in $resp) {
@@ -737,7 +739,9 @@ function Connect-LightwareRouter {
                     $outputCount = [int]$matches[1]
                 }
             }
-        } catch { }
+        } catch {
+            Write-ErrorLog "LW3-CONNECT" "Failed to query DestinationPortCount: $($_.Exception.Message)"
+        }
 
         if ($inputCount -eq 0)  { $inputCount  = 8 }
         if ($outputCount -eq 0) { $outputCount = 8 }
@@ -810,7 +814,7 @@ function Upload-LightwareLabel {
 
     $prefix = if ($Type -eq "INPUT") { "I" } else { "O" }
     try {
-        $resp = Send-LW3Command "SET /MEDIA/NAMES/VIDEO.$prefix${Port}=1;$Label"
+        $resp = Send-LW3Command "SET /MEDIA/NAMES/VIDEO.$prefix${Port}=$Port;$Label"
         foreach ($line in $resp) {
             if ($line -match "^(pE|nE)") { return $false }
         }
@@ -966,6 +970,7 @@ function Connect-Router {
                         return $info
                     }
                 } catch {
+                    Write-ErrorLog "AUTO-DETECT" "Lightware connect failed: $($_.Exception.Message)"
                     $global:lightwareTcp = $null; $global:lightwareWriter = $null; $global:lightwareReader = $null
                 }
                 try { $testTcp.Close() } catch { }
@@ -974,7 +979,7 @@ function Connect-Router {
                 try { $testTcp.Close() } catch { }
             }
         } catch {
-            # Lightware not available
+            Write-ErrorLog "AUTO-DETECT" "Lightware probe error: $($_.Exception.Message)" "DEBUG"
         }
 
         if ($RouterType -eq "Lightware") {
