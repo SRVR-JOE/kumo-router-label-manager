@@ -373,13 +373,8 @@ public class CrosspointMatrixPanel : Panel
     private int _cellSize = 32;
     private float _fontSize = 8f;
 
-    // Scrolling
-    private int _scrollX = 0;
-    private int _scrollY = 0;
-
     // Colors (match app theme)
     private static readonly Color BgColor       = Color.FromArgb(30, 25, 40);
-    private static readonly Color PanelColor    = Color.FromArgb(40, 35, 55);
     private static readonly Color FieldColor    = Color.FromArgb(75, 60, 100);
     private static readonly Color BorderColor   = Color.FromArgb(70, 60, 90);
     private static readonly Color TextColor     = Color.White;
@@ -387,7 +382,6 @@ public class CrosspointMatrixPanel : Panel
     private static readonly Color AccentColor   = Color.FromArgb(103, 58, 183);
     private static readonly Color HoverRowCol   = Color.FromArgb(20, 255, 255, 255);
     private static readonly Color ActiveDot     = Color.White;
-    private static readonly Color AltRowColor   = Color.FromArgb(45, 40, 60);
 
     // Events
     public event EventHandler<CrosspointClickEventArgs> CrosspointClicked;
@@ -645,7 +639,9 @@ public class CrosspointMatrixPanel : Panel
         if (row >= 0 && row < _inputLabels.Length && col >= 0 && col < _outputLabels.Length
             && mx >= _headerWidth && my >= _headerHeight)
         {
-            CrosspointClicked?.Invoke(this, new CrosspointClickEventArgs(col, row));
+            var handler = CrosspointClicked;
+            if (handler != null)
+                handler(this, new CrosspointClickEventArgs(col, row));
         }
     }
 
@@ -2923,12 +2919,14 @@ $connectButton.Add_Click({
         Update-ChangeCount
         Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
 
-        # Pre-fetch crosspoint state for matrix view
-        try {
-            $global:crosspoints = Get-RouterCrosspoints
-        } catch {
-            Write-ErrorLog "CONNECT" "Crosspoint query failed (non-fatal): $($_.Exception.Message)" "WARN"
-            $global:crosspoints = @()
+        # Pre-fetch crosspoint state for matrix view (skip if already loaded from Videohub state dump)
+        if ($global:crosspoints.Count -eq 0) {
+            try {
+                $global:crosspoints = Get-RouterCrosspoints
+            } catch {
+                Write-ErrorLog "CONNECT" "Crosspoint query failed (non-fatal): $($_.Exception.Message)" "WARN"
+                $global:crosspoints = @()
+            }
         }
 
         $connectButton.Enabled = $true
