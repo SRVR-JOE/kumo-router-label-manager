@@ -2,7 +2,7 @@
 Command-line interface for Router Label Manager v3.0.
 
 Beautiful, fast, and functional CLI powered by Rich.
-Supports AJA KUMO and Blackmagic Videohub matrix routers.
+Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
 """
 import asyncio
 import argparse
@@ -369,18 +369,52 @@ def upload_videohub_labels(
 
 
 def detect_router_type(ip: str) -> str:
-    """Auto-detect whether the device at ip is a Videohub or KUMO.
+    """Auto-detect the router type at the given IP address.
 
-    Tries Videohub TCP 9990 first (2-second timeout).  If the first response
-    line contains "PROTOCOL PREAMBLE" the device is a Videohub.  Otherwise
-    falls back to assuming KUMO.
+    Probe order:
+    1. Lightware LW3 TCP 6107 — send a minimal GET command; if the response
+       contains "ProductName" the device is a Lightware MX2.
+    2. Videohub TCP 9990 — if the first response line contains
+       "PROTOCOL PREAMBLE" the device is a Blackmagic Videohub.
+    3. Falls back to assuming KUMO.
 
     Uses makefile().readline() for reliable line reading — a single recv()
     call is not guaranteed to contain a full line on all platforms.
 
     Returns:
-        "videohub" or "kumo"
+        "lightware", "videohub", or "kumo"
     """
+    # --- Probe Lightware LW3 (port 6107) ---
+    lw_sock = None
+    try:
+        lw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        lw_sock.settimeout(LIGHTWARE_TIMEOUT)
+        lw_sock.connect((ip, LIGHTWARE_PORT))
+        # Send a minimal GET command with request ID 0001.
+        lw_sock.sendall(b"0001#GET /.ProductName\r\n")
+        lw_sock.settimeout(2.0)
+        response = b""
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            try:
+                chunk = lw_sock.recv(1024)
+                if not chunk:
+                    break
+                response += chunk
+                if b"}" in response:
+                    break
+            except socket.timeout:
+                break
+        if b"ProductName" in response:
+            return "lightware"
+    except (socket.timeout, socket.error, OSError):
+        pass
+    finally:
+        if lw_sock:
+            try: lw_sock.close()
+            except: pass
+
+    # --- Probe Videohub (port 9990) ---
     sock = None
     sock_file = None
     try:
@@ -1356,16 +1390,295 @@ class VideohubManager:
 
 
 # ---------------------------------------------------------------------------
+# LightwareManager — Lightware MX2 router support
+# ---------------------------------------------------------------------------
+
+class LightwareManager:
+    """Application coordinator for Lightware MX2 router management."""
+
+    def __init__(self, settings: Optional[Settings] = None):
+        self.settings = settings or Settings()
+        self.file_handler = FileHandlerAgent()
+
+    def download_labels(self, output_file: str) -> bool:
+        """Download current labels from Lightware MX2 and save to file."""
+        output_path = Path(output_file)
+
+        supported = {".xlsx", ".csv", ".json"}
+        if output_path.suffix.lower() not in supported:
+            console.print(
+                f"[red]Unsupported format:[/red] {output_path.suffix}\n"
+                f"[dim]Supported: {', '.join(supported)}[/dim]"
+            )
+            return False
+
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=30),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    f"[purple]Connecting to Lightware at {self.settings.router_ip}...", total=3
+                )
+
+                success, info, err = connect_lightware(self.settings.router_ip)
+                progress.update(task, advance=1)
+
+                if not success:
+                    progress.stop()
+                    console.print(f"\n[red bold]Connection failed:[/red bold] {err}")
+                    console.print(
+                        "[dim]Is this a Lightware MX2?  "
+                        "Try --router-type kumo for AJA KUMO routers or "
+                        "--router-type videohub for Blackmagic Videohub.[/dim]"
+                    )
+                    return False
+
+                progress.update(task, description="[purple]Parsing labels from device...")
+                labels = lightware_info_to_router_labels(info)
+                progress.update(task, advance=1)
+
+                progress.update(task, description=f"[purple]Saving to {output_path.name}...")
+                file_data, skipped = router_labels_to_filedata(labels)
+                self.file_handler.save(output_path, file_data)
+                progress.update(task, advance=1)
+
+            console.print()
+            display_router_labels_table(labels, title=f"Labels from {self.settings.router_ip}")
+            console.print()
+
+            save_msg = (
+                f"[green bold]Saved {len(file_data.ports)} labels to "
+                f"[purple]{output_file}[/purple][/green bold]"
+            )
+            if skipped:
+                save_msg += (
+                    f"\n[yellow dim]Note: {skipped} labels beyond port 120 were not saved "
+                    f"(file format limit).[/yellow dim]"
+                )
+            console.print(Panel(save_msg, border_style="green", padding=(0, 2)))
+            return True
+        except Exception as e:
+            console.print(f"[red bold]Error:[/red bold] {e}")
+            return False
+
+    def upload_labels(self, input_file: str, test_mode: bool = False) -> bool:
+        """Upload labels to Lightware MX2 from file."""
+        input_path = Path(input_file)
+
+        if not input_path.exists():
+            console.print(f"[red]File not found:[/red] {input_file}")
+            return False
+
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=30),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    f"[purple]Loading {input_path.name}...", total=3
+                )
+                file_data = self.file_handler.load(input_path)
+                # Convert FileData -> RouterLabel for unified display
+                labels: List[RouterLabel] = []
+                for port_data in file_data.ports:
+                    labels.append(RouterLabel(
+                        port_number=port_data.port,
+                        port_type=port_data.type,
+                        current_label=port_data.current_label,
+                        new_label=port_data.new_label,
+                    ))
+                progress.update(task, advance=1)
+
+                changes = [l for l in labels if l.has_changes()]
+
+                if not changes:
+                    progress.update(task, advance=2)
+                    console.print("\n[yellow]No pending changes found in file.[/yellow]")
+                    display_router_labels_table(labels)
+                    return True
+
+                if test_mode:
+                    progress.update(task, advance=2)
+                    console.print(
+                        f"\n[yellow bold]TEST MODE[/yellow bold] - "
+                        f"Would upload [bold]{len(changes)}[/bold] label changes to Lightware"
+                    )
+                    display_router_labels_table(labels)
+                    return True
+
+                progress.update(
+                    task,
+                    description=f"[purple]Uploading {len(changes)} labels to Lightware...",
+                )
+                success_count = 0
+                error_count = 0
+                error_messages: List[str] = []
+
+                for lbl in changes:
+                    ok = upload_lightware_label(
+                        self.settings.router_ip,
+                        lbl.port_type,
+                        lbl.port_number,
+                        lbl.new_label or "",
+                    )
+                    if ok:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                        error_messages.append(
+                            f"Failed to upload {lbl.port_type} port {lbl.port_number}: "
+                            f"{lbl.new_label!r}"
+                        )
+
+                progress.update(task, advance=2)
+
+            console.print()
+            if error_count == 0:
+                console.print(Panel(
+                    f"[green bold]Uploaded {success_count} labels successfully[/green bold]",
+                    border_style="green",
+                    padding=(0, 2),
+                ))
+            else:
+                console.print(Panel(
+                    f"[yellow]Uploaded {success_count} labels, "
+                    f"[red]{error_count} failed[/red][/yellow]",
+                    border_style="yellow",
+                    padding=(0, 2),
+                ))
+                for err in error_messages:
+                    console.print(f"  [red]-[/red] {err}")
+
+            return error_count == 0
+
+        except Exception as e:
+            console.print(f"\n[red bold]Error:[/red bold] {e}")
+            logger.exception("Lightware upload failed")
+            return False
+
+    def show_status(self) -> bool:
+        """Show Lightware MX2 connection status and device info."""
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            progress.add_task(
+                f"[purple]Querying Lightware at {self.settings.router_ip}...", total=None
+            )
+            success, info, err = connect_lightware(self.settings.router_ip)
+
+        console.print()
+
+        info_table = Table(
+            box=box.ROUNDED,
+            border_style="purple",
+            show_header=False,
+            padding=(0, 2),
+        )
+        info_table.add_column("Property", style="dim", width=20)
+        info_table.add_column("Value", style="bold")
+
+        if success and info is not None:
+            status_text = "[green bold]Connected[/green bold]"
+
+            info_table.add_row("Status", status_text)
+            info_table.add_row("Router Type", "Lightware MX2")
+            info_table.add_row("Router IP", self.settings.router_ip)
+            info_table.add_row("Product Name", info.product_name)
+            info_table.add_row(
+                "Total Ports",
+                f"{info.input_count} inputs + {info.output_count} outputs",
+            )
+        else:
+            info_table.add_row("Status", "[red bold]Disconnected[/red bold]")
+            info_table.add_row("Router Type", "Lightware MX2")
+            info_table.add_row("Router IP", self.settings.router_ip)
+            info_table.add_row("Error", err or "Unknown error")
+
+        console.print(Panel(
+            info_table,
+            title="[bold purple]Router Status[/bold purple]",
+            border_style="purple",
+            padding=(1, 1),
+        ))
+
+        if not success:
+            console.print(
+                "[dim]Is this a Lightware MX2?  "
+                "Try --router-type kumo for AJA KUMO routers or "
+                "--router-type videohub for Blackmagic Videohub.[/dim]"
+            )
+
+        return success
+
+    def create_template(self, output_file: str, size: int = 16) -> bool:
+        """Create a Lightware MX2 template file.
+
+        Args:
+            output_file: Output file path.
+            size: Number of ports per type (4, 8, 16, 32, 48).
+                  Capped at 48 to match the maximum MX2 matrix size.
+        """
+        output_path = Path(output_file)
+
+        supported = {".xlsx", ".csv", ".json"}
+        if output_path.suffix.lower() not in supported:
+            console.print(
+                f"[red]Unsupported format:[/red] {output_path.suffix}\n"
+                f"[dim]Supported: {', '.join(supported)}[/dim]"
+            )
+            return False
+
+        # Cap at 48 to support the largest Lightware MX2 matrix
+        capped = min(size, 48)
+        labels: List[RouterLabel] = []
+        for i in range(1, capped + 1):
+            labels.append(RouterLabel(port_number=i, port_type="INPUT", current_label=f"Input {i}"))
+        for i in range(1, capped + 1):
+            labels.append(RouterLabel(port_number=i, port_type="OUTPUT", current_label=f"Output {i}"))
+
+        try:
+            file_data, _ = router_labels_to_filedata(labels)
+            self.file_handler.save(output_path, file_data)
+            note = ""
+            if size > 48:
+                note = (
+                    f"\n[yellow dim]Note: Template capped at 48 ports "
+                    f"(maximum MX2 size). Requested {size}.[/yellow dim]"
+                )
+            console.print(Panel(
+                f"[green bold]Lightware template created:[/green bold] "
+                f"[purple]{output_file}[/purple]\n"
+                f"[dim]Contains {capped * 2} ports ({capped} inputs + {capped} outputs)[/dim]{note}",
+                border_style="green",
+                padding=(0, 2),
+            ))
+            return True
+        except Exception as e:
+            console.print(f"[red bold]Error:[/red bold] {e}")
+            return False
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
-ROUTER_TYPE_CHOICES = ["auto", "kumo", "videohub"]
+ROUTER_TYPE_CHOICES = ["auto", "kumo", "videohub", "lightware"]
 
 ROUTER_TYPE_HELP = (
     "Router protocol type.  "
-    "'auto' (default) probes TCP 9990 first; if the device responds with a "
-    "Videohub PROTOCOL PREAMBLE it is treated as a Videohub, otherwise KUMO. "
-    "'kumo' forces AJA KUMO REST/Telnet.  'videohub' forces Blackmagic TCP."
+    "'auto' (default) probes TCP 6107 for Lightware LW3, then TCP 9990 for "
+    "Videohub PROTOCOL PREAMBLE, and falls back to KUMO. "
+    "'kumo' forces AJA KUMO REST/Telnet.  'videohub' forces Blackmagic TCP 9990.  "
+    "'lightware' forces Lightware MX2 LW3 TCP 6107."
 )
 
 
@@ -1378,10 +1691,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  kumo-cli download labels.csv --ip 192.168.1.100\n"
             "  kumo-cli download labels.csv --ip 192.168.1.50 --router-type videohub\n"
+            "  kumo-cli download labels.csv --ip 192.168.1.60 --router-type lightware\n"
             "  kumo-cli upload labels.xlsx --ip 192.168.1.100 --test\n"
             "  kumo-cli status --ip 192.168.1.100\n"
             "  kumo-cli status --ip 192.168.1.50 -t videohub\n"
+            "  kumo-cli status --ip 192.168.1.60 -t lightware\n"
             "  kumo-cli template labels.xlsx\n"
+            "  kumo-cli template labels.xlsx -t lightware --size 16\n"
             "  kumo-cli view labels.csv\n"
         ),
     )
@@ -1463,21 +1779,30 @@ def resolve_router_type(requested: str, ip: str) -> str:
     """Resolve the effective router type, running auto-detection when needed.
 
     Args:
-        requested: Value of the --router-type argument ("auto", "kumo", "videohub").
+        requested: Value of the --router-type argument
+                   ("auto", "kumo", "videohub", "lightware").
         ip: IP address to probe when requested == "auto".
 
     Returns:
-        "kumo" or "videohub"
+        "kumo", "videohub", or "lightware"
     """
     if requested == "kumo":
         return "kumo"
     if requested == "videohub":
         return "videohub"
+    if requested == "lightware":
+        return "lightware"
 
     # Auto-detect
     console.print(f"[dim]Auto-detecting router type at {ip}...[/dim]")
     detected = detect_router_type(ip)
-    console.print(f"[dim]Detected: {'Blackmagic Videohub' if detected == 'videohub' else 'AJA KUMO'}[/dim]")
+    if detected == "lightware":
+        label = "Lightware MX2"
+    elif detected == "videohub":
+        label = "Blackmagic Videohub"
+    else:
+        label = "AJA KUMO"
+    console.print(f"[dim]Detected: {label}[/dim]")
     return detected
 
 
@@ -1509,6 +1834,9 @@ def main() -> None:
             if router_type == "videohub":
                 manager = VideohubManager(settings)
                 success = manager.download_labels(args.output)
+            elif router_type == "lightware":
+                manager = LightwareManager(settings)
+                success = manager.download_labels(args.output)
             else:
                 manager = KumoManager(settings)
                 success = asyncio.run(manager.download_labels(args.output))
@@ -1517,6 +1845,9 @@ def main() -> None:
             router_type = resolve_router_type(args.router_type, settings.router_ip)
             if router_type == "videohub":
                 manager = VideohubManager(settings)
+                success = manager.upload_labels(args.input, args.test)
+            elif router_type == "lightware":
+                manager = LightwareManager(settings)
                 success = manager.upload_labels(args.input, args.test)
             else:
                 manager = KumoManager(settings)
@@ -1527,19 +1858,26 @@ def main() -> None:
             if router_type == "videohub":
                 manager = VideohubManager(settings)
                 success = manager.show_status()
+            elif router_type == "lightware":
+                manager = LightwareManager(settings)
+                success = manager.show_status()
             else:
                 manager = KumoManager(settings)
                 success = asyncio.run(manager.show_status())
 
         elif args.command == "template":
-            # For template command, skip network detection if no explicit type given
+            # For template command, skip network detection if no explicit type given.
+            # Default to "kumo" when auto — no network probe needed for template generation.
             if args.router_type == "auto":
-                router_type = "kumo"  # Default, no network needed
+                router_type = "kumo"
             else:
                 router_type = args.router_type
             size = getattr(args, "size", 32)
             if router_type == "videohub":
                 manager = VideohubManager(settings)
+                success = manager.create_template(args.output, size=size)
+            elif router_type == "lightware":
+                manager = LightwareManager(settings)
                 success = manager.create_template(args.output, size=size)
             else:
                 manager = KumoManager(settings)
