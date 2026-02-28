@@ -1279,7 +1279,7 @@ $cboRouterType.ForeColor = $clrText
 $cboRouterType.FlatStyle = "Flat"
 $cboRouterType.DropDownStyle = "DropDownList"
 $cboRouterType.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$cboRouterType.Items.AddRange(@("Auto-detect", "AJA KUMO", "BMD Videohub"))
+$cboRouterType.Items.AddRange(@("Auto-detect", "AJA KUMO", "BMD Videohub", "Lightware MX2"))
 $cboRouterType.SelectedIndex = 0
 $connSectionPanel.Controls.Add($cboRouterType)
 
@@ -2201,6 +2201,7 @@ $connectButton.Add_Click({
     $selectedType = switch ($cboRouterType.SelectedIndex) {
         1 { "KUMO" }
         2 { "Videohub" }
+        3 { "Lightware" }
         default { "Auto" }
     }
 
@@ -2228,7 +2229,7 @@ $connectButton.Add_Click({
         $global:routerFirmware    = $info.Firmware
         $global:routerInputCount  = $info.InputCount
         $global:routerOutputCount = $info.OutputCount
-        $global:maxLabelLength    = if ($info.RouterType -eq "Videohub") { 255 } else { 50 }
+        $global:maxLabelLength    = if ($info.RouterType -eq "Videohub" -or $info.RouterType -eq "Lightware") { 255 } else { 50 }
 
         $fwText = if ($global:routerFirmware) { " | $($global:routerFirmware)" } else { "" }
 
@@ -2267,7 +2268,7 @@ $connectButton.Add_Click({
         $connectButton.Enabled = $true
 
         [System.Windows.Forms.MessageBox]::Show(
-            "Cannot connect to router at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 80 (KUMO) or 9990 (Videohub) is accessible`n`nError: $($_.Exception.Message)",
+            "Cannot connect to router at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 6107 (Lightware), 80 (KUMO) or 9990 (Videohub) is accessible`n`nError: $($_.Exception.Message)",
             "Connection Failed", "OK", "Error"
         )
     }
@@ -2344,12 +2345,15 @@ $btnOpenFile.Add_Click({
             } else {
                 if (Get-Module -ListAvailable -Name ImportExcel) {
                     Import-Module ImportExcel
-                    # Try Videohub_Labels first, fall back to KUMO_Labels
-                    try {
-                        $data = Import-Excel -Path $dlg.FileName -WorksheetName "Videohub_Labels"
-                    } catch {
-                        $data = Import-Excel -Path $dlg.FileName -WorksheetName "KUMO_Labels"
+                    # Try each worksheet name in priority order
+                    $data = $null
+                    foreach ($wsName in @("Lightware_Labels", "Videohub_Labels", "KUMO_Labels")) {
+                        try {
+                            $data = Import-Excel -Path $dlg.FileName -WorksheetName $wsName
+                            if ($data) { break }
+                        } catch { }
                     }
+                    if (-not $data) { throw "No compatible worksheet found." }
                 } else {
                     $excel = $null; $wb = $null
                     try {
@@ -2357,9 +2361,10 @@ $btnOpenFile.Add_Click({
                         $excel.Visible = $false
                         $wb  = $excel.Workbooks.Open($dlg.FileName)
                         $ws = $null
-                        try { $ws = $wb.Worksheets.Item("Videohub_Labels") } catch {}
+                        try { $ws = $wb.Worksheets.Item("Lightware_Labels") } catch {}
+                        if (-not $ws) { try { $ws = $wb.Worksheets.Item("Videohub_Labels") } catch {} }
                         if (-not $ws) { try { $ws = $wb.Worksheets.Item("KUMO_Labels") } catch {} }
-                        if (-not $ws) { throw "No compatible worksheet found (expected 'Videohub_Labels' or 'KUMO_Labels')." }
+                        if (-not $ws) { throw "No compatible worksheet found (expected 'Lightware_Labels', 'Videohub_Labels' or 'KUMO_Labels')." }
                         $data = @()
                         $lastRow = $ws.UsedRange.Rows.Count
                         for ($row = 2; $row -le $lastRow; $row++) {
@@ -2426,7 +2431,11 @@ $btnSaveFile.Add_Click({
             if ($dlg.FileName -match "\.xlsx$") {
                 if (Get-Module -ListAvailable -Name ImportExcel) {
                     Import-Module ImportExcel
-                    $saveWsName = if ($global:routerType -eq "Videohub") { "Videohub_Labels" } else { "KUMO_Labels" }
+                    $saveWsName = switch ($global:routerType) {
+                        "Videohub"  { "Videohub_Labels" }
+                        "Lightware" { "Lightware_Labels" }
+                        default     { "KUMO_Labels" }
+                    }
                     $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Notes |
                         Export-Excel -Path $dlg.FileName -WorksheetName $saveWsName -AutoSize -TableStyle Medium6 -FreezeTopRow
                 } else {
@@ -2812,7 +2821,11 @@ $btnTemplate.Add_Click({
         try {
             Import-Module ImportExcel
             $savedPath = Join-Path $docsPath "$templateFileName.xlsx"
-            $worksheetName = if ($global:routerType -eq "Videohub") { "Videohub_Labels" } else { "KUMO_Labels" }
+            $worksheetName = switch ($global:routerType) {
+                "Videohub"  { "Videohub_Labels" }
+                "Lightware" { "Lightware_Labels" }
+                default     { "KUMO_Labels" }
+            }
             $templateData | Export-Excel -Path $savedPath -WorksheetName $worksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
         } catch {
             $savedPath = $null
@@ -2978,7 +2991,11 @@ $btnUpload.Add_Click({
         if ($result -ne "Yes") { return }
     }
 
-    $routerTypeLabel = if ($global:routerType -eq "Videohub") { "Blackmagic Videohub" } else { "KUMO" }
+    $routerTypeLabel = switch ($global:routerType) {
+        "Videohub"  { "Blackmagic Videohub" }
+        "Lightware" { "Lightware MX2" }
+        default     { "KUMO" }
+    }
     $result = [System.Windows.Forms.MessageBox]::Show(
         "Upload $($changes.Count) label changes to $routerTypeLabel at $($ipTextBox.Text)?`n`nThis will modify the router's port names immediately.`n`nA backup of current labels will be saved automatically.",
         "Confirm Upload", "YesNo", "Question"
