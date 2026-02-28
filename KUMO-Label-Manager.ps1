@@ -2073,6 +2073,9 @@ $filterRail.Controls.Add($tabAll)
 $filterRail.Controls.Add($tabInputs)
 $filterRail.Controls.Add($tabOutputs)
 $filterRail.Controls.Add($tabChanged)
+$tabMatrix  = New-TabChip "Matrix"   "MATRIX"  348
+$tabMatrix.Size = New-Object System.Drawing.Size(78, 28)
+$filterRail.Controls.Add($tabMatrix)
 
 # Batch tools
 $btnFindReplace = New-Object System.Windows.Forms.Button
@@ -2461,8 +2464,14 @@ $statusBar.Add_Resize({
     $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
 })
 
+# --- Matrix Panel ---------------------------------------------------------------
+$matrixPanel = New-Object CrosspointMatrixPanel
+$matrixPanel.Dock = "Fill"
+$matrixPanel.Visible = $false
+
 # --- Assemble Content Panel (reverse dock order: Bottom first, then Fill, then Top) --
 
+$contentPanel.Controls.Add($matrixPanel)     # Dock=Fill (hidden by default)
 $contentPanel.Controls.Add($dataGrid)       # Dock=Fill
 $contentPanel.Controls.Add($statusBar)      # Dock=Bottom
 $contentPanel.Controls.Add($filterRail)     # Dock=Top (below contentHeader)
@@ -2575,15 +2584,38 @@ function Create-DefaultLabels {
 
 function Set-ActiveTab {
     param($activeButton)
-    foreach ($btn in @($tabAll, $tabInputs, $tabOutputs, $tabChanged)) {
+    foreach ($btn in @($tabAll, $tabInputs, $tabOutputs, $tabChanged, $tabMatrix)) {
         $btn.BackColor = $clrField
         $btn.ForeColor = $clrText
     }
     $activeButton.BackColor = $clrAccent
     $activeButton.ForeColor = $clrText
     $global:currentFilter = $activeButton.Tag
-    Sync-GridToData
-    Populate-Grid
+
+    if ($activeButton.Tag -eq "MATRIX") {
+        $global:matrixViewActive = $true
+        $dataGrid.Visible = $false
+        $matrixPanel.Visible = $true
+        # Hide label-editor-only toolbar buttons
+        $btnFindReplace.Visible = $false
+        $btnAutoNumber.Visible = $false
+        $btnTemplate.Visible = $false
+        $btnClearNew.Visible = $false
+        $searchBox.Visible = $false
+        # Refresh matrix data
+        Update-MatrixPanel
+    } else {
+        $global:matrixViewActive = $false
+        $matrixPanel.Visible = $false
+        $dataGrid.Visible = $true
+        $btnFindReplace.Visible = $true
+        $btnAutoNumber.Visible = $true
+        $btnTemplate.Visible = $true
+        $btnClearNew.Visible = $true
+        $searchBox.Visible = $true
+        Sync-GridToData
+        Populate-Grid
+    }
 }
 
 function Set-StatusMessage {
@@ -3429,6 +3461,7 @@ $tabAll.Add_Click({     Set-ActiveTab $tabAll })
 $tabInputs.Add_Click({  Set-ActiveTab $tabInputs })
 $tabOutputs.Add_Click({ Set-ActiveTab $tabOutputs })
 $tabChanged.Add_Click({ Set-ActiveTab $tabChanged })
+$tabMatrix.Add_Click({  Set-ActiveTab $tabMatrix })
 
 # --- Search -------------------------------------------------------------------
 
