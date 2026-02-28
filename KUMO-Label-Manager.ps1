@@ -354,6 +354,320 @@ public class SmoothProgressBar : Control
         base.Dispose(disposing);
     }
 }
+
+// -- CrosspointMatrixPanel -----------------------------------------------------
+public class CrosspointMatrixPanel : Panel
+{
+    // Data
+    private string[] _inputLabels = new string[0];
+    private string[] _outputLabels = new string[0];
+    private int[] _crosspoints = new int[0]; // index=output, value=routed input (-1=none)
+
+    // Hover state
+    private int _hoverRow = -1;
+    private int _hoverCol = -1;
+
+    // Layout cache (recalculated on resize/data change)
+    private int _headerWidth = 120;
+    private int _headerHeight = 80;
+    private int _cellSize = 32;
+    private float _fontSize = 8f;
+
+    // Scrolling
+    private int _scrollX = 0;
+    private int _scrollY = 0;
+
+    // Colors (match app theme)
+    private static readonly Color BgColor       = Color.FromArgb(30, 25, 40);
+    private static readonly Color PanelColor    = Color.FromArgb(40, 35, 55);
+    private static readonly Color FieldColor    = Color.FromArgb(75, 60, 100);
+    private static readonly Color BorderColor   = Color.FromArgb(70, 60, 90);
+    private static readonly Color TextColor     = Color.White;
+    private static readonly Color DimTextColor  = Color.FromArgb(190, 180, 210);
+    private static readonly Color AccentColor   = Color.FromArgb(103, 58, 183);
+    private static readonly Color HoverRowCol   = Color.FromArgb(20, 255, 255, 255);
+    private static readonly Color ActiveDot     = Color.White;
+    private static readonly Color AltRowColor   = Color.FromArgb(45, 40, 60);
+
+    // Events
+    public event EventHandler<CrosspointClickEventArgs> CrosspointClicked;
+
+    public string[] InputLabels
+    {
+        get { return _inputLabels; }
+        set { _inputLabels = value ?? new string[0]; RecalcLayout(); Invalidate(); }
+    }
+
+    public string[] OutputLabels
+    {
+        get { return _outputLabels; }
+        set { _outputLabels = value ?? new string[0]; RecalcLayout(); Invalidate(); }
+    }
+
+    public int[] Crosspoints
+    {
+        get { return _crosspoints; }
+        set { _crosspoints = value ?? new int[0]; Invalidate(); }
+    }
+
+    public CrosspointMatrixPanel()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        BackColor = BgColor;
+        AutoScroll = true;
+    }
+
+    private void RecalcLayout()
+    {
+        int inputs = _inputLabels.Length;
+        int outputs = _outputLabels.Length;
+        if (inputs == 0 || outputs == 0) return;
+
+        // Font size scales with matrix size
+        int maxPorts = Math.Max(inputs, outputs);
+        if (maxPorts <= 20) _fontSize = 8.5f;
+        else if (maxPorts <= 32) _fontSize = 8f;
+        else if (maxPorts <= 64) _fontSize = 7f;
+        else _fontSize = 6f;
+
+        // Measure longest input label for header width
+        using (Font f = new Font("Segoe UI", _fontSize))
+        using (Graphics g = CreateGraphics())
+        {
+            float maxW = 60;
+            foreach (string lbl in _inputLabels)
+            {
+                SizeF sz = g.MeasureString(lbl, f);
+                if (sz.Width > maxW) maxW = sz.Width;
+            }
+            _headerWidth = (int)maxW + 20;
+
+            // Header height for rotated output labels
+            float maxOutW = 60;
+            foreach (string lbl in _outputLabels)
+            {
+                SizeF sz = g.MeasureString(lbl, f);
+                if (sz.Width > maxOutW) maxOutW = sz.Width;
+            }
+            _headerHeight = (int)(maxOutW * 0.75f) + 20;
+        }
+
+        // Cell size: fit available space, min 24
+        int availW = ClientSize.Width - _headerWidth - 20;
+        int availH = ClientSize.Height - _headerHeight - 20;
+        int cellW = outputs > 0 ? Math.Max(24, availW / outputs) : 32;
+        int cellH = inputs > 0 ? Math.Max(24, availH / inputs) : 32;
+        _cellSize = Math.Min(cellW, cellH);
+        _cellSize = Math.Min(_cellSize, 48); // cap max size
+        _cellSize = Math.Max(_cellSize, 24); // enforce min
+
+        // Set auto-scroll size
+        int totalW = _headerWidth + outputs * _cellSize + 20;
+        int totalH = _headerHeight + inputs * _cellSize + 20;
+        AutoScrollMinSize = new Size(totalW, totalH);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        RecalcLayout();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+        // Apply scroll offset
+        g.TranslateTransform(AutoScrollPosition.X, AutoScrollPosition.Y);
+
+        int inputs = _inputLabels.Length;
+        int outputs = _outputLabels.Length;
+        if (inputs == 0 || outputs == 0)
+        {
+            using (Font f = new Font("Segoe UI", 11f))
+            using (SolidBrush b = new SolidBrush(DimTextColor))
+                g.DrawString("Connect to a router and download labels to view the matrix.",
+                    f, b, 40, 40);
+            return;
+        }
+
+        using (Font font = new Font("Segoe UI", _fontSize))
+        using (Font fontBold = new Font("Segoe UI", _fontSize, FontStyle.Bold))
+        {
+            int ox = _headerWidth; // grid origin X
+            int oy = _headerHeight; // grid origin Y
+
+            // Draw row/column highlight for hovered cell
+            if (_hoverRow >= 0 && _hoverRow < inputs)
+            {
+                using (SolidBrush hb = new SolidBrush(HoverRowCol))
+                    g.FillRectangle(hb, ox, oy + _hoverRow * _cellSize, outputs * _cellSize, _cellSize);
+            }
+            if (_hoverCol >= 0 && _hoverCol < outputs)
+            {
+                using (SolidBrush hb = new SolidBrush(HoverRowCol))
+                    g.FillRectangle(hb, ox + _hoverCol * _cellSize, oy, _cellSize, inputs * _cellSize);
+            }
+
+            // Draw grid lines
+            using (Pen gridPen = new Pen(BorderColor, 1f))
+            {
+                for (int r = 0; r <= inputs; r++)
+                    g.DrawLine(gridPen, ox, oy + r * _cellSize, ox + outputs * _cellSize, oy + r * _cellSize);
+                for (int c = 0; c <= outputs; c++)
+                    g.DrawLine(gridPen, ox + c * _cellSize, oy, ox + c * _cellSize, oy + inputs * _cellSize);
+            }
+
+            // Draw crosspoint cells
+            for (int c = 0; c < outputs; c++)
+            {
+                int routedInput = (c < _crosspoints.Length) ? _crosspoints[c] : -1;
+                for (int r = 0; r < inputs; r++)
+                {
+                    int cx = ox + c * _cellSize;
+                    int cy = oy + r * _cellSize;
+                    bool isActive = (routedInput == r);
+                    bool isHover = (r == _hoverRow && c == _hoverCol);
+
+                    if (isActive)
+                    {
+                        // Active crosspoint: filled purple cell with white dot
+                        Rectangle cellRect = new Rectangle(cx + 2, cy + 2, _cellSize - 4, _cellSize - 4);
+                        using (GraphicsPath path = RoundedRect(cellRect, 4))
+                        using (SolidBrush ab = new SolidBrush(AccentColor))
+                            g.FillPath(ab, path);
+
+                        int dotSize = Math.Max(6, _cellSize / 4);
+                        int dotX = cx + (_cellSize - dotSize) / 2;
+                        int dotY = cy + (_cellSize - dotSize) / 2;
+                        using (SolidBrush db = new SolidBrush(ActiveDot))
+                            g.FillEllipse(db, dotX, dotY, dotSize, dotSize);
+                    }
+                    else if (isHover)
+                    {
+                        Rectangle cellRect = new Rectangle(cx + 2, cy + 2, _cellSize - 4, _cellSize - 4);
+                        using (GraphicsPath path = RoundedRect(cellRect, 4))
+                        using (SolidBrush hb = new SolidBrush(FieldColor))
+                            g.FillPath(hb, path);
+                    }
+                }
+            }
+
+            // Draw input labels (row headers)
+            using (SolidBrush tb = new SolidBrush(DimTextColor))
+            {
+                for (int r = 0; r < inputs; r++)
+                {
+                    float ty = oy + r * _cellSize + (_cellSize - font.Height) / 2f;
+                    // Highlight active row label
+                    Font drawFont = (_hoverRow == r) ? fontBold : font;
+                    Color drawColor = (_hoverRow == r) ? TextColor : DimTextColor;
+                    using (SolidBrush lb = new SolidBrush(drawColor))
+                    {
+                        // Right-align in header area
+                        SizeF sz = g.MeasureString(_inputLabels[r], drawFont);
+                        float tx = _headerWidth - sz.Width - 8;
+                        g.DrawString(_inputLabels[r], drawFont, lb, tx, ty);
+                    }
+                }
+            }
+
+            // Draw output labels (column headers, rotated -60 degrees)
+            for (int c = 0; c < outputs; c++)
+            {
+                float tx = ox + c * _cellSize + _cellSize / 2f;
+                float ty = _headerHeight - 4;
+                Font drawFont = (_hoverCol == c) ? fontBold : font;
+                Color drawColor = (_hoverCol == c) ? TextColor : DimTextColor;
+
+                var state = g.Save();
+                g.TranslateTransform(tx, ty);
+                g.RotateTransform(-55);
+                using (SolidBrush lb = new SolidBrush(drawColor))
+                    g.DrawString(_outputLabels[c], drawFont, lb, 0, 0);
+                g.Restore(state);
+            }
+
+            // Corner label
+            using (SolidBrush cb = new SolidBrush(Color.FromArgb(100, DimTextColor)))
+            using (Font cf = new Font("Segoe UI", _fontSize - 1f))
+            {
+                g.DrawString("IN \\ OUT", cf, cb, 4, _headerHeight - cf.Height - 4);
+            }
+        }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        int mx = e.X - AutoScrollPosition.X;
+        int my = e.Y - AutoScrollPosition.Y;
+
+        int col = (mx - _headerWidth) / _cellSize;
+        int row = (my - _headerHeight) / _cellSize;
+
+        int newHoverRow = (row >= 0 && row < _inputLabels.Length && mx >= _headerWidth) ? row : -1;
+        int newHoverCol = (col >= 0 && col < _outputLabels.Length && my >= _headerHeight) ? col : -1;
+
+        if (newHoverRow != _hoverRow || newHoverCol != _hoverCol)
+        {
+            _hoverRow = newHoverRow;
+            _hoverCol = newHoverCol;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hoverRow != -1 || _hoverCol != -1)
+        {
+            _hoverRow = -1;
+            _hoverCol = -1;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (e.Button != MouseButtons.Left) return;
+
+        int mx = e.X - AutoScrollPosition.X;
+        int my = e.Y - AutoScrollPosition.Y;
+
+        int col = (mx - _headerWidth) / _cellSize;
+        int row = (my - _headerHeight) / _cellSize;
+
+        if (row >= 0 && row < _inputLabels.Length && col >= 0 && col < _outputLabels.Length
+            && mx >= _headerWidth && my >= _headerHeight)
+        {
+            CrosspointClicked?.Invoke(this, new CrosspointClickEventArgs(col, row));
+        }
+    }
+
+    private GraphicsPath RoundedRect(Rectangle bounds, int radius)
+    {
+        int d = radius * 2;
+        GraphicsPath path = new GraphicsPath();
+        path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+        path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+        path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+public class CrosspointClickEventArgs : EventArgs
+{
+    public int OutputIndex { get; private set; }
+    public int InputIndex { get; private set; }
+    public CrosspointClickEventArgs(int output, int input) { OutputIndex = output; InputIndex = input; }
+}
 '@ -ErrorAction Stop
 
 # --- HTTPS Helper Functions --------------------------------------------------
@@ -451,6 +765,10 @@ $global:lightwareTcp      = $null    # persistent TCP connection for Lightware
 $global:lightwareWriter   = $null
 $global:lightwareReader   = $null
 $global:lightwareSendId   = 0
+
+# Crosspoint routing state
+$global:crosspoints       = @()      # int array: index=output, value=routed input (0-based, -1=none)
+$global:matrixViewActive  = $false    # true when Matrix tab is active
 
 # --- Router Adapter Functions -------------------------------------------------
 
