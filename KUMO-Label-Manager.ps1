@@ -1,5 +1,5 @@
-# Router Label Manager v4.0
-# Supports AJA KUMO and Blackmagic Videohub matrix routers.
+# Router Label Manager v5.0
+# Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -1192,7 +1192,7 @@ function Upload-RouterLabels {
 # --- Main Form ---------------------------------------------------------------
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Router Label Manager v4.0"
+$form.Text = "Router Label Manager v5.0"
 $form.Size = New-Object System.Drawing.Size(1100, 750)
 $form.MinimumSize = New-Object System.Drawing.Size(900, 650)
 $form.StartPosition = "CenterScreen"
