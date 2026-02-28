@@ -2092,7 +2092,7 @@ $filterRail.Controls.Add($tabMatrix)
 # Batch tools
 $btnFindReplace = New-Object System.Windows.Forms.Button
 $btnFindReplace.Text = "Find && Replace"
-$btnFindReplace.Location = New-Object System.Drawing.Point(356, 7)
+$btnFindReplace.Location = New-Object System.Drawing.Point(440, 7)
 $btnFindReplace.Size = New-Object System.Drawing.Size(110, 28)
 $btnFindReplace.BackColor = $clrField
 $btnFindReplace.ForeColor = $clrText
@@ -2104,7 +2104,7 @@ $filterRail.Controls.Add($btnFindReplace)
 
 $btnAutoNumber = New-Object System.Windows.Forms.Button
 $btnAutoNumber.Text = "Auto-Number"
-$btnAutoNumber.Location = New-Object System.Drawing.Point(474, 7)
+$btnAutoNumber.Location = New-Object System.Drawing.Point(558, 7)
 $btnAutoNumber.Size = New-Object System.Drawing.Size(98, 28)
 $btnAutoNumber.BackColor = $clrField
 $btnAutoNumber.ForeColor = $clrText
@@ -2116,7 +2116,7 @@ $filterRail.Controls.Add($btnAutoNumber)
 
 $btnTemplate = New-Object System.Windows.Forms.Button
 $btnTemplate.Text = "Create Template"
-$btnTemplate.Location = New-Object System.Drawing.Point(580, 7)
+$btnTemplate.Location = New-Object System.Drawing.Point(664, 7)
 $btnTemplate.Size = New-Object System.Drawing.Size(108, 28)
 $btnTemplate.BackColor = $clrField
 $btnTemplate.ForeColor = $clrText
@@ -2128,7 +2128,7 @@ $filterRail.Controls.Add($btnTemplate)
 
 $btnClearNew = New-Object System.Windows.Forms.Button
 $btnClearNew.Text = "Clear All New"
-$btnClearNew.Location = New-Object System.Drawing.Point(696, 7)
+$btnClearNew.Location = New-Object System.Drawing.Point(780, 7)
 $btnClearNew.Size = New-Object System.Drawing.Size(96, 28)
 $btnClearNew.BackColor = $clrField
 $btnClearNew.ForeColor = $clrText
