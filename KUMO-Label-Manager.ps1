@@ -2618,6 +2618,83 @@ function Set-ActiveTab {
     }
 }
 
+function Update-MatrixPanel {
+    # Populates the matrix panel with current labels and crosspoint state.
+    if (-not $global:routerConnected) { return }
+
+    $inCount  = $global:routerInputCount
+    $outCount = $global:routerOutputCount
+
+    # Build label arrays using New_Label if set, otherwise Current_Label
+    $inputLabels = @()
+    $outputLabels = @()
+    foreach ($lbl in $global:allLabels) {
+        $displayName = if ($lbl.New_Label -and $lbl.New_Label.Trim() -ne "") { $lbl.New_Label.Trim() } else { $lbl.Current_Label }
+        if ($lbl.Type -eq "INPUT") {
+            $inputLabels += "I$($lbl.Port): $displayName"
+        }
+    }
+    foreach ($lbl in $global:allLabels) {
+        $displayName = if ($lbl.New_Label -and $lbl.New_Label.Trim() -ne "") { $lbl.New_Label.Trim() } else { $lbl.Current_Label }
+        if ($lbl.Type -eq "OUTPUT") {
+            $outputLabels += "O$($lbl.Port): $displayName"
+        }
+    }
+
+    $matrixPanel.InputLabels = $inputLabels
+    $matrixPanel.OutputLabels = $outputLabels
+
+    # Query crosspoint state from router
+    try {
+        Set-StatusMessage "Querying crosspoint routing..." "Dim"
+        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        [System.Windows.Forms.Application]::DoEvents()
+
+        $global:crosspoints = Get-RouterCrosspoints
+        $matrixPanel.Crosspoints = [int[]]$global:crosspoints
+
+        $activeRoutes = ($global:crosspoints | Where-Object { $_ -ge 0 }).Count
+        Set-StatusMessage "$activeRoutes active routes loaded" "Success"
+    } catch {
+        Write-ErrorLog "MATRIX" "Failed to query crosspoints: $($_.Exception.Message)"
+        Set-StatusMessage "Failed to load routing state" "Danger"
+    } finally {
+        $form.Cursor = [System.Windows.Forms.Cursors]::Default
+    }
+}
+
+$matrixPanel.Add_CrosspointClicked({
+    param($sender, $args)
+    if (-not $global:routerConnected) { return }
+
+    $outIdx = $args.OutputIndex
+    $inIdx  = $args.InputIndex
+    $outPort = $outIdx + 1
+    $inPort  = $inIdx + 1
+
+    # Get display names for status message
+    $inName  = if ($matrixPanel.InputLabels.Length -gt $inIdx) { $matrixPanel.InputLabels[$inIdx] } else { "Input $inPort" }
+    $outName = if ($matrixPanel.OutputLabels.Length -gt $outIdx) { $matrixPanel.OutputLabels[$outIdx] } else { "Output $outPort" }
+
+    Set-StatusMessage "Switching: $inName -> $outName ..." "Changed"
+    [System.Windows.Forms.Application]::DoEvents()
+
+    try {
+        $result = Switch-RouterCrosspoint -OutputIndex0 $outIdx -InputIndex0 $inIdx
+        if ($result -ne $false) {
+            # Update local crosspoint state
+            $global:crosspoints[$outIdx] = $inIdx
+            $matrixPanel.Crosspoints = [int[]]$global:crosspoints
+            Set-StatusMessage "Routed: $inName -> $outName" "Success"
+        } else {
+            Set-StatusMessage "Switch failed: $inName -> $outName" "Danger"
+        }
+    } catch {
+        Write-ErrorLog "MATRIX" "Switch failed: $($_.Exception.Message)"
+        Set-StatusMessage "Switch error: $($_.Exception.Message)" "Danger"
+    }
+})
+
 function Set-StatusMessage {
     param([string]$Message, [string]$Color = "Dim")
     $progressLabel.Text = $Message
