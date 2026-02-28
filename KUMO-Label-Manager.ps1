@@ -2086,7 +2086,9 @@ $filterRail.Controls.Add($tabInputs)
 $filterRail.Controls.Add($tabOutputs)
 $filterRail.Controls.Add($tabChanged)
 $tabMatrix  = New-TabChip "Matrix"   "MATRIX"  348
-$tabMatrix.Size = New-Object System.Drawing.Size(78, 28)
+$tabMatrix.Size = New-Object System.Drawing.Size(84, 28)
+$tabMatrix.FlatAppearance.BorderSize = 1
+$tabMatrix.FlatAppearance.BorderColor = $clrAccent
 $filterRail.Controls.Add($tabMatrix)
 
 # Batch tools
