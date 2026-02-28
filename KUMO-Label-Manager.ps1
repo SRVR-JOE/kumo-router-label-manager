@@ -2209,14 +2209,22 @@ $connectButton.Add_Click({
     $connIndicator.StatusText = "Connecting..."
     $form.Refresh()
 
+    if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
     if ($global:videohubTcp -ne $null) {
-        if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
         try { $global:videohubWriter.Dispose() } catch { }
         try { $global:videohubReader.Dispose() } catch { }
         try { $global:videohubTcp.Close() } catch { }
         $global:videohubTcp    = $null
         $global:videohubWriter = $null
         $global:videohubReader = $null
+    }
+    if ($global:lightwareTcp -ne $null) {
+        try { $global:lightwareWriter.Dispose() } catch { }
+        try { $global:lightwareReader.Dispose() } catch { }
+        try { $global:lightwareTcp.Close() } catch { }
+        $global:lightwareTcp    = $null
+        $global:lightwareWriter = $null
+        $global:lightwareReader = $null
     }
 
     try {
@@ -2255,7 +2263,7 @@ $connectButton.Add_Click({
         Update-ChangeCount
         Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
         $connectButton.Enabled = $true
-        if ($global:routerType -eq "Videohub" -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
+        if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
 
     } catch {
         $global:routerConnected = $false
@@ -2746,7 +2754,14 @@ $btnTemplate.Add_Click({
             "Videohub 80x80 (80 in / 80 out)",
             "Videohub 120x120 (120 in / 120 out)",
             "Smart Videohub 12x12 (12 in / 12 out)",
-            "Micro Videohub 16x16 (16 in / 16 out)"
+            "Micro Videohub 16x16 (16 in / 16 out)",
+            "MX2-4x4 (4 in / 4 out)",
+            "MX2-8x4 (8 in / 4 out)",
+            "MX2-8x8 (8 in / 8 out)",
+            "MX2-16x16 (16 in / 16 out)",
+            "MX2-24x24 (24 in / 24 out)",
+            "MX2-32x32 (32 in / 32 out)",
+            "MX2-48x48 (48 in / 48 out)"
         ))
         $modelCombo.SelectedIndex = 2
         $pickForm.Controls.Add($modelCombo)
@@ -2780,6 +2795,13 @@ $btnTemplate.Add_Click({
             8  { $inCount = 120; $outCount = 120; $modelName = "Videohub 120x120" }
             9  { $inCount = 12;  $outCount = 12;  $modelName = "Smart Videohub 12x12" }
             10 { $inCount = 16;  $outCount = 16;  $modelName = "Micro Videohub 16x16" }
+            11 { $inCount = 4;   $outCount = 4;   $modelName = "MX2-4x4" }
+            12 { $inCount = 8;   $outCount = 4;   $modelName = "MX2-8x4" }
+            13 { $inCount = 8;   $outCount = 8;   $modelName = "MX2-8x8" }
+            14 { $inCount = 16;  $outCount = 16;  $modelName = "MX2-16x16" }
+            15 { $inCount = 24;  $outCount = 24;  $modelName = "MX2-24x24" }
+            16 { $inCount = 32;  $outCount = 32;  $modelName = "MX2-32x32" }
+            17 { $inCount = 48;  $outCount = 48;  $modelName = "MX2-48x48" }
         }
     }
 
@@ -3067,7 +3089,7 @@ $btnUpload.Add_Click({
         $connectButton.Enabled = $true
         $remainingChanges = @($global:allLabels | Where-Object { $_.New_Label -and $_.New_Label.Trim() -ne "" -and $_.New_Label.Trim() -ne $_.Current_Label })
         $btnUpload.Enabled = ($remainingChanges.Count -gt 0)
-        if ($global:routerType -eq "Videohub" -and $global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
+        if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
     }
 })
 
@@ -3091,8 +3113,22 @@ $keepaliveTimer.Add_Tick({
             Set-StatusMessage "Videohub connection lost" "Danger"
         }
     }
+    if ($global:routerType -eq "Lightware" -and $global:routerConnected -and $global:lightwareWriter) {
+        try {
+            Send-LW3Command "GET /.ProductName" | Out-Null
+        } catch {
+            $global:routerConnected = $false
+            $keepaliveTimer.Stop()
+            $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
+            $connIndicator.StatusText = "Connection lost"
+            $connectButton.Text = "Connect"
+            $btnDownload.Enabled = $false
+            $btnUpload.Enabled = $false
+            Set-StatusMessage "Lightware connection lost" "Danger"
+        }
+    }
 })
-# keepaliveTimer is started by the connect handler after a successful Videohub connection
+# keepaliveTimer is started by the connect handler after a successful Videohub or Lightware connection
 
 # --- Form Close: clean up Videohub TCP connection -----------------------------
 
@@ -3106,6 +3142,14 @@ $form.Add_FormClosing({
         $global:videohubTcp    = $null
         $global:videohubWriter = $null
         $global:videohubReader = $null
+    }
+    if ($global:lightwareTcp -ne $null) {
+        try { $global:lightwareWriter.Dispose() } catch { }
+        try { $global:lightwareReader.Dispose() } catch { }
+        try { $global:lightwareTcp.Close() } catch { }
+        $global:lightwareTcp    = $null
+        $global:lightwareWriter = $null
+        $global:lightwareReader = $null
     }
 })
 
