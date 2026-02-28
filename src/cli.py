@@ -505,10 +505,10 @@ def _lw3_send_command(
             if text.strip() == expected_close:
                 return lines
 
-            # Strip the two-character line-type prefix (pw, pr, mO, pE, nE).
-            # Lines look like: "pw/MEDIA/NAMES/VIDEO.I1=1;Label"
-            # The prefix is always 2 chars followed by the path/value.
-            stripped = text[2:] if len(text) >= 2 else text
+            # Strip the two-character line-type prefix (pw, pr, mO, pE, nE)
+            # and the space separator that follows it.
+            # Lines look like: "pw /MEDIA/NAMES/VIDEO.I1=1;Label"
+            stripped = text[2:].lstrip() if len(text) >= 2 else text
             lines.append(stripped)
 
     return lines
@@ -648,7 +648,7 @@ def upload_lightware_label(
     type_char = "I" if port_type == "INPUT" else "O"
     # LW3 label path format: /MEDIA/NAMES/VIDEO.I1=1;Label Text
     label_text = label[:LIGHTWARE_MAX_LABEL_LENGTH]
-    path = f"/MEDIA/NAMES/VIDEO.{type_char}{port_num}={port_num};{label_text}"
+    path = f"/MEDIA/NAMES/VIDEO.{type_char}{port_num}=1;{label_text}"
     command = f"SET {path}"
 
     try:
@@ -704,7 +704,7 @@ def print_banner() -> None:
 
     console.print(Panel(
         banner,
-        subtitle="[dim]AJA KUMO | Blackmagic Videohub[/dim]",
+        subtitle="[dim]AJA KUMO | Blackmagic Videohub | Lightware MX2[/dim]",
         border_style="purple",
         padding=(0, 2),
     ))

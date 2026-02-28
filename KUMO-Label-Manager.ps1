@@ -667,54 +667,64 @@ function Connect-LightwareRouter {
     $global:lightwareReader = $reader
     $global:lightwareSendId = 0
 
-    # Drain any welcome banner (up to 500ms)
-    $drainDeadline = [DateTime]::Now.AddMilliseconds(500)
-    while ([DateTime]::Now -lt $drainDeadline -and $stream.DataAvailable) {
-        $reader.ReadLine() | Out-Null
-        Start-Sleep -Milliseconds 10
-    }
-
-    # Get product name
-    $productName = "Lightware MX2"
     try {
-        $resp = Send-LW3Command "GET /.ProductName"
-        foreach ($line in $resp) {
-            if ($line -match "\.ProductName=(.+)") {
-                $productName = $matches[1].Trim()
-            }
+        # Drain any welcome banner (up to 500ms)
+        $drainDeadline = [DateTime]::Now.AddMilliseconds(500)
+        while ([DateTime]::Now -lt $drainDeadline -and $stream.DataAvailable) {
+            $reader.ReadLine() | Out-Null
+            Start-Sleep -Milliseconds 10
         }
-    } catch { }
 
-    # Get port counts
-    $inputCount  = 0
-    $outputCount = 0
-    try {
-        $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.SourcePortCount"
-        foreach ($line in $resp) {
-            if ($line -match "SourcePortCount=(\d+)") {
-                $inputCount = [int]$matches[1]
+        # Get product name
+        $productName = "MX2"
+        try {
+            $resp = Send-LW3Command "GET /.ProductName"
+            foreach ($line in $resp) {
+                if ($line -match "\.ProductName=(.+)") {
+                    $productName = $matches[1].Trim()
+                }
             }
-        }
-    } catch { }
-    try {
-        $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.DestinationPortCount"
-        foreach ($line in $resp) {
-            if ($line -match "DestinationPortCount=(\d+)") {
-                $outputCount = [int]$matches[1]
+        } catch { }
+
+        # Get port counts
+        $inputCount  = 0
+        $outputCount = 0
+        try {
+            $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.SourcePortCount"
+            foreach ($line in $resp) {
+                if ($line -match "SourcePortCount=(\d+)") {
+                    $inputCount = [int]$matches[1]
+                }
             }
+        } catch { }
+        try {
+            $resp = Send-LW3Command "GET /MEDIA/XP/VIDEO.DestinationPortCount"
+            foreach ($line in $resp) {
+                if ($line -match "DestinationPortCount=(\d+)") {
+                    $outputCount = [int]$matches[1]
+                }
+            }
+        } catch { }
+
+        if ($inputCount -eq 0)  { $inputCount  = 8 }
+        if ($outputCount -eq 0) { $outputCount = 8 }
+
+        return @{
+            RouterType   = "Lightware"
+            RouterName   = $productName
+            RouterModel  = "Lightware $productName"
+            Firmware     = ""
+            InputCount   = $inputCount
+            OutputCount  = $outputCount
         }
-    } catch { }
-
-    if ($inputCount -eq 0)  { $inputCount  = 8 }
-    if ($outputCount -eq 0) { $outputCount = 8 }
-
-    return @{
-        RouterType   = "Lightware"
-        RouterName   = $productName
-        RouterModel  = "Lightware $productName"
-        Firmware     = ""
-        InputCount   = $inputCount
-        OutputCount  = $outputCount
+    } catch {
+        try { $writer.Dispose() } catch { }
+        try { $reader.Dispose() } catch { }
+        try { $tcp.Close() } catch { }
+        $global:lightwareTcp    = $null
+        $global:lightwareWriter = $null
+        $global:lightwareReader = $null
+        throw
     }
 }
 
@@ -737,22 +747,20 @@ function Download-LightwareLabels {
     $inputLabels  = @{}
     $outputLabels = @{}
 
-    try {
-        $resp = Send-LW3Command "GET /MEDIA/NAMES/VIDEO.*"
-        foreach ($line in $resp) {
-            # Lines look like:  pr /MEDIA/NAMES/VIDEO.I3=2;Label Text
-            if ($line -match "MEDIA/NAMES/VIDEO\.(I|O)(\d+)=\d+;(.*)") {
-                $portType = $matches[1]
-                $portNum  = [int]$matches[2]
-                $label    = $matches[3].Trim()
-                if ($portType -eq "I") {
-                    $inputLabels[$portNum] = $label
-                } else {
-                    $outputLabels[$portNum] = $label
-                }
+    $resp = Send-LW3Command "GET /MEDIA/NAMES/VIDEO.*"
+    foreach ($line in $resp) {
+        # Lines look like:  pw /MEDIA/NAMES/VIDEO.I3=2;Label Text
+        if ($line -match "MEDIA/NAMES/VIDEO\.(I|O)(\d+)=\d+;(.*)") {
+            $portType = $matches[1]
+            $portNum  = [int]$matches[2]
+            $label    = $matches[3].Trim()
+            if ($portType -eq "I") {
+                $inputLabels[$portNum] = $label
+            } else {
+                $outputLabels[$portNum] = $label
             }
         }
-    } catch { }
+    }
 
     return @{
         InputLabels  = $inputLabels
@@ -2288,7 +2296,7 @@ $btnDownload.Add_Click({
     $ip      = $ipTextBox.Text.Trim()
     $total   = $global:routerInputCount + $global:routerOutputCount
 
-    if ($global:routerType -eq "Videohub") {
+    if ($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") {
         $progressBar.Maximum = 100
     } else {
         $progressBar.Maximum = [Math]::Max($total, 1)
