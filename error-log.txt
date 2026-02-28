@@ -1,0 +1,7 @@
+=== Router Label Manager Error Log ===
+Started: 2026-02-28 02:26:14
+PowerShell: 5.1.22621.2506
+OS: Microsoft Windows NT 10.0.22631.0
+
+[2026-02-28 02:28:31] [INFO] [APP] Application closed
+[2026-02-28 02:28:31] [INFO] [APP] Clean exit with no errors
