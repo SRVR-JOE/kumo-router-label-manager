@@ -587,7 +587,7 @@ public class CrosspointMatrixPanel : Panel
 
             // Corner label
             using (SolidBrush cb = new SolidBrush(Color.FromArgb(100, DimTextColor)))
-            using (Font cf = new Font("Segoe UI", _fontSize - 1f))
+            using (Font cf = new Font("Segoe UI", Math.Max(_fontSize - 1f, 6f)))
             {
                 g.DrawString("IN \\ OUT", cf, cb, 4, _headerHeight - cf.Height - 4);
             }
@@ -1629,6 +1629,7 @@ function Get-VideohubCrosspoints {
             }
         } else {
             Start-Sleep -Milliseconds 20
+            [System.Windows.Forms.Application]::DoEvents()
         }
     }
     return $routing
@@ -2613,7 +2614,9 @@ function Set-ActiveTab {
     }
     $activeButton.BackColor = $clrAccent
     $activeButton.ForeColor = $clrText
-    $global:currentFilter = $activeButton.Tag
+    if ($activeButton.Tag -ne "MATRIX") {
+        $global:currentFilter = $activeButton.Tag
+    }
 
     if ($activeButton.Tag -eq "MATRIX") {
         $global:matrixViewActive = $true
@@ -2645,7 +2648,6 @@ function Update-MatrixPanel {
     # Populates the matrix panel with current labels and crosspoint state.
     if (-not $global:routerConnected) { return }
 
-    $inCount  = $global:routerInputCount
     $outCount = $global:routerOutputCount
 
     # Build label arrays using New_Label if set, otherwise Current_Label
