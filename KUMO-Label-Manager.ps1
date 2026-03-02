@@ -708,11 +708,16 @@ $clrAltRow        = [System.Drawing.Color]::FromArgb(45, 40, 60)
 # --- AJA KUMO REST API Helpers -----------------------------------------------
 
 function Get-KumoParam {
-    param([string]$IP, [string]$ParamId)
+    param([string]$IP, [string]$ParamId, [switch]$RawValue)
     $uri = "http://$IP/config?action=get&configid=0&paramid=$ParamId"
     try {
         $r = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
         $json = $r.Content | ConvertFrom-Json
+        if ($RawValue) {
+            # Return numeric value field directly (for crosspoint status queries)
+            if ($json.value -ne $null -and "$($json.value)" -ne "") { return "$($json.value)" }
+            return ""
+        }
         if ($json.value_name -and $json.value_name -ne "") { return $json.value_name }
         if ($json.value -and $json.value -ne "") { return $json.value }
         return ""
@@ -726,7 +731,10 @@ function Set-KumoParam {
     try {
         $r = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
         return $true
-    } catch { return $false }
+    } catch {
+        Write-ErrorLog "KUMO-SET" "Failed to set $ParamId = $Value on $IP : $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Get-DocumentsPath {
@@ -1577,7 +1585,7 @@ function Get-KumoCrosspoints {
     # Returns int array: index=output (0-based), value=input (0-based), -1=none.
     $xp = @()
     for ($i = 1; $i -le $OutputCount; $i++) {
-        $val = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Status"
+        $val = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Status" -RawValue
         if ($val -ne $null -and $val -match '^\d+$') {
             $xp += ([int]$val - 1)  # KUMO is 1-based, convert to 0-based
         } else {
@@ -2678,11 +2686,11 @@ function Update-MatrixPanel {
 }
 
 $matrixPanel.Add_CrosspointClicked({
-    param($sender, $args)
+    param($sender, $e)
     if (-not $global:routerConnected) { return }
 
-    $outIdx = $args.OutputIndex
-    $inIdx  = $args.InputIndex
+    $outIdx = $e.OutputIndex
+    $inIdx  = $e.InputIndex
     $outPort = $outIdx + 1
     $inPort  = $inIdx + 1
 
@@ -2696,6 +2704,13 @@ $matrixPanel.Add_CrosspointClicked({
     try {
         $result = Switch-RouterCrosspoint -OutputIndex0 $outIdx -InputIndex0 $inIdx
         if ($result -ne $false) {
+            # Ensure crosspoints array is large enough before updating
+            if ($global:crosspoints.Count -le $outIdx) {
+                $newXp = New-Object int[] ($global:routerOutputCount)
+                for ($xi = 0; $xi -lt $newXp.Length; $xi++) { $newXp[$xi] = -1 }
+                for ($xi = 0; $xi -lt $global:crosspoints.Count; $xi++) { $newXp[$xi] = $global:crosspoints[$xi] }
+                $global:crosspoints = $newXp
+            }
             # Update local crosspoint state
             $global:crosspoints[$outIdx] = $inIdx
             $matrixPanel.Crosspoints = [int[]]$global:crosspoints
