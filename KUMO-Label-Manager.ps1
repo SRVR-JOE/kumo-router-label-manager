@@ -1708,7 +1708,8 @@ function Switch-VideohubCrosspoint {
                 Start-Sleep -Milliseconds 20
             }
         }
-        return $true  # timeout but likely succeeded
+        Write-ErrorLog "VH-XP" "Switch command timed out waiting for ACK" "WARN"
+        return $false
     } catch {
         Write-ErrorLog "VH-XP" "Switch failed: $($_.Exception.Message)"
         return $false
@@ -2706,7 +2707,8 @@ $matrixPanel.Add_CrosspointClicked({
         if ($result -ne $false) {
             # Ensure crosspoints array is large enough before updating
             if ($global:crosspoints.Count -le $outIdx) {
-                $newXp = New-Object int[] ($global:routerOutputCount)
+                $newSize = [Math]::Max($global:routerOutputCount, ($outIdx + 1))
+                $newXp = New-Object int[] ($newSize)
                 for ($xi = 0; $xi -lt $newXp.Length; $xi++) { $newXp[$xi] = -1 }
                 for ($xi = 0; $xi -lt $global:crosspoints.Count; $xi++) { $newXp[$xi] = $global:crosspoints[$xi] }
                 $global:crosspoints = $newXp
@@ -2899,6 +2901,8 @@ $connectButton.Add_Click({
         $global:lightwareWriter = $null
         $global:lightwareReader = $null
     }
+
+    $global:crosspoints = @()
 
     try {
         $info = Connect-Router -IP $ip -RouterType $selectedType
