@@ -1719,6 +1719,11 @@ def build_parser() -> argparse.ArgumentParser:
             "  kumo-cli template labels.xlsx\n"
             "  kumo-cli template labels.xlsx -t lightware --size 16\n"
             "  kumo-cli view labels.csv\n"
+            "\n"
+            "Multi-router:\n"
+            "  kumo-cli download labels.csv --ip 192.168.100.51 --ip 192.168.100.52\n"
+            "  kumo-cli download labels.csv --ip 192.168.100.51,192.168.100.52\n"
+            "  kumo-cli status  (uses default IPs from settings)\n"
         ),
     )
     parser.add_argument(
@@ -1730,7 +1735,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Download command
     dl = subparsers.add_parser("download", help="Download labels from router")
     dl.add_argument("output", help="Output file path (.xlsx, .csv, .json)")
-    dl.add_argument("--ip", help="Router IP address")
+    dl.add_argument("--ip", action="append", dest="ips", help="Router IP address (repeatable, comma-separated)")
     dl.add_argument(
         "-t", "--router-type",
         dest="router_type",
@@ -1742,7 +1747,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Upload command
     ul = subparsers.add_parser("upload", help="Upload labels to router")
     ul.add_argument("input", help="Input file path (.xlsx, .csv, .json)")
-    ul.add_argument("--ip", help="Router IP address")
+    ul.add_argument("--ip", action="append", dest="ips", help="Router IP address (repeatable, comma-separated)")
     ul.add_argument("--test", action="store_true", help="Dry run (show changes only)")
     ul.add_argument(
         "-t", "--router-type",
@@ -1754,7 +1759,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Status command
     st = subparsers.add_parser("status", help="Show router connection status and info")
-    st.add_argument("--ip", help="Router IP address")
+    st.add_argument("--ip", action="append", dest="ips", help="Router IP address (repeatable, comma-separated)")
     st.add_argument(
         "-t", "--router-type",
         dest="router_type",
@@ -1827,8 +1832,63 @@ def resolve_router_type(requested: str, ip: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Multi-router helpers
+# ---------------------------------------------------------------------------
+
+def resolve_ips(args_ips: Optional[List[str]], settings: Settings) -> List[str]:
+    """Expand comma-separated IPs, deduplicate, fall back to settings.router_ips."""
+    if not args_ips:
+        return list(settings.router_ips)
+    expanded: List[str] = []
+    for entry in args_ips:
+        for ip in entry.split(","):
+            ip = ip.strip()
+            if ip and ip not in expanded:
+                expanded.append(ip)
+    return expanded
+
+
+def _per_router_filename(base_path: str, ip: str) -> str:
+    """Insert IP before extension: labels.csv -> labels_192.168.100.51.csv"""
+    p = Path(base_path)
+    return str(p.with_name(f"{p.stem}_{ip}{p.suffix}"))
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+
+def _run_for_router(ip: str, router_type_arg: str, command: str, args, base_settings: Settings):
+    """Run a single command against one router IP. Returns True on success."""
+    settings = Settings(router_ip=ip)
+    router_type = resolve_router_type(router_type_arg, ip)
+
+    if command == "download":
+        if router_type == "videohub":
+            return VideohubManager(settings).download_labels(args.output)
+        elif router_type == "lightware":
+            return LightwareManager(settings).download_labels(args.output)
+        else:
+            return asyncio.run(KumoManager(settings).download_labels(args.output))
+
+    elif command == "upload":
+        if router_type == "videohub":
+            return VideohubManager(settings).upload_labels(args.input, args.test)
+        elif router_type == "lightware":
+            return LightwareManager(settings).upload_labels(args.input, args.test)
+        else:
+            return asyncio.run(KumoManager(settings).upload_labels(args.input, args.test))
+
+    elif command == "status":
+        if router_type == "videohub":
+            return VideohubManager(settings).show_status()
+        elif router_type == "lightware":
+            return LightwareManager(settings).show_status()
+        else:
+            return asyncio.run(KumoManager(settings).show_status())
+
+    return False
+
 
 def main() -> None:
     """Main CLI entry point."""
@@ -1843,51 +1903,62 @@ def main() -> None:
     setup_logging(getattr(args, "verbose", False))
     print_banner()
 
-    settings_overrides = {}
-    if hasattr(args, "ip") and args.ip:
-        settings_overrides["router_ip"] = args.ip
-    settings = Settings(**settings_overrides)
+    settings = Settings()
+    ips = resolve_ips(getattr(args, "ips", None), settings)
+    multi = len(ips) > 1
 
     try:
         if args.command == "download":
-            router_type = resolve_router_type(args.router_type, settings.router_ip)
-            if router_type == "videohub":
-                manager = VideohubManager(settings)
-                success = manager.download_labels(args.output)
-            elif router_type == "lightware":
-                manager = LightwareManager(settings)
-                success = manager.download_labels(args.output)
-            else:
-                manager = KumoManager(settings)
-                success = asyncio.run(manager.download_labels(args.output))
+            all_ok = True
+            for i, ip in enumerate(ips):
+                if multi:
+                    if i > 0:
+                        console.print()
+                    console.print(f"[bold cyan]--- Router: {ip} ---[/bold cyan]")
+                    # Per-router output filename
+                    orig_output = args.output
+                    args.output = _per_router_filename(orig_output, ip)
+                ok = _run_for_router(ip, args.router_type, "download", args, settings)
+                all_ok = all_ok and ok
+                if multi:
+                    args.output = orig_output
+            success = all_ok
 
         elif args.command == "upload":
-            router_type = resolve_router_type(args.router_type, settings.router_ip)
-            if router_type == "videohub":
-                manager = VideohubManager(settings)
-                success = manager.upload_labels(args.input, args.test)
-            elif router_type == "lightware":
-                manager = LightwareManager(settings)
-                success = manager.upload_labels(args.input, args.test)
-            else:
-                manager = KumoManager(settings)
-                success = asyncio.run(manager.upload_labels(args.input, args.test))
+            all_ok = True
+            for i, ip in enumerate(ips):
+                if multi:
+                    if i > 0:
+                        console.print()
+                    console.print(f"[bold cyan]--- Router: {ip} ---[/bold cyan]")
+                    # Try per-router input file first, fall back to exact filename
+                    per_router_file = _per_router_filename(args.input, ip)
+                    orig_input = args.input
+                    if Path(per_router_file).exists():
+                        args.input = per_router_file
+                ok = _run_for_router(ip, args.router_type, "upload", args, settings)
+                all_ok = all_ok and ok
+                if multi:
+                    args.input = orig_input
+            success = all_ok
 
         elif args.command == "status":
-            router_type = resolve_router_type(args.router_type, settings.router_ip)
-            if router_type == "videohub":
-                manager = VideohubManager(settings)
-                success = manager.show_status()
-            elif router_type == "lightware":
-                manager = LightwareManager(settings)
-                success = manager.show_status()
-            else:
-                manager = KumoManager(settings)
-                success = asyncio.run(manager.show_status())
+            all_ok = True
+            for i, ip in enumerate(ips):
+                if multi:
+                    if i > 0:
+                        console.print()
+                    console.print(f"[bold cyan]--- Router: {ip} ---[/bold cyan]")
+                try:
+                    ok = _run_for_router(ip, args.router_type, "status", args, settings)
+                except Exception as e:
+                    console.print(f"[red]Error for {ip}:[/red] {e}")
+                    ok = False
+                all_ok = all_ok and ok
+            success = all_ok
 
         elif args.command == "template":
-            # For template command, skip network detection if no explicit type given.
-            # Default to "kumo" when auto — no network probe needed for template generation.
+            # No router connection needed — unchanged
             if args.router_type == "auto":
                 router_type = "kumo"
             else:

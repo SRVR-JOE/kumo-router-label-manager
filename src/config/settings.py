@@ -23,6 +23,10 @@ class Settings(BaseSettings):
         default="192.168.100.52",
         description="Default IP address of the KUMO router"
     )
+    router_ips: List[str] = Field(
+        default=["192.168.100.51", "192.168.100.52"],
+        description="Default IP addresses for multi-router operations"
+    )
     router_connection_timeout: int = Field(
         default=10,
         ge=1,
@@ -130,23 +134,12 @@ class Settings(BaseSettings):
         description="Enable debug mode"
     )
 
-    @validator("router_ip")
-    def validate_ip_address(cls, v: str) -> str:
-        """Validate IP address format.
-
-        Args:
-            v: IP address string
-
-        Returns:
-            Validated IP address
-
-        Raises:
-            ValueError: If IP address format is invalid
-        """
+    @staticmethod
+    def _validate_single_ip(v: str) -> str:
+        """Validate a single IP address format."""
         parts = v.split(".")
         if len(parts) != 4:
             raise ValueError(f"Invalid IP address format: {v}")
-
         try:
             for part in parts:
                 num = int(part)
@@ -154,8 +147,17 @@ class Settings(BaseSettings):
                     raise ValueError(f"Invalid IP address octet: {part}")
         except ValueError as e:
             raise ValueError(f"Invalid IP address format: {v}") from e
-
         return v
+
+    @validator("router_ip")
+    def validate_ip_address(cls, v: str) -> str:
+        """Validate IP address format."""
+        return cls._validate_single_ip(v)
+
+    @validator("router_ips", each_item=True)
+    def validate_router_ips_items(cls, v: str) -> str:
+        """Validate each IP in the router_ips list."""
+        return cls._validate_single_ip(v)
 
     @validator("log_level")
     def validate_log_level(cls, v: str) -> str:

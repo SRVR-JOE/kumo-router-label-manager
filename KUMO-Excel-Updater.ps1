@@ -36,6 +36,22 @@ param(
 # Resolved router type — set during auto-detection
 $script:DetectedRouterType = $RouterType
 
+$script:defaultRouterIPs = @("192.168.100.51", "192.168.100.52")
+
+function Parse-IPList {
+    param([string]$IPString)
+    if (-not $IPString) { return @($script:defaultRouterIPs) }
+    $ips = @()
+    foreach ($entry in ($IPString -split ',')) {
+        $entry = $entry.Trim()
+        if ($entry -and $entry -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+            $ips += $entry
+        }
+    }
+    if ($ips.Count -eq 0) { return @($script:defaultRouterIPs) }
+    return $ips
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SHARED UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1235,45 +1251,76 @@ Write-Host ""
 
 # Handle download labels
 if ($DownloadLabels) {
-    if (-not $KumoIP) {
-        $KumoIP = Read-Host "Enter router IP address"
-    }
-
-    if (-not $DownloadPath) {
-        $docsDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Router_Labels"
-        if (-not (Test-Path $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
-        $DownloadPath = Join-Path $docsDir "Router_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
-        Write-Host "Saving to: $DownloadPath" -ForegroundColor Magenta
-    }
-
-    # Auto-detect router type if not specified
-    if ($RouterType -eq "Auto") {
-        Write-Host "Auto-detecting router type at $KumoIP..." -ForegroundColor Yellow
-        $detected = Resolve-RouterType -IP $KumoIP
-        if (-not $detected) {
-            Write-Error "Could not detect router type at $KumoIP. Use -RouterType KUMO or -RouterType Videohub to specify manually."
-            exit 1
-        }
-        $script:DetectedRouterType = $detected
-    }
-
-    # Test connectivity
-    if (-not (Test-RouterConnectivity -IP $KumoIP)) {
-        Write-Error "Cannot connect to router at $KumoIP"
+    $ipList = Parse-IPList -IPString $KumoIP
+    if ($ipList.Count -eq 0) {
+        Write-Error "No valid IP addresses provided."
         exit 1
     }
 
-    # Download labels
-    if ($script:DetectedRouterType -eq "Videohub") {
-        $downloadedLabels = Get-VideohubCurrentLabels -IP $KumoIP -OutputPath $DownloadPath
-    } else {
-        $downloadedLabels = Get-KumoCurrentLabels -IP $KumoIP -OutputPath $DownloadPath
+    $docsDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Router_Labels"
+    if (-not (Test-Path $docsDir)) { New-Item -ItemType Directory -Path $docsDir -Force | Out-Null }
+
+    $multi = ($ipList.Count -gt 1)
+    $anySuccess = $false
+
+    foreach ($ip in $ipList) {
+        Write-Host "`n--- Router: $ip ---" -ForegroundColor Cyan
+
+        # Determine output path per router
+        if ($DownloadPath) {
+            if ($multi) {
+                $ext = [System.IO.Path]::GetExtension($DownloadPath)
+                $base = [System.IO.Path]::GetFileNameWithoutExtension($DownloadPath)
+                $dir = [System.IO.Path]::GetDirectoryName($DownloadPath)
+                if (-not $dir) { $dir = "." }
+                $outPath = Join-Path $dir "${base}_${ip}${ext}"
+            } else {
+                $outPath = $DownloadPath
+            }
+        } else {
+            if ($multi) {
+                $outPath = Join-Path $docsDir "Router_Labels_${ip}_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
+            } else {
+                $outPath = Join-Path $docsDir "Router_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
+            }
+            Write-Host "Saving to: $outPath" -ForegroundColor Magenta
+        }
+
+        # Auto-detect router type
+        $script:DetectedRouterType = $RouterType
+        if ($RouterType -eq "Auto") {
+            Write-Host "Auto-detecting router type at $ip..." -ForegroundColor Yellow
+            $detected = Resolve-RouterType -IP $ip
+            if (-not $detected) {
+                Write-Warning "Could not detect router type at $ip -- skipping."
+                continue
+            }
+            $script:DetectedRouterType = $detected
+        }
+
+        if (-not (Test-RouterConnectivity -IP $ip)) {
+            Write-Warning "Cannot connect to router at $ip -- skipping."
+            continue
+        }
+
+        if ($script:DetectedRouterType -eq "Videohub") {
+            $downloadedLabels = Get-VideohubCurrentLabels -IP $ip -OutputPath $outPath
+        } else {
+            $downloadedLabels = Get-KumoCurrentLabels -IP $ip -OutputPath $outPath
+        }
+
+        if ($downloadedLabels -and $downloadedLabels.Count -gt 0) {
+            Write-Host "  OK  Labels downloaded from $ip!" -ForegroundColor Green
+            $anySuccess = $true
+        } else {
+            Write-Warning "Failed to download labels from $ip"
+        }
     }
 
-    if ($downloadedLabels -and $downloadedLabels.Count -gt 0) {
-        Write-Host "`n  OK  Labels downloaded successfully!" -ForegroundColor Green
+    if ($anySuccess) {
+        Write-Host "`n  OK  Download complete!" -ForegroundColor Green
     } else {
-        Write-Error "Failed to download labels"
+        Write-Error "Failed to download labels from any router"
         exit 1
     }
 
@@ -1314,12 +1361,12 @@ if ($CreateTemplate) {
 
 # Validate parameters for update operations
 if (-not $DownloadLabels -and -not $CreateTemplate) {
-    if (-not $KumoIP -or -not $ExcelFile) {
-        Write-Error "KumoIP and ExcelFile parameters are required for update operations"
+    if (-not $ExcelFile) {
+        Write-Error "ExcelFile parameter is required for update operations"
         Write-Host "Usage examples:" -ForegroundColor Yellow
-        Write-Host "  Download: .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP '192.168.1.100' -DownloadPath 'labels.xlsx'" -ForegroundColor White
-        Write-Host "  Update:   .\KUMO-Excel-Updater.ps1 -KumoIP '192.168.1.100' -ExcelFile 'labels.xlsx'" -ForegroundColor White
-        Write-Host "  Videohub: .\KUMO-Excel-Updater.ps1 -RouterType Videohub -KumoIP '192.168.1.101' -ExcelFile 'labels.xlsx'" -ForegroundColor White
+        Write-Host "  Download: .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP '192.168.100.51,192.168.100.52'" -ForegroundColor White
+        Write-Host "  Update:   .\KUMO-Excel-Updater.ps1 -KumoIP '192.168.100.51' -ExcelFile 'labels.xlsx'" -ForegroundColor White
+        Write-Host "  Multi:    .\KUMO-Excel-Updater.ps1 -KumoIP '192.168.100.51,192.168.100.52' -ExcelFile 'labels.xlsx'" -ForegroundColor White
         Write-Host "  Template: .\KUMO-Excel-Updater.ps1 -CreateTemplate" -ForegroundColor White
         exit 1
     }
@@ -1330,26 +1377,7 @@ if ($ExcelFile -and -not (Test-Path $ExcelFile)) {
     exit 1
 }
 
-# Auto-detect router type if needed
-if ($RouterType -eq "Auto") {
-    Write-Host "Auto-detecting router type at $KumoIP..." -ForegroundColor Yellow
-    $detected = Resolve-RouterType -IP $KumoIP
-    if (-not $detected) {
-        Write-Error "Could not detect router type at $KumoIP. Use -RouterType KUMO or -RouterType Videohub to specify manually."
-        exit 1
-    }
-    $script:DetectedRouterType = $detected
-}
-
-Write-Host "Router type: $script:DetectedRouterType" -ForegroundColor Cyan
-
-# Test connectivity
-if (-not (Test-RouterConnectivity -IP $KumoIP)) {
-    Write-Error "Cannot connect to router at $KumoIP"
-    exit 1
-}
-
-# Load label data
+# Load label data (once, shared across routers)
 $labelData = Get-ExcelLabelData -FilePath $ExcelFile -WorksheetName $WorksheetName
 if (-not $labelData -or $labelData.Count -eq 0) {
     Write-Warning "No label updates found in file"
@@ -1365,25 +1393,52 @@ if ($TestOnly) {
     exit 0
 }
 
-# Confirm update
-$confirm = Read-Host "Update $($labelData.Count) labels on $script:DetectedRouterType at $KumoIP? (y/N)"
+$ipList = Parse-IPList -IPString $KumoIP
+if ($ipList.Count -eq 0) {
+    Write-Error "No valid IP addresses provided."
+    exit 1
+}
+
+$confirm = Read-Host "Update $($labelData.Count) labels on $($ipList.Count) router(s) at $($ipList -join ', ')? (y/N)"
 if ($confirm -ne 'y' -and $confirm -ne 'Y') {
     Write-Host "Cancelled by user" -ForegroundColor Yellow
     exit 0
 }
 
-# Execute update for the appropriate router type
-if ($script:DetectedRouterType -eq "Videohub") {
-    Update-VideohubLabels -IP $KumoIP -LabelData $labelData
-} else {
-    # KUMO: Try REST API first, fallback to Telnet
-    Write-Host "Attempting REST API update..." -ForegroundColor Yellow
-    try {
-        Update-KumoLabelsREST -IP $KumoIP -LabelData $labelData
-    } catch {
-        Write-Host "REST API failed, trying Telnet..." -ForegroundColor Yellow
-        Update-KumoLabelsTelnet -IP $KumoIP -LabelData $labelData
+foreach ($ip in $ipList) {
+    Write-Host "`n--- Router: $ip ---" -ForegroundColor Cyan
+
+    # Auto-detect router type
+    $script:DetectedRouterType = $RouterType
+    if ($RouterType -eq "Auto") {
+        Write-Host "Auto-detecting router type at $ip..." -ForegroundColor Yellow
+        $detected = Resolve-RouterType -IP $ip
+        if (-not $detected) {
+            Write-Warning "Could not detect router type at $ip -- skipping."
+            continue
+        }
+        $script:DetectedRouterType = $detected
     }
+
+    Write-Host "Router type: $script:DetectedRouterType" -ForegroundColor Cyan
+
+    if (-not (Test-RouterConnectivity -IP $ip)) {
+        Write-Warning "Cannot connect to router at $ip -- skipping."
+        continue
+    }
+
+    if ($script:DetectedRouterType -eq "Videohub") {
+        Update-VideohubLabels -IP $ip -LabelData $labelData
+    } else {
+        Write-Host "Attempting REST API update..." -ForegroundColor Yellow
+        try {
+            Update-KumoLabelsREST -IP $ip -LabelData $labelData
+        } catch {
+            Write-Host "REST API failed, trying Telnet..." -ForegroundColor Yellow
+            Update-KumoLabelsTelnet -IP $ip -LabelData $labelData
+        }
+    }
+    Write-Host "  OK  Labels updated on $ip!" -ForegroundColor Green
 }
 
 Write-Host "`nRouter label update complete!" -ForegroundColor Green

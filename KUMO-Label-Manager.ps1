@@ -765,7 +765,9 @@ $global:redoStack         = [System.Collections.Generic.Stack[hashtable]]::new()
 $global:cellEditOldValue  = ""
 $global:cellEditColumn    = "New_Label"
 
-# New globals for multi-router support
+# Multi-router support
+$global:routers           = @{}      # hashtable keyed by IP, each value holds per-router state
+$script:defaultRouterIPs  = @("192.168.100.51", "192.168.100.52")  # tried when textbox is empty
 $global:routerType        = ""       # "KUMO" or "Videohub"
 $global:maxLabelLength    = 50       # 50 for KUMO, 255 for Videohub
 $global:videohubTcp       = $null    # persistent TCP connection for Videohub
@@ -779,6 +781,55 @@ $global:lightwareSendId   = 0
 # Crosspoint routing state
 $global:crosspoints       = @()      # int array: index=output, value=routed input (0-based, -1=none)
 $global:matrixViewActive  = $false    # true when Matrix tab is active
+
+# --- Multi-Router State Helpers -----------------------------------------------
+
+function Set-ActiveRouter {
+    param([string]$IP)
+    # Restores per-router state from the $global:routers hashtable into globals
+    # so all existing functions work untouched.
+    if (-not $global:routers.ContainsKey($IP)) { return }
+    $r = $global:routers[$IP]
+    $global:routerType        = $r.RouterType
+    $global:routerName        = $r.RouterName
+    $global:routerModel       = $r.RouterModel
+    $global:routerFirmware    = $r.Firmware
+    $global:routerInputCount  = $r.InputCount
+    $global:routerOutputCount = $r.OutputCount
+    $global:maxLabelLength    = $r.MaxLabelLength
+    $global:videohubTcp       = $r.VideohubTcp
+    $global:videohubWriter    = $r.VideohubWriter
+    $global:videohubReader    = $r.VideohubReader
+    $global:lightwareTcp      = $r.LightwareTcp
+    $global:lightwareWriter   = $r.LightwareWriter
+    $global:lightwareReader   = $r.LightwareReader
+    $global:lightwareSendId   = $r.LightwareSendId
+    $global:crosspoints       = $r.Crosspoints
+}
+
+function Save-ActiveRouter {
+    param([string]$IP)
+    # Saves current globals back to the $global:routers hashtable.
+    if (-not $global:routers.ContainsKey($IP)) {
+        $global:routers[$IP] = @{}
+    }
+    $r = $global:routers[$IP]
+    $r.RouterType        = $global:routerType
+    $r.RouterName        = $global:routerName
+    $r.RouterModel       = $global:routerModel
+    $r.Firmware          = $global:routerFirmware
+    $r.InputCount        = $global:routerInputCount
+    $r.OutputCount       = $global:routerOutputCount
+    $r.MaxLabelLength    = $global:maxLabelLength
+    $r.VideohubTcp       = $global:videohubTcp
+    $r.VideohubWriter    = $global:videohubWriter
+    $r.VideohubReader    = $global:videohubReader
+    $r.LightwareTcp      = $global:lightwareTcp
+    $r.LightwareWriter   = $global:lightwareWriter
+    $r.LightwareReader   = $global:lightwareReader
+    $r.LightwareSendId   = $global:lightwareSendId
+    $r.Crosspoints       = $global:crosspoints
+}
 
 # --- Router Adapter Functions -------------------------------------------------
 
@@ -1466,14 +1517,14 @@ function Download-RouterLabels {
                 $zeroIdx = $i - 1
                 $label = if ($inputLabels.ContainsKey($zeroIdx)) { $inputLabels[$zeroIdx] } else { "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
+                    Port = $i; Type = "INPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
                 }) | Out-Null
             }
             for ($i = 1; $i -le $outputCount; $i++) {
                 $zeroIdx = $i - 1
                 $label = if ($outputLabels.ContainsKey($zeroIdx)) { $outputLabels[$zeroIdx] } else { "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
+                    Port = $i; Type = "OUTPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
@@ -1501,13 +1552,13 @@ function Download-RouterLabels {
             for ($i = 1; $i -le $inputCount; $i++) {
                 $label = if ($inputLabels.ContainsKey($i)) { $inputLabels[$i] } else { "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
+                    Port = $i; Type = "INPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
                 }) | Out-Null
             }
             for ($i = 1; $i -le $outputCount; $i++) {
                 $label = if ($outputLabels.ContainsKey($i)) { $outputLabels[$i] } else { "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
+                    Port = $i; Type = "OUTPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
@@ -1515,6 +1566,7 @@ function Download-RouterLabels {
             # KUMO
             $downloaded = Download-KumoLabels -IP $IP -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount -ProgressCallback $ProgressCallback
             foreach ($lbl in $downloaded) {
+                $lbl | Add-Member -NotePropertyName Router -NotePropertyValue $IP -Force
                 $global:allLabels.Add($lbl) | Out-Null
             }
             if ($global:allLabels.Count -eq 0) {
@@ -1940,7 +1992,7 @@ $connSectionPanel.Controls.Add($cboRouterType)
 
 # IP label
 $lblIp = New-Object System.Windows.Forms.Label
-$lblIp.Text = "Router IP"
+$lblIp.Text = "Router IP(s)"
 $lblIp.Font = New-Object System.Drawing.Font("Segoe UI", 8)
 $lblIp.ForeColor = $clrDimText
 $lblIp.Location = New-Object System.Drawing.Point(14, 74)
@@ -1949,7 +2001,7 @@ $connSectionPanel.Controls.Add($lblIp)
 
 # IP textbox
 $ipTextBox = New-Object System.Windows.Forms.TextBox
-$ipTextBox.Text = "192.168.1.100"
+$ipTextBox.Text = ""
 $ipTextBox.Location = New-Object System.Drawing.Point(14, 92)
 $ipTextBox.Size = New-Object System.Drawing.Size(172, 24)
 $ipTextBox.BackColor = $clrField
@@ -2373,8 +2425,16 @@ $colCharCount.FillWeight = 6
 $colCharCount.MinimumWidth = 40
 $colCharCount.DefaultCellStyle.Alignment = "MiddleCenter"
 
+$colRouter = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+$colRouter.Name = "Router"
+$colRouter.HeaderText = "Router"
+$colRouter.ReadOnly = $true
+$colRouter.FillWeight = 12
+$colRouter.MinimumWidth = 80
+
 $dataGrid.Columns.Add($colPort)      | Out-Null
 $dataGrid.Columns.Add($colType)      | Out-Null
+$dataGrid.Columns.Add($colRouter)    | Out-Null
 $dataGrid.Columns.Add($colCurrent)   | Out-Null
 $dataGrid.Columns.Add($colCurrentL2) | Out-Null
 $dataGrid.Columns.Add($colNew)       | Out-Null
@@ -2388,7 +2448,7 @@ $dataGrid.Add_CellPainting({
     if ($e.RowIndex -lt 0) { return }
 
     # -- Type column: colored badge --
-    if ($e.ColumnIndex -eq 1) {
+    if ($sender.Columns[$e.ColumnIndex].Name -eq "Type") {
         $e.PaintBackground($e.ClipBounds, $true)
         $val = if ($e.Value) { $e.Value.ToString() } else { "" }
 
@@ -2453,7 +2513,7 @@ $dataGrid.Add_CellPainting({
     }
 
     # -- Status column: colored dot --
-    if ($e.ColumnIndex -eq 6) {
+    if ($sender.Columns[$e.ColumnIndex].Name -eq "Status") {
         $e.PaintBackground($e.ClipBounds, $true)
         $val = if ($e.Value) { $e.Value.ToString() } else { "" }
 
@@ -2504,16 +2564,17 @@ $ctxCopyCurrentToNew.Add_Click({
     foreach ($row in $dataGrid.SelectedRows) {
         $port = $row.Cells["Port"].Value
         $type = $row.Cells["Type"].Value
+        $router = $row.Cells["Router"].Value
         $currentVal = $row.Cells["Current_Label"].Value
         $currentVal2 = $row.Cells["Current_Label_2"].Value
         foreach ($lbl in $global:allLabels) {
-            if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+            if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
                 $newVal = if ($currentVal) { $currentVal.ToString() } else { "" }
-                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label"; OldValue=$lbl.New_Label; NewValue=$newVal }
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Label"; OldValue=$lbl.New_Label; NewValue=$newVal }
                 $lbl.New_Label = $newVal
                 if ($colCurrentL2.Visible) {
                     $newVal2 = if ($currentVal2) { $currentVal2.ToString() } else { "" }
-                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue=$newVal2 }
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue=$newVal2 }
                     $lbl.New_Label_2 = $newVal2
                 }
                 break
@@ -2527,12 +2588,13 @@ $ctxClearNew.Add_Click({
     foreach ($row in $dataGrid.SelectedRows) {
         $port = $row.Cells["Port"].Value
         $type = $row.Cells["Type"].Value
+        $router = $row.Cells["Router"].Value
         foreach ($lbl in $global:allLabels) {
-            if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
-                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label"; OldValue=$lbl.New_Label; NewValue="" }
+            if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Label"; OldValue=$lbl.New_Label; NewValue="" }
                 $lbl.New_Label = ""
                 if ($colCurrentL2.Visible) {
-                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue="" }
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue="" }
                     $lbl.New_Label_2 = ""
                 }
                 break
@@ -2686,7 +2748,8 @@ function Populate-Grid {
             $charCount = "$len/$maxLen"
         }
 
-        $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $lbl.Current_Label, $curLabel2, $newLabel, $newLabel2, $status, $charCount)
+        $routerVal = if ($lbl.Router) { $lbl.Router } else { "" }
+        $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $routerVal, $lbl.Current_Label, $curLabel2, $newLabel, $newLabel2, $status, $charCount)
 
         if ($newLabel -and $newLabel.Trim().Length -gt $maxLen) {
             $dataGrid.Rows[$rowIndex].Cells["Chars"].Style.ForeColor     = $clrDanger
@@ -2732,11 +2795,12 @@ function Sync-GridToData {
     foreach ($row in $dataGrid.Rows) {
         $port    = $row.Cells["Port"].Value
         $type    = $row.Cells["Type"].Value
+        $router  = $row.Cells["Router"].Value
         $newVal  = $row.Cells["New_Label"].Value
         $newVal2 = $row.Cells["New_Label_2"].Value
 
         foreach ($lbl in $global:allLabels) {
-            if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+            if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
                 $lbl.New_Label   = if ($newVal)  { $newVal.ToString() }  else { "" }
                 $lbl.New_Label_2 = if ($newVal2) { $newVal2.ToString() } else { "" }
                 break
@@ -2746,16 +2810,16 @@ function Sync-GridToData {
 }
 
 function Create-DefaultLabels {
-    param([int]$InputCount = 32, [int]$OutputCount = 32)
+    param([int]$InputCount = 32, [int]$OutputCount = 32, [string]$Router = "")
     $global:allLabels.Clear()
     for ($i = 1; $i -le $InputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = "Input $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
+            Port = $i; Type = "INPUT"; Router = $Router; Current_Label = "Input $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
         }) | Out-Null
     }
     for ($i = 1; $i -le $OutputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "OUTPUT"; Current_Label = "Output $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
+            Port = $i; Type = "OUTPUT"; Router = $Router; Current_Label = "Output $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
         }) | Out-Null
     }
 }
@@ -2914,8 +2978,8 @@ $form.Add_KeyDown({
             $cmd = $global:redoStack.Pop()
             $field = if ($cmd.Field) { $cmd.Field } else { "New_Label" }
             foreach ($lbl in $global:allLabels) {
-                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type) {
-                    $global:undoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; Field=$field; OldValue=$lbl.$field; NewValue=$cmd.NewValue })
+                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type -and $lbl.Router -eq $cmd.Router) {
+                    $global:undoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field=$field; OldValue=$lbl.$field; NewValue=$cmd.NewValue })
                     $lbl.$field = $cmd.NewValue
                     break
                 }
@@ -2932,8 +2996,8 @@ $form.Add_KeyDown({
             $cmd = $global:redoStack.Pop()
             $field = if ($cmd.Field) { $cmd.Field } else { "New_Label" }
             foreach ($lbl in $global:allLabels) {
-                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type) {
-                    $global:undoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; Field=$field; OldValue=$lbl.$field; NewValue=$cmd.NewValue })
+                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type -and $lbl.Router -eq $cmd.Router) {
+                    $global:undoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field=$field; OldValue=$lbl.$field; NewValue=$cmd.NewValue })
                     $lbl.$field = $cmd.NewValue
                     break
                 }
@@ -2950,8 +3014,8 @@ $form.Add_KeyDown({
             $cmd = $global:undoStack.Pop()
             $field = if ($cmd.Field) { $cmd.Field } else { "New_Label" }
             foreach ($lbl in $global:allLabels) {
-                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type) {
-                    $global:redoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; Field=$field; OldValue=$lbl.$field; NewValue=$cmd.NewValue })
+                if ($lbl.Port -eq $cmd.Port -and $lbl.Type -eq $cmd.Type -and $lbl.Router -eq $cmd.Router) {
+                    $global:redoStack.Push(@{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field=$field; OldValue=$lbl.$field; NewValue=$cmd.NewValue })
                     $lbl.$field = $cmd.OldValue
                     break
                 }
@@ -3009,14 +3073,15 @@ $form.Add_KeyDown({
         foreach ($row in $dataGrid.SelectedRows) {
             $port = $row.Cells["Port"].Value
             $type = $row.Cells["Type"].Value
+            $router = $row.Cells["Router"].Value
             foreach ($lbl in $global:allLabels) {
-                if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+                if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
                     if ($lbl.New_Label) {
-                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label"; OldValue=$lbl.New_Label; NewValue="" }
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Label"; OldValue=$lbl.New_Label; NewValue="" }
                         $lbl.New_Label = ""
                     }
                     if ($colCurrentL2.Visible -and $lbl.New_Label_2) {
-                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue="" }
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue="" }
                         $lbl.New_Label_2 = ""
                     }
                     break
@@ -3033,14 +3098,25 @@ $form.Add_KeyDown({
 # --- Connection ----------------------------------------------------------------
 
 $connectButton.Add_Click({
-    $ip = $ipTextBox.Text.Trim()
-    if (-not $ip) { return }
-    $parsedIP = $null
-    if (-not [System.Net.IPAddress]::TryParse($ip, [ref]$parsedIP)) {
-        [System.Windows.Forms.MessageBox]::Show("Please enter a valid IP address.", "Invalid IP", "OK", "Warning")
-        return
+    $rawText = $ipTextBox.Text.Trim()
+
+    # Parse comma-separated IPs, fall back to defaults when empty
+    $ipList = @()
+    if ($rawText) {
+        foreach ($entry in ($rawText -split ',')) {
+            $entry = $entry.Trim()
+            $parsedIP = $null
+            if ([System.Net.IPAddress]::TryParse($entry, [ref]$parsedIP)) {
+                $ipList += $parsedIP.ToString()
+            }
+        }
+        if ($ipList.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show("Please enter valid IP addresses (comma-separated), or leave empty to scan defaults.", "Invalid IP", "OK", "Warning")
+            return
+        }
+    } else {
+        $ipList = @($script:defaultRouterIPs)
     }
-    $ip = $parsedIP.ToString()
 
     $connectButton.Enabled = $false
 
@@ -3057,92 +3133,130 @@ $connectButton.Add_Click({
     $form.Refresh()
 
     if ($keepaliveTimer -ne $null) { $keepaliveTimer.Stop() }
-    if ($global:videohubTcp -ne $null) {
-        try { $global:videohubWriter.Dispose() } catch { }
-        try { $global:videohubReader.Dispose() } catch { }
-        try { $global:videohubTcp.Close() } catch { }
-        $global:videohubTcp    = $null
-        $global:videohubWriter = $null
-        $global:videohubReader = $null
-    }
-    if ($global:lightwareTcp -ne $null) {
-        try { $global:lightwareWriter.Dispose() } catch { }
-        try { $global:lightwareReader.Dispose() } catch { }
-        try { $global:lightwareTcp.Close() } catch { }
-        $global:lightwareTcp    = $null
-        $global:lightwareWriter = $null
-        $global:lightwareReader = $null
-    }
 
+    # Close existing connections for all routers
+    foreach ($rKey in @($global:routers.Keys)) {
+        $r = $global:routers[$rKey]
+        if ($r.VideohubTcp -ne $null) {
+            try { $r.VideohubWriter.Dispose() } catch { }
+            try { $r.VideohubReader.Dispose() } catch { }
+            try { $r.VideohubTcp.Close() } catch { }
+        }
+        if ($r.LightwareTcp -ne $null) {
+            try { $r.LightwareWriter.Dispose() } catch { }
+            try { $r.LightwareReader.Dispose() } catch { }
+            try { $r.LightwareTcp.Close() } catch { }
+        }
+    }
+    $global:routers = @{}
+    $global:videohubTcp = $null; $global:videohubWriter = $null; $global:videohubReader = $null
+    $global:lightwareTcp = $null; $global:lightwareWriter = $null; $global:lightwareReader = $null
     $global:crosspoints = @()
 
-    try {
-        $info = Connect-Router -IP $ip -RouterType $selectedType
+    $connectedCount = 0
+    $failedIPs = @()
+    $lastInfo = $null
+    $hasKumo = $false
+    $totalInputs = 0; $totalOutputs = 0
+    $modelNames = @()
 
-        $global:routerConnected     = $true
-        $global:routerType        = $info.RouterType
-        $global:routerName        = $info.RouterName
-        $global:routerModel       = $info.RouterModel
-        $global:routerFirmware    = $info.Firmware
-        $global:routerInputCount  = $info.InputCount
-        $global:routerOutputCount = $info.OutputCount
-        $global:maxLabelLength    = if ($info.RouterType -eq "Videohub" -or $info.RouterType -eq "Lightware") { 255 } else { 50 }
+    foreach ($ip in $ipList) {
+        Set-StatusMessage "Connecting to $ip..." "Dim"
+        $form.Refresh()
+        try {
+            $info = Connect-Router -IP $ip -RouterType $selectedType
 
-        $fwText = if ($global:routerFirmware) { " | $($global:routerFirmware)" } else { "" }
+            $global:routerConnected     = $true
+            $global:routerType        = $info.RouterType
+            $global:routerName        = $info.RouterName
+            $global:routerModel       = $info.RouterModel
+            $global:routerFirmware    = $info.Firmware
+            $global:routerInputCount  = $info.InputCount
+            $global:routerOutputCount = $info.OutputCount
+            $global:maxLabelLength    = if ($info.RouterType -eq "Videohub" -or $info.RouterType -eq "Lightware") { 255 } else { 50 }
 
+            Save-ActiveRouter -IP $ip
+            $connectedCount++
+            $lastInfo = $info
+            if ($info.RouterType -eq "KUMO") { $hasKumo = $true }
+            $totalInputs  += $info.InputCount
+            $totalOutputs += $info.OutputCount
+            $modelNames   += "$($info.RouterModel) ($ip)"
+        } catch {
+            Write-ErrorLog "CONNECT" "Connection to $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+            $failedIPs += $ip
+        }
+    }
+
+    if ($connectedCount -gt 0) {
         $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Connected
-        $connIndicator.StatusText = "Connected"
+        $connIndicator.StatusText = "$connectedCount router(s) connected"
         $connIndicator.ForeColor  = $clrSuccess
 
-        # Show Label 2 columns for KUMO routers (they support 2-line labels)
-        $isKumo = ($info.RouterType -eq "KUMO")
-        $colCurrentL2.Visible = $isKumo
-        $colNewL2.Visible     = $isKumo
+        # Show Label 2 columns if any router is KUMO
+        $colCurrentL2.Visible = $hasKumo
+        $colNewL2.Visible     = $hasKumo
 
         $connectButton.Text  = "Reconnect"
         $btnDownload.Enabled = $true
 
-        # Update router info card
-        $lblRouterModel.Text = $global:routerModel
-        $lblRouterPorts.Text = "$($info.InputCount) inputs / $($info.OutputCount) outputs"
-        $lblRouterFw.Text    = if ($global:routerFirmware) { $global:routerFirmware } else { "" }
-        $lblRouterName.Text  = "`"$($global:routerName)`""
+        # Update router info card with combined info
+        $lblRouterModel.Text = ($modelNames -join ", ")
+        $lblRouterPorts.Text = "$totalInputs inputs / $totalOutputs outputs"
+        $lblRouterFw.Text    = if ($lastInfo.Firmware) { $lastInfo.Firmware } else { "" }
+        $lblRouterName.Text  = if ($connectedCount -eq 1) { "`"$($lastInfo.RouterName)`"" } else { "$connectedCount routers" }
         $routerInfoWrapper.Visible = $true
         $routerInfoCard.Visible    = $true
         Update-SidebarLayout
 
-        $lblContentTitle.Text = "$($global:routerModel)  `"$($global:routerName)`""
-        $form.Text = "Router Label Manager - $($global:routerModel) `"$($global:routerName)`""
+        if ($connectedCount -eq 1) {
+            $lblContentTitle.Text = "$($lastInfo.RouterModel)  `"$($lastInfo.RouterName)`""
+            $form.Text = "Router Label Manager - $($lastInfo.RouterModel) `"$($lastInfo.RouterName)`""
+        } else {
+            $lblContentTitle.Text = "$connectedCount routers connected"
+            $form.Text = "Router Label Manager - $connectedCount routers"
+        }
 
         Update-ChangeCount
-        Set-StatusMessage "Connected to $($global:routerModel) at $ip$fwText" "Success"
 
-        # Pre-fetch crosspoint state for matrix view (skip if already loaded from Videohub state dump)
-        if ($global:crosspoints.Count -eq 0) {
-            try {
-                $global:crosspoints = Get-RouterCrosspoints
-            } catch {
-                Write-ErrorLog "CONNECT" "Crosspoint query failed (non-fatal): $($_.Exception.Message)" "WARN"
-                $global:crosspoints = @()
+        $statusMsg = "Connected to $connectedCount router(s)"
+        if ($failedIPs.Count -gt 0) {
+            $statusMsg += " | Failed: $($failedIPs -join ', ')"
+            Set-StatusMessage $statusMsg "Warning"
+        } else {
+            Set-StatusMessage $statusMsg "Success"
+        }
+
+        # Pre-fetch crosspoint state from the last connected router
+        $lastConnIP = ($global:routers.Keys | Select-Object -Last 1)
+        if ($lastConnIP) {
+            Set-ActiveRouter -IP $lastConnIP
+            if ($global:crosspoints.Count -eq 0) {
+                try {
+                    $global:crosspoints = Get-RouterCrosspoints
+                    Save-ActiveRouter -IP $lastConnIP
+                } catch {
+                    Write-ErrorLog "CONNECT" "Crosspoint query failed (non-fatal): $($_.Exception.Message)" "WARN"
+                    $global:crosspoints = @()
+                }
             }
         }
 
         $connectButton.Enabled = $true
-        if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
+        if ($keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
 
-    } catch {
-        Write-ErrorLog "CONNECT" "Connection to $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+    } else {
         $global:routerConnected = $false
         $connIndicator.State      = [ConnectionIndicator+ConnectionState]::Disconnected
         $connIndicator.StatusText = "Connection failed"
         $connIndicator.ForeColor  = $clrDimText
         $btnDownload.Enabled = $false
         $progressBar.Value = 0
-        Set-StatusMessage "Connection failed" "Danger"
+        Set-StatusMessage "Connection failed for all IPs" "Danger"
         $connectButton.Enabled = $true
 
         [System.Windows.Forms.MessageBox]::Show(
-            "Cannot connect to router at $ip`n`nCheck that:`n- The IP address is correct`n- The router is powered on`n- You're on the same network`n- Port 6107 (Lightware), 80 (KUMO) or 9990 (Videohub) is accessible`n`nError: $($_.Exception.Message)",
+            "Cannot connect to any router.`n`nFailed IPs: $($failedIPs -join ', ')`n`nCheck that:`n- The IP addresses are correct`n- The routers are powered on`n- You're on the same network",
             "Connection Failed", "OK", "Error"
         )
     }
@@ -3151,16 +3265,16 @@ $connectButton.Add_Click({
 # --- Download Labels ----------------------------------------------------------
 
 $btnDownload.Add_Click({
-    $ip      = $ipTextBox.Text.Trim()
-    $total   = $global:routerInputCount + $global:routerOutputCount
-
-    if ($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") {
-        $progressBar.Maximum = 100
-    } else {
-        $progressBar.Maximum = [Math]::Max($total, 1)
+    $global:allLabels.Clear()
+    $connectedIPs = @($global:routers.Keys)
+    if ($connectedIPs.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Please connect to a router first.", "Not Connected", "OK", "Warning")
+        return
     }
+
+    $progressBar.Maximum = 100
     $progressBar.Value = 0
-    Set-StatusMessage "Downloading from $($global:routerModel)..." "Dim"
+    Set-StatusMessage "Downloading labels..." "Dim"
     $form.Refresh()
 
     $dlProgressCallback = {
@@ -3169,45 +3283,62 @@ $btnDownload.Add_Click({
         $form.Refresh()
     }
 
-    try {
-        $count = Download-RouterLabels -IP $ip -ProgressCallback $dlProgressCallback
+    $totalCount = 0
+    $failedIPs = @()
 
-        if ($count -eq 0) {
-            Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
-        }
+    foreach ($ip in $connectedIPs) {
+        Set-ActiveRouter -IP $ip
+        Set-StatusMessage "Downloading from $($global:routerModel) at $ip..." "Dim"
+        $form.Refresh()
 
-        $progressBar.Value = $progressBar.Maximum
-
-        # Auto-save
         try {
-            $docsPath     = Get-DocumentsPath
-            $safeName     = $global:routerName -replace '[^\w\-]', '_'
-            $autoSavePath = Join-Path $docsPath "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
-            $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
-                Export-Csv -Path $autoSavePath -NoTypeInformation
-            Set-StatusMessage "Downloaded $($global:allLabels.Count) labels - saved to Documents\KUMO_Labels" "Success"
+            $count = Download-RouterLabels -IP $ip -ProgressCallback $dlProgressCallback
+            Save-ActiveRouter -IP $ip
+            $totalCount += $count
         } catch {
-            Set-StatusMessage "Downloaded $($global:allLabels.Count) labels (auto-save failed)" "Warning"
+            Write-ErrorLog "DOWNLOAD" "Download from $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+            $failedIPs += $ip
         }
+    }
 
-        Populate-Grid
+    if ($totalCount -eq 0 -and $connectedIPs.Count -eq 1) {
+        Set-ActiveRouter -IP $connectedIPs[0]
+        Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount -Router $connectedIPs[0]
+    }
 
-        # Refresh crosspoint state
+    $progressBar.Value = $progressBar.Maximum
+
+    # Auto-save
+    try {
+        $docsPath     = Get-DocumentsPath
+        $autoSavePath = Join-Path $docsPath "Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
+        $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+            Export-Csv -Path $autoSavePath -NoTypeInformation
+        $statusMsg = "Downloaded $($global:allLabels.Count) labels from $($connectedIPs.Count) router(s) - saved to Documents\KUMO_Labels"
+    } catch {
+        $statusMsg = "Downloaded $($global:allLabels.Count) labels (auto-save failed)"
+    }
+
+    if ($failedIPs.Count -gt 0) {
+        $statusMsg += " | Failed: $($failedIPs -join ', ')"
+        Set-StatusMessage $statusMsg "Warning"
+    } else {
+        Set-StatusMessage $statusMsg "Success"
+    }
+
+    Populate-Grid
+
+    # Refresh crosspoint state from last router
+    $lastIP = $connectedIPs | Select-Object -Last 1
+    if ($lastIP) {
+        Set-ActiveRouter -IP $lastIP
         try {
             $global:crosspoints = Get-RouterCrosspoints
+            Save-ActiveRouter -IP $lastIP
             if ($global:matrixViewActive) { Update-MatrixPanel }
         } catch {
             Write-ErrorLog "DOWNLOAD" "Crosspoint refresh failed (non-fatal): $($_.Exception.Message)" "WARN"
         }
-
-    } catch {
-        Write-ErrorLog "DOWNLOAD" "Download from $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
-        $progressBar.Value = 0
-        Set-StatusMessage "Download failed: $($_.Exception.Message)" "Danger"
-        [System.Windows.Forms.MessageBox]::Show(
-            "Error downloading labels: $($_.Exception.Message)",
-            "Download Error", "OK", "Error"
-        )
     }
 })
 
@@ -3275,9 +3406,11 @@ $btnOpenFile.Add_Click({
                     $cl  = if ($row.Current_Label)  { $row.Current_Label.ToString() }  else { "" }
                     $cl2 = if ($row.Current_Label_2) { $row.Current_Label_2.ToString() } else { "" }
                     $nl2 = if ($row.New_Label_2)     { $row.New_Label_2.ToString() }     else { "" }
+                    $rtr = if ($row.Router) { $row.Router.ToString() } else { "" }
                     $global:allLabels.Add([PSCustomObject]@{
                         Port            = [int]$row.Port
                         Type            = $row.Type.ToString().ToUpper().Trim()
+                        Router          = $rtr
                         Current_Label   = $cl
                         Current_Label_2 = $cl2
                         New_Label       = $nl
@@ -3326,17 +3459,17 @@ $btnSaveFile.Add_Click({
                         "Lightware" { "Lightware_Labels" }
                         default     { "KUMO_Labels" }
                     }
-                    $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+                    $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                         Export-Excel -Path $dlg.FileName -WorksheetName $saveWsName -AutoSize -TableStyle Medium6 -FreezeTopRow
                 } else {
                     $csvPath = $dlg.FileName -replace "\.xlsx$", ".csv"
-                    $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+                    $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                         Export-Csv -Path $csvPath -NoTypeInformation
                     $dlg.FileName = $csvPath
                     Set-StatusMessage "ImportExcel module not found -- saved as CSV instead" "Warning"
                 }
             } else {
-                $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+                $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                     Export-Csv -Path $dlg.FileName -NoTypeInformation
             }
             Set-StatusMessage "Saved to $([System.IO.Path]::GetFileName($dlg.FileName))" "Success"
@@ -3446,7 +3579,7 @@ $btnFindReplace.Add_Click({
                         $result = $result.Substring(0, $global:maxLabelLength)
                     }
                     $oldVal = $lbl.New_Label
-                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$oldVal; NewValue=$result }
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$oldVal; NewValue=$result }
                     $lbl.New_Label = $result
                     $count++
                 }
@@ -3459,7 +3592,7 @@ $btnFindReplace.Add_Click({
                             $result = $result.Substring(0, $global:maxLabelLength)
                         }
                         $oldVal = $lbl.New_Label
-                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$oldVal; NewValue=$result }
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$oldVal; NewValue=$result }
                         $lbl.New_Label = $result
                         $count++
                     }
@@ -3563,13 +3696,14 @@ $btnAutoNumber.Add_Click({
             foreach ($row in $sortedRows) {
                 $port = $row.Cells["Port"].Value
                 $type = $row.Cells["Type"].Value
+                $router = $row.Cells["Router"].Value
                 foreach ($lbl in $global:allLabels) {
-                    if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+                    if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
                         $label = "$prefix$num"
                         if ($label.Length -gt $global:maxLabelLength) {
                             $label = $label.Substring(0, $global:maxLabelLength)
                         }
-                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$label }
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
                         $lbl.New_Label = $label
                         $num++
                         break
@@ -3584,7 +3718,7 @@ $btnAutoNumber.Add_Click({
                 if ($label.Length -gt $global:maxLabelLength) {
                     $label = $label.Substring(0, $global:maxLabelLength)
                 }
-                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue=$label }
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
                 $lbl.New_Label = $label
                 $num++
             }
@@ -3814,8 +3948,9 @@ $dataGrid.Add_EditingControlShowing({
 
 $dataGrid.Add_CellBeginEdit({
     param($sender, $e)
-    if ($e.ColumnIndex -eq 4 -or $e.ColumnIndex -eq 5) {
-        $colName = $sender.Columns[$e.ColumnIndex].Name
+    $editColName = $sender.Columns[$e.ColumnIndex].Name
+    if ($editColName -eq "New_Label" -or $editColName -eq "New_Label_2") {
+        $colName = $editColName
         $val = $sender.Rows[$e.RowIndex].Cells[$colName].Value
         $global:cellEditOldValue = if ($val) { $val.ToString() } else { "" }
         $global:cellEditColumn   = $colName
@@ -3824,10 +3959,12 @@ $dataGrid.Add_CellBeginEdit({
 
 $dataGrid.Add_CellEndEdit({
     param($sender, $e)
-    if ($e.ColumnIndex -eq 4 -or $e.ColumnIndex -eq 5) {
-        $colName = $sender.Columns[$e.ColumnIndex].Name
+    $endEditColName = $sender.Columns[$e.ColumnIndex].Name
+    if ($endEditColName -eq "New_Label" -or $endEditColName -eq "New_Label_2") {
+        $colName = $endEditColName
         $port   = $sender.Rows[$e.RowIndex].Cells["Port"].Value
         $type   = $sender.Rows[$e.RowIndex].Cells["Type"].Value
+        $router = $sender.Rows[$e.RowIndex].Cells["Router"].Value
         $newVal = $sender.Rows[$e.RowIndex].Cells[$colName].Value
         $newStr = if ($newVal) { $newVal.ToString() } else { "" }
 
@@ -3839,6 +3976,7 @@ $dataGrid.Add_CellEndEdit({
             Push-UndoCommand @{
                 Port     = $port
                 Type     = $type
+                Router   = $router
                 Field    = $dataField
                 OldValue = $global:cellEditOldValue
                 NewValue = $newStr
@@ -3846,7 +3984,7 @@ $dataGrid.Add_CellEndEdit({
         }
 
         foreach ($lbl in $global:allLabels) {
-            if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+            if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
                 $lbl.$dataField = $newStr
                 break
             }
@@ -3927,13 +4065,10 @@ $btnUpload.Add_Click({
         if ($result -ne "Yes") { return }
     }
 
-    $routerTypeLabel = switch ($global:routerType) {
-        "Videohub"  { "Blackmagic Videohub" }
-        "Lightware" { "Lightware MX2" }
-        default     { "KUMO" }
-    }
+    $routerCount = ($changes | ForEach-Object { $_.Router } | Sort-Object -Unique).Count
+    $routerSummary = if ($routerCount -gt 1) { " across $routerCount routers" } else { "" }
     $result = [System.Windows.Forms.MessageBox]::Show(
-        "Upload $($changes.Count) label changes to $routerTypeLabel at $($ipTextBox.Text)?`n`nThis will modify the router's port names immediately.`n`nA backup of current labels will be saved automatically.",
+        "Upload $($changes.Count) label changes$routerSummary?`n`nThis will modify the router's port names immediately.`n`nA backup of current labels will be saved automatically.",
         "Confirm Upload", "YesNo", "Question"
     )
     if ($result -ne "Yes") { return }
@@ -3942,24 +4077,22 @@ $btnUpload.Add_Click({
     $global:backupLabels = @()
     foreach ($lbl in $global:allLabels) {
         $global:backupLabels += [PSCustomObject]@{
-            Port = $lbl.Port; Type = $lbl.Type; Current_Label = $lbl.Current_Label; Current_Label_2 = $lbl.Current_Label_2; New_Label = ""; New_Label_2 = ""; Notes = "Backup"
+            Port = $lbl.Port; Type = $lbl.Type; Router = $lbl.Router; Current_Label = $lbl.Current_Label; Current_Label_2 = $lbl.Current_Label_2; New_Label = ""; New_Label_2 = ""; Notes = "Backup"
         }
     }
     $backupSaved = $false
     try {
         $docsPath    = Get-DocumentsPath
-        $safeName    = $global:routerName -replace '[^\w\-]', '_'
-        $backupPath  = Join-Path $docsPath "${safeName}_Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+        $backupPath  = Join-Path $docsPath "Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
         $global:backupLabels | Export-Csv -Path $backupPath -NoTypeInformation
         $backupSaved = $true
     } catch {
         Write-ErrorLog "BACKUP" "Failed to save backup: $($_.Exception.Message)"
     }
 
-    $ip = $ipTextBox.Text.Trim()
     $progressBar.Maximum = [Math]::Max($changes.Count, 1)
     $progressBar.Value   = 0
-    Set-StatusMessage "Uploading $($changes.Count) labels to $($global:routerModel)..." "Dim"
+    Set-StatusMessage "Uploading $($changes.Count) labels..." "Dim"
     $form.Refresh()
 
     $btnUpload.Enabled    = $false
@@ -3974,33 +4107,54 @@ $btnUpload.Add_Click({
     }
 
     try {
-        $result       = Upload-RouterLabels -IP $ip -Changes $changes -ProgressCallback $ulProgressCallback
-        $successCount = $result.SuccessCount
-        $errorCount   = $result.ErrorCount
+        $totalSuccess = 0
+        $totalError   = 0
 
-        $progressBar.Value = $progressBar.Maximum
+        # Group changes by Router and upload per-router
+        $grouped = $changes | Group-Object -Property Router
+        foreach ($group in $grouped) {
+            $rip = $group.Name
+            $routerChanges = @($group.Group)
 
-        if ($result.SuccessLabels -and $result.SuccessLabels.Count -gt 0) {
-            foreach ($item in $result.SuccessLabels) {
-                if ($item.New_Label -and $item.New_Label.Trim() -ne "") {
-                    $item.Current_Label = $item.New_Label.Trim()
-                    $item.New_Label     = ""
+            if ($global:routers.ContainsKey($rip)) {
+                Set-ActiveRouter -IP $rip
+                Set-StatusMessage "Uploading $($routerChanges.Count) labels to $($global:routerModel) at $rip..." "Dim"
+                $form.Refresh()
+
+                $result = Upload-RouterLabels -IP $rip -Changes $routerChanges -ProgressCallback $ulProgressCallback
+                Save-ActiveRouter -IP $rip
+
+                $totalSuccess += $result.SuccessCount
+                $totalError   += $result.ErrorCount
+
+                if ($result.SuccessLabels -and $result.SuccessLabels.Count -gt 0) {
+                    foreach ($item in $result.SuccessLabels) {
+                        if ($item.New_Label -and $item.New_Label.Trim() -ne "") {
+                            $item.Current_Label = $item.New_Label.Trim()
+                            $item.New_Label     = ""
+                        }
+                        if ($item.New_Label_2 -ne $null -and $item.New_Label_2.Trim() -ne "") {
+                            $item.Current_Label_2 = $item.New_Label_2.Trim()
+                            $item.New_Label_2     = ""
+                        }
+                    }
                 }
-                if ($item.New_Label_2 -ne $null -and $item.New_Label_2.Trim() -ne "") {
-                    $item.Current_Label_2 = $item.New_Label_2.Trim()
-                    $item.New_Label_2     = ""
-                }
+            } else {
+                $totalError += $routerChanges.Count
+                Write-ErrorLog "UPLOAD" "Router $rip not in connected routers hashtable -- skipping"
             }
-            Populate-Grid
         }
 
-        $statusColor = if ($errorCount -eq 0) { "Success" } else { "Warning" }
-        Set-StatusMessage "Upload complete: $successCount OK, $errorCount failed" $statusColor
+        Populate-Grid
+        $progressBar.Value = $progressBar.Maximum
 
-        $icon = if ($errorCount -eq 0) { "Information" } else { "Warning" }
+        $statusColor = if ($totalError -eq 0) { "Success" } else { "Warning" }
+        Set-StatusMessage "Upload complete: $totalSuccess OK, $totalError failed" $statusColor
+
+        $icon = if ($totalError -eq 0) { "Information" } else { "Warning" }
         $backupMsg = if ($backupSaved) { "`n`nBackup saved to Documents\KUMO_Labels folder." } else { "`n`nWarning: backup could not be saved." }
         [System.Windows.Forms.MessageBox]::Show(
-            "Upload complete!`n`nSuccessful: $successCount`nFailed: $errorCount$backupMsg",
+            "Upload complete!`n`nSuccessful: $totalSuccess`nFailed: $totalError$backupMsg",
             "Upload Results", "OK", $icon
         )
     } catch {
@@ -4015,7 +4169,7 @@ $btnUpload.Add_Click({
             ($_.New_Label_2 -and $_.New_Label_2.Trim() -ne "" -and $_.New_Label_2.Trim() -ne $_.Current_Label_2)
         })
         $btnUpload.Enabled = ($remainingChanges.Count -gt 0)
-        if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
+        if ($global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
     }
 })
 
@@ -4024,36 +4178,43 @@ $btnUpload.Add_Click({
 $keepaliveTimer = New-Object System.Windows.Forms.Timer
 $keepaliveTimer.Interval = 25000
 $keepaliveTimer.Add_Tick({
-    if ($global:routerType -eq "Videohub" -and $global:routerConnected -and $global:videohubWriter) {
-        try {
-            $global:videohubWriter.Write("PING:`n`n")
-            $global:videohubWriter.Flush()
-        } catch {
-            Write-ErrorLog "KEEPALIVE" "Videohub keepalive failed: $($_.Exception.Message)"
-            $global:routerConnected = $false
-            $keepaliveTimer.Stop()
-            $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
-            $connIndicator.StatusText = "Connection lost"
-            $connectButton.Text = "Connect"
-            $btnDownload.Enabled = $false
-            $btnUpload.Enabled = $false
-            Set-StatusMessage "Videohub connection lost" "Danger"
+    $disconnected = @()
+    foreach ($rip in @($global:routers.Keys)) {
+        Set-ActiveRouter -IP $rip
+        if ($global:routerType -eq "Videohub" -and $global:videohubWriter) {
+            try {
+                $global:videohubWriter.Write("PING:`n`n")
+                $global:videohubWriter.Flush()
+            } catch {
+                Write-ErrorLog "KEEPALIVE" "Videohub keepalive failed for $rip : $($_.Exception.Message)"
+                $disconnected += $rip
+            }
         }
+        if ($global:routerType -eq "Lightware" -and $global:lightwareWriter) {
+            try {
+                Send-LW3Command "GET /.ProductName" | Out-Null
+            } catch {
+                Write-ErrorLog "KEEPALIVE" "Lightware keepalive failed for $rip : $($_.Exception.Message)"
+                $disconnected += $rip
+            }
+        }
+        Save-ActiveRouter -IP $rip
     }
-    if ($global:routerType -eq "Lightware" -and $global:routerConnected -and $global:lightwareWriter) {
-        try {
-            Send-LW3Command "GET /.ProductName" | Out-Null
-        } catch {
-            Write-ErrorLog "KEEPALIVE" "Lightware keepalive failed: $($_.Exception.Message)"
-            $global:routerConnected = $false
-            $keepaliveTimer.Stop()
-            $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
-            $connIndicator.StatusText = "Connection lost"
-            $connectButton.Text = "Connect"
-            $btnDownload.Enabled = $false
-            $btnUpload.Enabled = $false
-            Set-StatusMessage "Lightware connection lost" "Danger"
-        }
+    foreach ($rip in $disconnected) {
+        $global:routers.Remove($rip)
+    }
+    if ($disconnected.Count -gt 0 -and $global:routers.Count -eq 0) {
+        $global:routerConnected = $false
+        $keepaliveTimer.Stop()
+        $connIndicator.State = [ConnectionIndicator+ConnectionState]::Disconnected
+        $connIndicator.StatusText = "Connection lost"
+        $connectButton.Text = "Connect"
+        $btnDownload.Enabled = $false
+        $btnUpload.Enabled = $false
+        Set-StatusMessage "All router connections lost" "Danger"
+    } elseif ($disconnected.Count -gt 0) {
+        $connIndicator.StatusText = "$($global:routers.Count) router(s) connected"
+        Set-StatusMessage "Lost connection to: $($disconnected -join ', ')" "Warning"
     }
 })
 # keepaliveTimer is started by the connect handler after a successful Videohub or Lightware connection
@@ -4063,22 +4224,23 @@ $keepaliveTimer.Add_Tick({
 $form.Add_FormClosing({
     $keepaliveTimer.Stop()
     $keepaliveTimer.Dispose()
-    if ($global:videohubTcp -ne $null) {
-        try { $global:videohubWriter.Dispose() } catch { }
-        try { $global:videohubReader.Dispose() } catch { }
-        try { $global:videohubTcp.Close() } catch { }
-        $global:videohubTcp    = $null
-        $global:videohubWriter = $null
-        $global:videohubReader = $null
+    # Disconnect all routers
+    foreach ($rKey in @($global:routers.Keys)) {
+        $r = $global:routers[$rKey]
+        if ($r.VideohubTcp -ne $null) {
+            try { $r.VideohubWriter.Dispose() } catch { }
+            try { $r.VideohubReader.Dispose() } catch { }
+            try { $r.VideohubTcp.Close() } catch { }
+        }
+        if ($r.LightwareTcp -ne $null) {
+            try { $r.LightwareWriter.Dispose() } catch { }
+            try { $r.LightwareReader.Dispose() } catch { }
+            try { $r.LightwareTcp.Close() } catch { }
+        }
     }
-    if ($global:lightwareTcp -ne $null) {
-        try { $global:lightwareWriter.Dispose() } catch { }
-        try { $global:lightwareReader.Dispose() } catch { }
-        try { $global:lightwareTcp.Close() } catch { }
-        $global:lightwareTcp    = $null
-        $global:lightwareWriter = $null
-        $global:lightwareReader = $null
-    }
+    $global:routers = @{}
+    $global:videohubTcp = $null; $global:videohubWriter = $null; $global:videohubReader = $null
+    $global:lightwareTcp = $null; $global:lightwareWriter = $null; $global:lightwareReader = $null
 })
 
 # --- Form Resize Handler ------------------------------------------------------
