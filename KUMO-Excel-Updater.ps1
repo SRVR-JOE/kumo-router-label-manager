@@ -56,6 +56,51 @@ function Parse-IPList {
 # SHARED UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Add dropdown data validation to the New_Color column in an Excel file
+function Add-ColorDropdown {
+    param(
+        [string]$FilePath,
+        [string]$Sheet = "Router_Labels"
+    )
+
+    try {
+        $pkg = Open-ExcelPackage -Path $FilePath
+        $ws = $pkg.Workbook.Worksheets[$Sheet]
+        if (-not $ws) { Close-ExcelPackage $pkg -NoSave; return }
+
+        # Find the New_Color column header (row 1)
+        $colIdx = $null
+        for ($c = 1; $c -le $ws.Dimension.End.Column; $c++) {
+            if ($ws.Cells[1, $c].Text -eq "New_Color") { $colIdx = $c; break }
+        }
+        if (-not $colIdx) { Close-ExcelPackage $pkg -NoSave; return }
+
+        # Apply dropdown validation to all data rows
+        $lastRow = $ws.Dimension.End.Row
+        if ($lastRow -lt 2) { Close-ExcelPackage $pkg -NoSave; return }
+
+        $range = [OfficeOpenXml.ExcelRange]$ws.Cells[2, $colIdx, $lastRow, $colIdx]
+        $validation = $ws.DataValidations.AddListValidation($range.Address)
+        $validation.ShowErrorMessage = $true
+        $validation.ErrorTitle = "Invalid Color"
+        $validation.Error = "Please select a color from 1-9."
+        $validation.Formula.Values.Add("") | Out-Null
+        $validation.Formula.Values.Add("1 - Red") | Out-Null
+        $validation.Formula.Values.Add("2 - Orange") | Out-Null
+        $validation.Formula.Values.Add("3 - Yellow") | Out-Null
+        $validation.Formula.Values.Add("4 - Blue") | Out-Null
+        $validation.Formula.Values.Add("5 - Teal") | Out-Null
+        $validation.Formula.Values.Add("6 - Light Green") | Out-Null
+        $validation.Formula.Values.Add("7 - Indigo") | Out-Null
+        $validation.Formula.Values.Add("8 - Purple") | Out-Null
+        $validation.Formula.Values.Add("9 - Pink") | Out-Null
+
+        Close-ExcelPackage $pkg
+    } catch {
+        Write-Warning "Could not add color dropdown: $($_.Exception.Message)"
+    }
+}
+
 # Helper function to make secure web requests with HTTPS fallback
 function Invoke-SecureWebRequest {
     param(
@@ -378,6 +423,7 @@ function Get-VideohubCurrentLabels {
             if (Get-Module -ListAvailable -Name ImportExcel) {
                 Import-Module ImportExcel
                 $allLabels | Export-Excel -Path $OutputPath -WorksheetName $WorksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
+                Add-ColorDropdown -FilePath $OutputPath -Sheet $WorksheetName
                 Write-Host "  OK  Excel file created: $OutputPath" -ForegroundColor Green
             } else {
                 $csvPath = $OutputPath -replace "\.xlsx$", ".csv"
@@ -839,6 +885,7 @@ function Get-KumoCurrentLabels {
             if (Get-Module -ListAvailable -Name ImportExcel) {
                 Import-Module ImportExcel
                 $allLabels | Export-Excel -Path $OutputPath -WorksheetName $WorksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
+                Add-ColorDropdown -FilePath $OutputPath -Sheet $WorksheetName
                 Write-Host "  OK  Excel file created: $OutputPath" -ForegroundColor Green
             } else {
                 # Fallback to CSV
@@ -1104,6 +1151,7 @@ function New-RouterLabelTemplate {
 
         Import-Module ImportExcel
         $templateData | Export-Excel -Path $FilePath -WorksheetName $WorksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
+        Add-ColorDropdown -FilePath $FilePath -Sheet $WorksheetName
 
         Write-Host "`nTemplate created: $FilePath" -ForegroundColor Green
         Write-Host "  Model: $modelName ($inputCount inputs / $outputCount outputs)" -ForegroundColor White
@@ -1150,6 +1198,14 @@ function Get-ExcelLabelData {
                 $data = Import-Csv -Path $FilePath
             } else {
                 throw "ImportExcel module required for .xlsx files. Install with: Install-Module ImportExcel"
+            }
+        }
+
+        # Normalize New_Color dropdown values ("3 - Yellow" -> "3")
+        foreach ($row in $data) {
+            if ($row.PSObject.Properties.Name -contains "New_Color" -and $row.New_Color) {
+                $raw = $row.New_Color.ToString().Trim()
+                if ($raw -match '^\s*(\d)\s*[-–]\s*\w') { $row.New_Color = $matches[1] }
             }
         }
 

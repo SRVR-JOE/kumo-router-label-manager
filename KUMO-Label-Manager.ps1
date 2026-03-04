@@ -720,6 +720,49 @@ $script:kumoColors = @{
     9 = @{ Name = "Pink";        IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#c84b91"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#f30088") }
 }
 
+# Add dropdown data validation to the New_Color column in an Excel file
+function Add-ColorDropdown {
+    param(
+        [string]$FilePath,
+        [string]$Sheet = "KUMO_Labels"
+    )
+
+    try {
+        $pkg = Open-ExcelPackage -Path $FilePath
+        $ws = $pkg.Workbook.Worksheets[$Sheet]
+        if (-not $ws) { Close-ExcelPackage $pkg -NoSave; return }
+
+        $colIdx = $null
+        for ($c = 1; $c -le $ws.Dimension.End.Column; $c++) {
+            if ($ws.Cells[1, $c].Text -eq "New_Color") { $colIdx = $c; break }
+        }
+        if (-not $colIdx) { Close-ExcelPackage $pkg -NoSave; return }
+
+        $lastRow = $ws.Dimension.End.Row
+        if ($lastRow -lt 2) { Close-ExcelPackage $pkg -NoSave; return }
+
+        $range = [OfficeOpenXml.ExcelRange]$ws.Cells[2, $colIdx, $lastRow, $colIdx]
+        $validation = $ws.DataValidations.AddListValidation($range.Address)
+        $validation.ShowErrorMessage = $true
+        $validation.ErrorTitle = "Invalid Color"
+        $validation.Error = "Please select a color from 1-9."
+        $validation.Formula.Values.Add("") | Out-Null
+        $validation.Formula.Values.Add("1 - Red") | Out-Null
+        $validation.Formula.Values.Add("2 - Orange") | Out-Null
+        $validation.Formula.Values.Add("3 - Yellow") | Out-Null
+        $validation.Formula.Values.Add("4 - Blue") | Out-Null
+        $validation.Formula.Values.Add("5 - Teal") | Out-Null
+        $validation.Formula.Values.Add("6 - Light Green") | Out-Null
+        $validation.Formula.Values.Add("7 - Indigo") | Out-Null
+        $validation.Formula.Values.Add("8 - Purple") | Out-Null
+        $validation.Formula.Values.Add("9 - Pink") | Out-Null
+
+        Close-ExcelPackage $pkg
+    } catch {
+        Write-Warning "Could not add color dropdown: $($_.Exception.Message)"
+    }
+}
+
 # --- AJA KUMO REST API Helpers -----------------------------------------------
 
 function Get-KumoParam {
@@ -3684,7 +3727,12 @@ $btnOpenFile.Add_Click({
                     try { if ($row.Color -and $row.Color.ToString().Trim() -ne "") { $clr = [int]$row.Color } } catch { }
                     if ($clr -lt 1 -or $clr -gt 9) { $clr = 4 }
                     $nclr = $null
-                    try { if ($row.New_Color -and $row.New_Color.ToString().Trim() -ne "") { $nclr = [int]$row.New_Color } } catch { }
+                    try {
+                        if ($row.New_Color -and $row.New_Color.ToString().Trim() -ne "") {
+                            $rawNc = $row.New_Color.ToString().Trim()
+                            if ($rawNc -match '^\s*(\d)\s*[-–]') { $nclr = [int]$matches[1] } else { $nclr = [int]$rawNc }
+                        }
+                    } catch { }
                     $global:allLabels.Add([PSCustomObject]@{
                         Port            = [int]$row.Port
                         Type            = $row.Type.ToString().ToUpper().Trim()
@@ -3741,6 +3789,7 @@ $btnSaveFile.Add_Click({
                     }
                     $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
                         Export-Excel -Path $dlg.FileName -WorksheetName $saveWsName -AutoSize -TableStyle Medium6 -FreezeTopRow
+                    Add-ColorDropdown -FilePath $dlg.FileName -Sheet $saveWsName
                 } else {
                     $csvPath = $dlg.FileName -replace "\.xlsx$", ".csv"
                     $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
@@ -4150,6 +4199,7 @@ $btnTemplate.Add_Click({
                 default     { "KUMO_Labels" }
             }
             $templateData | Export-Excel -Path $savedPath -WorksheetName $worksheetName -AutoSize -TableStyle Medium6 -FreezeTopRow
+            Add-ColorDropdown -FilePath $savedPath -Sheet $worksheetName
         } catch {
             $savedPath = $null
             Set-StatusMessage "Excel export failed -- saving as CSV instead" "Warning"
