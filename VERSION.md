@@ -1,13 +1,29 @@
 # KUMO Router Label Manager - Version Information
 
-## Current Version: 2.0.0
-**Release Date**: February 14, 2026  
-**Build**: Production Release  
-**Compatibility**: AJA KUMO 16x16, 32x32, 64x64 routers
+## Current Version: 5.0.0
+**Release Date**: March 3, 2026
+**Build**: Production Release
+**Compatibility**: AJA KUMO, Blackmagic Videohub, Lightware MX2
 
 ---
 
 ## Changelog
+
+### Version 5.0.0 - March 3, 2026
+**Major Update - Multi-Router Support and Security Hardening**
+
+#### New Features
+- **Multi-Router Support**: AJA KUMO, Blackmagic Videohub (TCP 9990), and Lightware MX2 (LW3 protocol) all supported in a single tool
+- **Crosspoint Matrix View**: Visual matrix display showing active routing connections between inputs and outputs
+- **Security Hardening**: HTTPS-first connections with automatic HTTP fallback; input validation on all label fields; execution policy enforcement
+- **Comprehensive Error Logging**: All errors and warnings written to error-log.txt for remote debugging and support
+
+#### Improvements
+- Lightware MX2 auto-detection via LW3 protocol on TCP port 6107
+- Router type auto-detection (KUMO / Videohub / Lightware) on connect
+- Unified label format: 1-based port numbers across all router types
+
+---
 
 ### Version 2.0.0 - February 14, 2026
 **Major Update - Download Functionality Added**

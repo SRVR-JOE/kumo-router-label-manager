@@ -1,4 +1,4 @@
-# Router Label Manager v4.0
+# Router Label Manager v5.0
 
 **Professional AV Production Tool for Live Events**
 
@@ -24,7 +24,7 @@ Complete solution for managing video router labels across KUMO and Videohub hard
 - Universal Videohub 72 / 288
 - Any Videohub model with TCP 9990 control port
 
-### What's New in v4.0
+### What's New in v5.0
 
 - **Inline editing** - Click any New Label cell to type directly in the grid
 - **Filter tabs** - Switch between All / Inputs / Outputs / Changed views
@@ -198,7 +198,11 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ## Version History
 
-### v4.0 (Current)
+### v5.0 (Current)
+- Multi-router support: AJA KUMO, Blackmagic Videohub, and Lightware MX2
+- Crosspoint matrix view for routing connections
+- Security hardening (HTTPS-first with HTTP fallback, input validation)
+- Comprehensive error logging to error-log.txt for remote debugging
 - Redesigned GUI with inline editing, tabs, search, and batch tools
 - Find & Replace and Auto-Number for bulk label management
 - Automatic backup before uploads
@@ -208,6 +212,14 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 - Blackmagic Videohub TCP 9990 download and upload support
 - Auto-detection of router type (KUMO vs Videohub)
 - `-RouterType` parameter for manual override
+
+### v4.0
+- Redesigned GUI with inline editing, tabs, search, and batch tools
+- Find & Replace and Auto-Number for bulk label management
+- Automatic backup before uploads
+- Resizable window with improved dark theme
+- Blackmagic Videohub TCP 9990 support
+- Auto-detection of router type
 
 ### v2.0
 - Download labels from router

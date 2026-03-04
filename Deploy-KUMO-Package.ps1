@@ -10,7 +10,7 @@ param(
     [switch]$InstallAfterDeploy
 )
 
-Write-Host "Router Label Tools Deployment Script v4.0" -ForegroundColor Magenta
+Write-Host "Router Label Tools Deployment Script v5.0" -ForegroundColor Magenta
 Write-Host "AJA KUMO and Blackmagic Videohub support" -ForegroundColor Gray
 Write-Host "Deploying complete package to: $TargetDirectory" -ForegroundColor Yellow
 
@@ -55,8 +55,8 @@ $psLauncher = @"
 # AJA KUMO and Blackmagic Videohub support
 Set-Location -Path "$TargetDirectory"
 
-Write-Host "Router Label Manager v4.0" -ForegroundColor Magenta
-Write-Host "AJA KUMO / Blackmagic Videohub" -ForegroundColor Gray
+Write-Host "Router Label Manager v5.0" -ForegroundColor Magenta
+Write-Host "AJA KUMO / Blackmagic Videohub / Lightware MX2" -ForegroundColor Gray
 Write-Host "Quick Commands:" -ForegroundColor Yellow
 Write-Host "  gui       - Launch GUI application"
 Write-Host "  download  - Download current labels (auto-detects router type)"
@@ -94,8 +94,8 @@ Write-Host "✓ Created PowerShell launcher: kumo.ps1" -ForegroundColor Green
 $startScript = @"
 @echo off
 cd /d "$TargetDirectory"
-echo Router Label Manager v4.0
-echo AJA KUMO and Blackmagic Videohub
+echo Router Label Manager v5.0
+echo AJA KUMO, Blackmagic Videohub, and Lightware MX2
 echo.
 echo Choose your interface:
 echo [1] GUI Application
@@ -122,7 +122,7 @@ Write-Host "✓ Created batch launcher: Start-KUMO-Tools.bat" -ForegroundColor G
 # Create package information file
 $packageInfo = @{
     Name = "Router Label Manager"
-    Version = "4.0.0"
+    Version = "5.0.0"
     DeploymentDate = Get-Date
     TargetDirectory = $TargetDirectory
     Files = $files.Count
@@ -224,4 +224,4 @@ Next Steps:
 For support: Check README.md and KUMO-Setup-Guide.md
 "@ -ForegroundColor White
 
-Write-Host "`nRouter Label Manager v4.0 - Ready for Professional Live Event Production!" -ForegroundColor Magenta
+Write-Host "`nRouter Label Manager v5.0 - Ready for Professional Live Event Production!" -ForegroundColor Magenta

@@ -1,5 +1,5 @@
 """
-Command-line interface for Router Label Manager v3.0.
+Command-line interface for Router Label Manager v5.0.
 
 Beautiful, fast, and functional CLI powered by Rich.
 Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
@@ -34,7 +34,7 @@ from .models import Label, PortType
 console = Console()
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "5.0.0"
 
 # Videohub TCP port
 VIDEOHUB_PORT = 9990

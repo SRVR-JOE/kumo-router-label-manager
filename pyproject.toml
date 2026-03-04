@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kumo-router-manager"
-version = "3.0.0"
+version = "5.0.0"
 description = "Professional AV Production Tool for managing AJA KUMO router labels"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["AJA", "KUMO", "router", "video", "production", "live events"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Other Audience",
     "Topic :: Multimedia :: Video",
     "License :: OSI Approved :: MIT License",
@@ -31,7 +31,6 @@ dependencies = [
     "aiohttp>=3.8.0",
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
-    "python-dotenv>=1.0.0",
     "rich>=13.0.0",
 ]
 
@@ -49,6 +48,15 @@ kumo-cli = "src.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+[tool.pytest.ini_options]
+# Add the project root to sys.path so `import src.*` works without installing.
+pythonpath = ["."]
+# pytest-asyncio >= 0.21 requires an explicit asyncio_mode.
+# "auto" applies the asyncio event loop to every async test function automatically,
+# eliminating the need for per-test @pytest.mark.asyncio decorators.
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.black]
 line-length = 88

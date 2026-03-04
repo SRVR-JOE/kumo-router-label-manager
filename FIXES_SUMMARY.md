@@ -132,7 +132,6 @@ pydantic-settings>=2.0.0
 aiohttp>=3.8.0
 pandas>=2.0.0
 openpyxl>=3.1.0
-python-dotenv>=1.0.0
 ```
 
 #### `pyproject.toml`
@@ -292,5 +291,5 @@ For issues or questions:
 ---
 
 **Last Updated**: 2026-02-15
-**Version**: 2.0.0
+**Version**: 5.0.0
 **Status**: ✅ All critical issues resolved

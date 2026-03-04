@@ -3,7 +3,7 @@ title Router Label Manager - Solotech Production Tools
 
 echo.
 echo  ╔═══════════════════════════════════════════════════════════════════════════════╗
-echo  ║                       Router Label Manager v4.0                              ║
+echo  ║                       Router Label Manager v5.0                              ║
 echo  ║                  AJA KUMO ^& Blackmagic Videohub                             ║
 echo  ╚═══════════════════════════════════════════════════════════════════════════════╝
 echo.
