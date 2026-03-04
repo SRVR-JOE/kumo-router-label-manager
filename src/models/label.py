@@ -72,23 +72,29 @@ class Label:
         """
         max_length = 255  # Maximum label length (255 for Videohub, 50 for KUMO)
 
-        if not isinstance(self.current_label, str):
-            raise TypeError(f"current_label must be a string, got {type(self.current_label)}")
+        for field_name, value in [
+            ("current_label", self.current_label),
+            ("current_label_line2", self.current_label_line2),
+        ]:
+            if not isinstance(value, str):
+                raise TypeError(f"{field_name} must be a string, got {type(value)}")
+            if len(value) > max_length:
+                raise ValueError(
+                    f"{field_name} exceeds maximum length of {max_length} characters: "
+                    f"'{value[:20]}...'"
+                )
 
-        if self.new_label is not None and not isinstance(self.new_label, str):
-            raise TypeError(f"new_label must be a string or None, got {type(self.new_label)}")
-
-        if len(self.current_label) > max_length:
-            raise ValueError(
-                f"current_label exceeds maximum length of {max_length} characters: "
-                f"'{self.current_label[:20]}...'"
-            )
-
-        if self.new_label is not None and len(self.new_label) > max_length:
-            raise ValueError(
-                f"new_label exceeds maximum length of {max_length} characters: "
-                f"'{self.new_label[:20]}...'"
-            )
+        for field_name, value in [
+            ("new_label", self.new_label),
+            ("new_label_line2", self.new_label_line2),
+        ]:
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{field_name} must be a string or None, got {type(value)}")
+            if value is not None and len(value) > max_length:
+                raise ValueError(
+                    f"{field_name} exceeds maximum length of {max_length} characters: "
+                    f"'{value[:20]}...'"
+                )
 
     def has_changes(self) -> bool:
         """Check if there are pending changes to apply.
@@ -153,5 +159,12 @@ class Label:
 
     def __str__(self) -> str:
         """String representation of the label."""
-        change_indicator = " -> " + self.new_label if self.has_changes() else ""
+        parts = []
+        if self.new_label is not None and self.new_label != self.current_label:
+            parts.append(f"L1: {self.current_label} -> {self.new_label}")
+        if self.new_label_line2 is not None and self.new_label_line2 != self.current_label_line2:
+            parts.append(f"L2: {self.current_label_line2} -> {self.new_label_line2}")
+        change_indicator = " | ".join(parts)
+        if change_indicator:
+            change_indicator = " [" + change_indicator + "]"
         return f"Port {self.port_number} ({self.port_type.value}): {self.current_label}{change_indicator}"

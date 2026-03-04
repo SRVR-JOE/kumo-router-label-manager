@@ -930,8 +930,8 @@ function Download-KumoLabels {
         }
 
         $labels.Add([PSCustomObject]@{
-            Port = $job.Port; Type = $job.Type; Current_Label = $label1; New_Label = ""
-            Current_Label_2 = $label2; New_Label_2 = ""; Notes = "From KUMO"
+            Port = $job.Port; Type = $job.Type; Current_Label = $label1; Current_Label_2 = $label2
+            New_Label = ""; New_Label_2 = ""; Notes = "From KUMO"
         }) | Out-Null
 
         $completed++
@@ -966,7 +966,7 @@ function Download-KumoLabels {
                     $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
                 } catch { $label = "Input $i" }
                 $labels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = "Via Telnet"
+                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "Via Telnet"
                 }) | Out-Null
                 if ($ProgressCallback) { & $ProgressCallback $i }
             }
@@ -978,7 +978,7 @@ function Download-KumoLabels {
                     $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
                 } catch { $label = "Output $i" }
                 $labels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = "Via Telnet"
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "Via Telnet"
                 }) | Out-Null
                 if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
             }
@@ -1466,14 +1466,14 @@ function Download-RouterLabels {
                 $zeroIdx = $i - 1
                 $label = if ($inputLabels.ContainsKey($zeroIdx)) { $inputLabels[$zeroIdx] } else { "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = "From Videohub"
+                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
                 }) | Out-Null
             }
             for ($i = 1; $i -le $outputCount; $i++) {
                 $zeroIdx = $i - 1
                 $label = if ($outputLabels.ContainsKey($zeroIdx)) { $outputLabels[$zeroIdx] } else { "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = "From Videohub"
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
@@ -1501,13 +1501,13 @@ function Download-RouterLabels {
             for ($i = 1; $i -le $inputCount; $i++) {
                 $label = if ($inputLabels.ContainsKey($i)) { $inputLabels[$i] } else { "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = "From Lightware"
+                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
                 }) | Out-Null
             }
             for ($i = 1; $i -le $outputCount; $i++) {
                 $label = if ($outputLabels.ContainsKey($i)) { $outputLabels[$i] } else { "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = "From Lightware"
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
@@ -2376,8 +2376,8 @@ $colCharCount.DefaultCellStyle.Alignment = "MiddleCenter"
 $dataGrid.Columns.Add($colPort)      | Out-Null
 $dataGrid.Columns.Add($colType)      | Out-Null
 $dataGrid.Columns.Add($colCurrent)   | Out-Null
-$dataGrid.Columns.Add($colNew)       | Out-Null
 $dataGrid.Columns.Add($colCurrentL2) | Out-Null
+$dataGrid.Columns.Add($colNew)       | Out-Null
 $dataGrid.Columns.Add($colNewL2)     | Out-Null
 $dataGrid.Columns.Add($colStatus)    | Out-Null
 $dataGrid.Columns.Add($colCharCount) | Out-Null
@@ -2686,7 +2686,7 @@ function Populate-Grid {
             $charCount = "$len/$maxLen"
         }
 
-        $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $lbl.Current_Label, $newLabel, $curLabel2, $newLabel2, $status, $charCount)
+        $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $lbl.Current_Label, $curLabel2, $newLabel, $newLabel2, $status, $charCount)
 
         if ($newLabel -and $newLabel.Trim().Length -gt $maxLen) {
             $dataGrid.Rows[$rowIndex].Cells["Chars"].Style.ForeColor     = $clrDanger
@@ -2750,12 +2750,12 @@ function Create-DefaultLabels {
     $global:allLabels.Clear()
     for ($i = 1; $i -le $InputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = "Input $i"; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = ""
+            Port = $i; Type = "INPUT"; Current_Label = "Input $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
         }) | Out-Null
     }
     for ($i = 1; $i -le $OutputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "OUTPUT"; Current_Label = "Output $i"; New_Label = ""; Current_Label_2 = ""; New_Label_2 = ""; Notes = ""
+            Port = $i; Type = "OUTPUT"; Current_Label = "Output $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
         }) | Out-Null
     }
 }
@@ -3183,7 +3183,7 @@ $btnDownload.Add_Click({
             $docsPath     = Get-DocumentsPath
             $safeName     = $global:routerName -replace '[^\w\-]', '_'
             $autoSavePath = Join-Path $docsPath "${safeName}_Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
-            $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Current_Label_2, New_Label_2, Notes |
+            $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                 Export-Csv -Path $autoSavePath -NoTypeInformation
             Set-StatusMessage "Downloaded $($global:allLabels.Count) labels - saved to Documents\KUMO_Labels" "Success"
         } catch {
@@ -3255,8 +3255,8 @@ $btnOpenFile.Add_Click({
                                 Port            = $ws.Cells.Item($row,1).Value2
                                 Type            = $ws.Cells.Item($row,2).Value2
                                 Current_Label   = $ws.Cells.Item($row,3).Value2
-                                New_Label       = $ws.Cells.Item($row,4).Value2
-                                Current_Label_2 = if ($ws.Cells.Item($row,5).Value2) { $ws.Cells.Item($row,5).Value2 } else { "" }
+                                Current_Label_2 = if ($ws.Cells.Item($row,4).Value2) { $ws.Cells.Item($row,4).Value2 } else { "" }
+                                New_Label       = $ws.Cells.Item($row,5).Value2
                                 New_Label_2     = if ($ws.Cells.Item($row,6).Value2) { $ws.Cells.Item($row,6).Value2 } else { "" }
                             }
                         }
@@ -3279,8 +3279,8 @@ $btnOpenFile.Add_Click({
                         Port            = [int]$row.Port
                         Type            = $row.Type.ToString().ToUpper().Trim()
                         Current_Label   = $cl
-                        New_Label       = $nl
                         Current_Label_2 = $cl2
+                        New_Label       = $nl
                         New_Label_2     = $nl2
                         Notes           = if ($row.Notes) { $row.Notes.ToString() } else { "" }
                     }) | Out-Null
@@ -3326,17 +3326,17 @@ $btnSaveFile.Add_Click({
                         "Lightware" { "Lightware_Labels" }
                         default     { "KUMO_Labels" }
                     }
-                    $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Current_Label_2, New_Label_2, Notes |
+                    $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                         Export-Excel -Path $dlg.FileName -WorksheetName $saveWsName -AutoSize -TableStyle Medium6 -FreezeTopRow
                 } else {
                     $csvPath = $dlg.FileName -replace "\.xlsx$", ".csv"
-                    $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Current_Label_2, New_Label_2, Notes |
+                    $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                         Export-Csv -Path $csvPath -NoTypeInformation
                     $dlg.FileName = $csvPath
                     Set-StatusMessage "ImportExcel module not found -- saved as CSV instead" "Warning"
                 }
             } else {
-                $global:allLabels | Select-Object Port, Type, Current_Label, New_Label, Current_Label_2, New_Label_2, Notes |
+                $global:allLabels | Select-Object Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
                     Export-Csv -Path $dlg.FileName -NoTypeInformation
             }
             Set-StatusMessage "Saved to $([System.IO.Path]::GetFileName($dlg.FileName))" "Success"
@@ -3700,7 +3700,7 @@ $btnTemplate.Add_Click({
             if ($existing -and $existing.Current_Label_2) { $currentLabel2 = $existing.Current_Label_2 }
         }
         $templateData += [PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = $currentLabel; New_Label = ""; Current_Label_2 = $currentLabel2; New_Label_2 = ""; Notes = "Enter your new label name here"
+            Port = $i; Type = "INPUT"; Current_Label = $currentLabel; Current_Label_2 = $currentLabel2; New_Label = ""; New_Label_2 = ""; Notes = "Enter your new label name here"
         }
     }
     for ($i = 1; $i -le $outCount; $i++) {
@@ -3712,7 +3712,7 @@ $btnTemplate.Add_Click({
             if ($existing -and $existing.Current_Label_2) { $currentLabel2 = $existing.Current_Label_2 }
         }
         $templateData += [PSCustomObject]@{
-            Port = $i; Type = "OUTPUT"; Current_Label = $currentLabel; New_Label = ""; Current_Label_2 = $currentLabel2; New_Label_2 = ""; Notes = "Enter your new label name here"
+            Port = $i; Type = "OUTPUT"; Current_Label = $currentLabel; Current_Label_2 = $currentLabel2; New_Label = ""; New_Label_2 = ""; Notes = "Enter your new label name here"
         }
     }
 
@@ -3814,7 +3814,7 @@ $dataGrid.Add_EditingControlShowing({
 
 $dataGrid.Add_CellBeginEdit({
     param($sender, $e)
-    if ($e.ColumnIndex -eq 3 -or $e.ColumnIndex -eq 5) {
+    if ($e.ColumnIndex -eq 4 -or $e.ColumnIndex -eq 5) {
         $colName = $sender.Columns[$e.ColumnIndex].Name
         $val = $sender.Rows[$e.RowIndex].Cells[$colName].Value
         $global:cellEditOldValue = if ($val) { $val.ToString() } else { "" }
@@ -3824,7 +3824,7 @@ $dataGrid.Add_CellBeginEdit({
 
 $dataGrid.Add_CellEndEdit({
     param($sender, $e)
-    if ($e.ColumnIndex -eq 3 -or $e.ColumnIndex -eq 5) {
+    if ($e.ColumnIndex -eq 4 -or $e.ColumnIndex -eq 5) {
         $colName = $sender.Columns[$e.ColumnIndex].Name
         $port   = $sender.Rows[$e.RowIndex].Cells["Port"].Value
         $type   = $sender.Rows[$e.RowIndex].Cells["Type"].Value
@@ -3942,7 +3942,7 @@ $btnUpload.Add_Click({
     $global:backupLabels = @()
     foreach ($lbl in $global:allLabels) {
         $global:backupLabels += [PSCustomObject]@{
-            Port = $lbl.Port; Type = $lbl.Type; Current_Label = $lbl.Current_Label; New_Label = ""; Current_Label_2 = $lbl.Current_Label_2; New_Label_2 = ""; Notes = "Backup"
+            Port = $lbl.Port; Type = $lbl.Type; Current_Label = $lbl.Current_Label; Current_Label_2 = $lbl.Current_Label_2; New_Label = ""; New_Label_2 = ""; Notes = "Backup"
         }
     }
     $backupSaved = $false

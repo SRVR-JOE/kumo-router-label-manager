@@ -10,7 +10,7 @@ from .schema import FileData, PortData
 class CSVHandler:
     """Handler for CSV file operations."""
 
-    COLUMNS = ["Port", "Type", "Current_Label", "New_Label", "Current_Label_Line2", "New_Label_Line2", "Notes"]
+    COLUMNS = ["Port", "Type", "Current_Label", "Current_Label_Line2", "New_Label", "New_Label_Line2", "Notes"]
     REQUIRED_COLUMNS = ["Port", "Type", "Current_Label", "New_Label", "Notes"]
 
     def __init__(self):
@@ -108,8 +108,8 @@ class CSVHandler:
                 "Port": port_data.port,
                 "Type": port_data.type,
                 "Current_Label": port_data.current_label,
-                "New_Label": port_data.new_label or "",
                 "Current_Label_Line2": port_data.current_label_line2,
+                "New_Label": port_data.new_label or "",
                 "New_Label_Line2": port_data.new_label_line2 or "",
                 "Notes": port_data.notes,
             })
@@ -143,8 +143,8 @@ class CSVHandler:
                 "Port": i,
                 "Type": "INPUT",
                 "Current_Label": "",
-                "New_Label": "",
                 "Current_Label_Line2": "",
+                "New_Label": "",
                 "New_Label_Line2": "",
                 "Notes": "",
             })
@@ -155,8 +155,8 @@ class CSVHandler:
                 "Port": i,
                 "Type": "OUTPUT",
                 "Current_Label": "",
-                "New_Label": "",
                 "Current_Label_Line2": "",
+                "New_Label": "",
                 "New_Label_Line2": "",
                 "Notes": "",
             })

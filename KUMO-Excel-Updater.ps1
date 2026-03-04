@@ -988,8 +988,8 @@ function New-RouterLabelTemplate {
             Port                = $i
             Type                = "INPUT"
             Current_Label       = $curLabel
-            New_Label           = ""
             Current_Label_Line2 = $curLine2
+            New_Label           = ""
             New_Label_Line2     = ""
             Notes               = "Enter your desired label"
         }
@@ -1002,8 +1002,8 @@ function New-RouterLabelTemplate {
             Port                = $i
             Type                = "OUTPUT"
             Current_Label       = $curLabel
-            New_Label           = ""
             Current_Label_Line2 = $curLine2
+            New_Label           = ""
             New_Label_Line2     = ""
             Notes               = "Enter your desired label"
         }
@@ -1358,7 +1358,7 @@ if (-not $labelData -or $labelData.Count -eq 0) {
 
 # Show preview
 Write-Host "`nLabels to update:" -ForegroundColor Yellow
-$labelData | Format-Table Port, Type, Current_Label, New_Label, Current_Label_Line2, New_Label_Line2 -AutoSize
+$labelData | Format-Table Port, Type, Current_Label, Current_Label_Line2, New_Label, New_Label_Line2 -AutoSize
 
 if ($TestOnly) {
     Write-Host "Test mode - no changes made" -ForegroundColor Yellow

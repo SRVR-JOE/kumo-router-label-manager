@@ -307,10 +307,16 @@ class TelnetClient:
             port = label_data["port"]
             port_type = label_data["type"]
             label = label_data["label"]
+            line = label_data.get("line", 1)
 
             # Update progress
             if progress_callback:
                 await progress_callback(idx + 1, total, port_type, port)
+
+            # Telnet only supports Line 1 — skip Line 2 entries
+            if line != 1:
+                logger.debug(f"Skipping Line {line} for {port_type} {port} (Telnet supports Line 1 only)")
+                continue
 
             # Upload label
             success, error_msg = await self.upload_label(port, port_type, label)

@@ -16,7 +16,7 @@ class ExcelHandler:
     """Handler for Excel file operations."""
 
     WORKSHEET_NAME = "KUMO_Labels"
-    HEADERS = ["Port", "Type", "Current_Label", "New_Label", "Current_Label_Line2", "New_Label_Line2", "Notes"]
+    HEADERS = ["Port", "Type", "Current_Label", "Current_Label_Line2", "New_Label", "New_Label_Line2", "Notes"]
 
     def __init__(self):
         """Initialize the Excel handler."""
@@ -76,15 +76,16 @@ class ExcelHandler:
                     raise ValueError("Port number is required")
 
                 current_label = str(row[2].value).strip() if row[2].value else ""
-                new_label = str(row[3].value).strip() if row[3].value else None
 
                 if has_line2:
-                    current_label_line2 = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
+                    current_label_line2 = str(row[3].value).strip() if len(row) > 3 and row[3].value else ""
+                    new_label = str(row[4].value).strip() if len(row) > 4 and row[4].value else None
                     new_label_line2 = str(row[5].value).strip() if len(row) > 5 and row[5].value else None
                     notes = str(row[6].value).strip() if len(row) > 6 and row[6].value else ""
                 else:
                     # Legacy 5-column format: Port, Type, Current_Label, New_Label, Notes
                     current_label_line2 = ""
+                    new_label = str(row[3].value).strip() if row[3].value else None
                     new_label_line2 = None
                     notes = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
 
@@ -148,8 +149,8 @@ class ExcelHandler:
                     port_data.port,
                     port_data.type,
                     port_data.current_label,
-                    port_data.new_label or "",
                     port_data.current_label_line2,
+                    port_data.new_label or "",
                     port_data.new_label_line2 or "",
                     port_data.notes,
                 )
@@ -193,8 +194,8 @@ class ExcelHandler:
         port: int,
         port_type: str,
         current_label: str = "",
-        new_label: str = "",
         current_label_line2: str = "",
+        new_label: str = "",
         new_label_line2: str = "",
         notes: str = "",
     ) -> None:
@@ -202,8 +203,8 @@ class ExcelHandler:
         worksheet.cell(row=row_idx, column=1, value=port)
         worksheet.cell(row=row_idx, column=2, value=port_type)
         worksheet.cell(row=row_idx, column=3, value=current_label)
-        worksheet.cell(row=row_idx, column=4, value=new_label)
-        worksheet.cell(row=row_idx, column=5, value=current_label_line2)
+        worksheet.cell(row=row_idx, column=4, value=current_label_line2)
+        worksheet.cell(row=row_idx, column=5, value=new_label)
         worksheet.cell(row=row_idx, column=6, value=new_label_line2)
         worksheet.cell(row=row_idx, column=7, value=notes)
 

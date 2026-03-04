@@ -7,8 +7,6 @@ with KUMO routers using multiple protocols (REST, Telnet) with automatic fallbac
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
-
 from ...models import Label, PortType, ConnectionEvent, LabelsEvent
 
 from .rest_client import RestClient
@@ -247,7 +245,7 @@ class APIAgent:
                 error_messages.append(f"Telnet upload failed: {e}")
 
             # All methods failed
-            error_count = len(labels_to_upload)
+            error_count = len(upload_data)
             error_msg = "All upload methods failed"
             logger.error(error_msg)
             error_messages.append(error_msg)

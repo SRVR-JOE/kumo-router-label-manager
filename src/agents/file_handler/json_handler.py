@@ -164,8 +164,8 @@ class JSONHandler:
             "port": port_data.port,
             "type": port_data.type,
             "current_label": port_data.current_label,
-            "new_label": port_data.new_label or "",
             "current_label_line2": port_data.current_label_line2,
+            "new_label": port_data.new_label or "",
             "new_label_line2": port_data.new_label_line2 or "",
             "notes": port_data.notes,
         }

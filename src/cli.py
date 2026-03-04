@@ -721,16 +721,16 @@ def display_router_labels_table(
 
     input_table = Table(
         title="[bold green]INPUTS (Sources)[/bold green]",
-        box=box.ROUNDED,
+        box=box.SIMPLE,
         border_style="green",
         header_style="bold green",
         show_lines=False,
         padding=(0, 1),
     )
-    input_table.add_column("#", style="dim", justify="right", width=4)
-    input_table.add_column("Label", style="white", min_width=16)
-    input_table.add_column("Line 2", style="dim white", min_width=12)
-    input_table.add_column("Change", style="yellow", min_width=12)
+    input_table.add_column("#", style="dim", justify="right", width=3)
+    input_table.add_column("Label", style="white", min_width=14)
+    input_table.add_column("Line 2", style="dim white", min_width=8)
+    input_table.add_column("Change", style="yellow", min_width=10)
 
     for lbl in sorted(inputs, key=lambda l: l.port_number):
         change_parts = []
@@ -738,26 +738,26 @@ def display_router_labels_table(
             change_parts.append(lbl.new_label)
         if lbl.new_label_line2 is not None and lbl.new_label_line2 != lbl.current_label_line2:
             change_parts.append(f"L2:{lbl.new_label_line2}")
-        change = " | ".join(change_parts)
+        change = "|".join(change_parts)
         input_table.add_row(
             str(lbl.port_number),
-            lbl.current_label or "[dim italic]empty[/dim italic]",
-            lbl.current_label_line2 or "[dim]-[/dim]",
-            Text(change, style="bold yellow") if change else Text("-", style="dim"),
+            lbl.current_label or "[dim]\u00b7[/dim]",
+            lbl.current_label_line2 or "",
+            Text(change, style="bold yellow") if change else "",
         )
 
     output_table = Table(
         title="[bold purple]OUTPUTS (Destinations)[/bold purple]",
-        box=box.ROUNDED,
+        box=box.SIMPLE,
         border_style="purple",
         header_style="bold purple",
         show_lines=False,
         padding=(0, 1),
     )
-    output_table.add_column("#", style="dim", justify="right", width=4)
-    output_table.add_column("Label", style="white", min_width=16)
-    output_table.add_column("Line 2", style="dim white", min_width=12)
-    output_table.add_column("Change", style="yellow", min_width=12)
+    output_table.add_column("#", style="dim", justify="right", width=3)
+    output_table.add_column("Label", style="white", min_width=14)
+    output_table.add_column("Line 2", style="dim white", min_width=8)
+    output_table.add_column("Change", style="yellow", min_width=10)
 
     for lbl in sorted(outputs, key=lambda l: l.port_number):
         change_parts = []
@@ -765,27 +765,26 @@ def display_router_labels_table(
             change_parts.append(lbl.new_label)
         if lbl.new_label_line2 is not None and lbl.new_label_line2 != lbl.current_label_line2:
             change_parts.append(f"L2:{lbl.new_label_line2}")
-        change = " | ".join(change_parts)
+        change = "|".join(change_parts)
         output_table.add_row(
             str(lbl.port_number),
-            lbl.current_label or "[dim italic]empty[/dim italic]",
-            lbl.current_label_line2 or "[dim]-[/dim]",
-            Text(change, style="bold yellow") if change else Text("-", style="dim"),
+            lbl.current_label or "[dim]\u00b7[/dim]",
+            lbl.current_label_line2 or "",
+            Text(change, style="bold yellow") if change else "",
         )
 
     console.print()
-    console.print(Columns([input_table, output_table], padding=2))
-    console.print()
+    console.print(Columns([input_table, output_table], padding=1))
 
     total = len(labels)
     changes = sum(1 for l in labels if l.has_changes())
     summary = (
-        f"  [dim]Total:[/dim] [bold]{total}[/bold] labels"
-        f"  [dim]|[/dim]  [dim]Inputs:[/dim] [green]{len(inputs)}[/green]"
-        f"  [dim]|[/dim]  [dim]Outputs:[/dim] [purple]{len(outputs)}[/purple]"
+        f" [dim]Total:[/dim] [bold]{total}[/bold]"
+        f" [dim]|[/dim] [dim]In:[/dim] [green]{len(inputs)}[/green]"
+        f" [dim]|[/dim] [dim]Out:[/dim] [purple]{len(outputs)}[/purple]"
     )
     if changes:
-        summary += f"  [dim]|[/dim]  [dim]Pending changes:[/dim] [yellow]{changes}[/yellow]"
+        summary += f" [dim]|[/dim] [dim]Pending:[/dim] [yellow]{changes}[/yellow]"
     console.print(summary)
 
 
