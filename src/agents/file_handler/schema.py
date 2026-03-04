@@ -10,8 +10,10 @@ class PortData(BaseModel):
 
     port: int = Field(..., ge=1, le=120, description="Port number (1-120)")
     type: Literal["INPUT", "OUTPUT"] = Field(..., description="Port type")
-    current_label: str = Field(default="", max_length=255, description="Current label")
-    new_label: Optional[str] = Field(default=None, max_length=255, description="New label to apply")
+    current_label: str = Field(default="", max_length=255, description="Current label (Line 1)")
+    new_label: Optional[str] = Field(default=None, max_length=255, description="New label to apply (Line 1)")
+    current_label_line2: str = Field(default="", max_length=255, description="Current label (Line 2)")
+    new_label_line2: Optional[str] = Field(default=None, max_length=255, description="New label to apply (Line 2)")
     notes: str = Field(default="", max_length=500, description="Additional notes")
 
     @field_validator("type")
@@ -23,7 +25,7 @@ class PortData(BaseModel):
             raise ValueError(f"Type must be INPUT or OUTPUT, got {v}")
         return v
 
-    @field_validator("current_label", "new_label", "notes")
+    @field_validator("current_label", "new_label", "current_label_line2", "new_label_line2", "notes")
     @classmethod
     def strip_strings(cls, v: Optional[str]) -> Optional[str]:
         """Strip whitespace from string fields."""

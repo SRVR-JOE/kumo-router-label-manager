@@ -145,12 +145,16 @@ class JSONHandler:
 
         new_label_raw = port_dict.get("new_label")
         new_label = str(new_label_raw).strip() if new_label_raw else None
+        new_label_line2_raw = port_dict.get("new_label_line2")
+        new_label_line2 = str(new_label_line2_raw).strip() if new_label_line2_raw else None
 
         return PortData(
             port=int(port_dict["port"]),
             type=str(port_dict.get("type", "INPUT")).strip(),
             current_label=str(port_dict.get("current_label", "")).strip(),
             new_label=new_label,
+            current_label_line2=str(port_dict.get("current_label_line2", "")).strip(),
+            new_label_line2=new_label_line2,
             notes=str(port_dict.get("notes", "")).strip(),
         )
 
@@ -161,6 +165,8 @@ class JSONHandler:
             "type": port_data.type,
             "current_label": port_data.current_label,
             "new_label": port_data.new_label or "",
+            "current_label_line2": port_data.current_label_line2,
+            "new_label_line2": port_data.new_label_line2 or "",
             "notes": port_data.notes,
         }
 

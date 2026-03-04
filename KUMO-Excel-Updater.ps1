@@ -523,46 +523,80 @@ function Get-KumoCurrentLabels {
     $fwInfo = if ($modelInfo.Firmware) { " | FW $($modelInfo.Firmware)" } else { "" }
     Write-Host "  Detected: $modelName `($inputCount in / $outputCount out`)$fwInfo" -ForegroundColor Green
 
-    # Download source names (inputs) via REST API
-    for ($i = 1; $i -le $inputCount; $i++) {
-        $label = "Source $i"
+    # Download all labels via parallel REST API requests (runspace pool)
+    Write-Host "  Downloading labels in parallel..." -ForegroundColor Cyan
+    $maxParallel = 24
+
+    $fetchScript = {
+        param([string]$Uri)
         try {
-            $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_1"
-            $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
-            $json = $resp.Content | ConvertFrom-Json
-            if ($json.value_name -and $json.value_name -ne "") { $label = $json.value_name }
-            elseif ($json.value -and $json.value -ne "") { $label = $json.value }
-            $labelsRetrieved = $true
-        } catch {
-            if ($i -eq 1) { Write-Host "    REST API failed on first port, will try Telnet..." -ForegroundColor Yellow }
-        }
+            $r = Invoke-WebRequest -Uri $Uri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            $j = $r.Content | ConvertFrom-Json
+            if ($j.value_name -and $j.value_name -ne "") { return $j.value_name }
+            if ($j.value -and $j.value -ne "") { return $j.value }
+            return ""
+        } catch { return $null }
+    }
 
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, $maxParallel)
+    $pool.Open()
+    $jobs = [System.Collections.ArrayList]::new()
+    $baseUri = "http://$IP/config?action=get&configid=0&paramid="
+
+    # Queue all input + output label requests (Line 1 AND Line 2)
+    for ($i = 1; $i -le $inputCount; $i++) {
+        $ps1 = [PowerShell]::Create().AddScript($fetchScript).AddArgument("${baseUri}eParamID_XPT_Source${i}_Line_1")
+        $ps1.RunspacePool = $pool
+        $jobs.Add(@{ PS = $ps1; Handle = $ps1.BeginInvoke(); Port = $i; Type = "INPUT"; Line = 1; Default = "Source $i" }) | Out-Null
+        $ps2 = [PowerShell]::Create().AddScript($fetchScript).AddArgument("${baseUri}eParamID_XPT_Source${i}_Line_2")
+        $ps2.RunspacePool = $pool
+        $jobs.Add(@{ PS = $ps2; Handle = $ps2.BeginInvoke(); Port = $i; Type = "INPUT"; Line = 2; Default = "" }) | Out-Null
+    }
+    for ($i = 1; $i -le $outputCount; $i++) {
+        $ps1 = [PowerShell]::Create().AddScript($fetchScript).AddArgument("${baseUri}eParamID_XPT_Destination${i}_Line_1")
+        $ps1.RunspacePool = $pool
+        $jobs.Add(@{ PS = $ps1; Handle = $ps1.BeginInvoke(); Port = $i; Type = "OUTPUT"; Line = 1; Default = "Dest $i" }) | Out-Null
+        $ps2 = [PowerShell]::Create().AddScript($fetchScript).AddArgument("${baseUri}eParamID_XPT_Destination${i}_Line_2")
+        $ps2.RunspacePool = $pool
+        $jobs.Add(@{ PS = $ps2; Handle = $ps2.BeginInvoke(); Port = $i; Type = "OUTPUT"; Line = 2; Default = "" }) | Out-Null
+    }
+
+    # Collect results into lookup, then build allLabels
+    $failCount = 0
+    $labelLookup = @{}
+    foreach ($job in $jobs) {
+        try { $label = $job.PS.EndInvoke($job.Handle) } catch { $label = $null }
+        $job.PS.Dispose()
+
+        if ($label -eq $null) { $label = $job.Default; if ($job.Line -eq 1) { $failCount++ } }
+        elseif ($label -eq "") { $label = $job.Default }
+        else { $labelsRetrieved = $true }
+
+        $labelLookup["$($job.Type)_$($job.Port)_$($job.Line)"] = $label
+    }
+    $pool.Close(); $pool.Dispose()
+
+    # Build allLabels with both Line 1 and Line 2
+    for ($i = 1; $i -le $inputCount; $i++) {
+        $l1 = $labelLookup["INPUT_${i}_1"]; $l2 = $labelLookup["INPUT_${i}_2"]
         $allLabels += [PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Notes = "From $routerName REST API"
+            Port = $i; Type = "INPUT"; Current_Label = $l1; Current_Label_Line2 = $l2
+            New_Label = ""; New_Label_Line2 = ""; Notes = "From $routerName REST API"
         }
-        Write-Host "  Source $i`: $label" -ForegroundColor White
-
-        if (-not $labelsRetrieved -and $i -eq 1) { break }
+        $line2Disp = if ($l2) { " | $l2" } else { "" }
+        Write-Host "  INPUT $i`: $l1$line2Disp" -ForegroundColor White
+    }
+    for ($i = 1; $i -le $outputCount; $i++) {
+        $l1 = $labelLookup["OUTPUT_${i}_1"]; $l2 = $labelLookup["OUTPUT_${i}_2"]
+        $allLabels += [PSCustomObject]@{
+            Port = $i; Type = "OUTPUT"; Current_Label = $l1; Current_Label_Line2 = $l2
+            New_Label = ""; New_Label_Line2 = ""; Notes = "From $routerName REST API"
+        }
+        $line2Disp = if ($l2) { " | $l2" } else { "" }
+        Write-Host "  OUTPUT $i`: $l1$line2Disp" -ForegroundColor White
     }
 
-    # Download destination names (outputs) via REST API
-    if ($labelsRetrieved) {
-        for ($i = 1; $i -le $outputCount; $i++) {
-            $label = "Dest $i"
-            try {
-                $uri = "http://$IP/config?action=get&configid=0&paramid=eParamID_XPT_Destination${i}_Line_1"
-                $resp = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
-                $json = $resp.Content | ConvertFrom-Json
-                if ($json.value_name -and $json.value_name -ne "") { $label = $json.value_name }
-                elseif ($json.value -and $json.value -ne "") { $label = $json.value }
-            } catch { }
-
-            $allLabels += [PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Notes = "From $routerName REST API"
-            }
-            Write-Host "  Dest $i`: $label" -ForegroundColor White
-        }
-    }
+    if ($failCount -gt ($inputCount + $outputCount) / 2) { $labelsRetrieved = $false }
 
     # Method 3: Try Telnet if REST completely failed
     if (-not $labelsRetrieved -or $allLabels.Count -eq 0) {
@@ -837,6 +871,7 @@ function New-RouterLabelTemplate {
     $outputCount = 32
     $modelName = ""
     $currentLabels = @{}  # Hash of "TYPE_PORT" -> label
+    $currentLabelsLine2 = @{}  # Hash of "TYPE_PORT" -> line 2 label
 
     # If IP provided, auto-detect router type and download current labels
     if ($RouterIP -and $RouterIP -ne "") {
@@ -868,7 +903,8 @@ function New-RouterLabelTemplate {
             Write-Host "  Detected: $modelName ($inputCount in / $outputCount out)" -ForegroundColor Green
             if ($fwVersion) { Write-Host "  Firmware: $fwVersion" -ForegroundColor Green }
 
-            Write-Host "Downloading current labels..." -ForegroundColor Magenta
+            Write-Host "Downloading current labels (Line 1 & Line 2)..." -ForegroundColor Magenta
+            $currentLabelsLine2 = @{}
             for ($i = 1; $i -le $inputCount; $i++) {
                 try {
                     $uri  = "http://$RouterIP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_1"
@@ -878,6 +914,15 @@ function New-RouterLabelTemplate {
                             elseif ($json.value -and $json.value -ne "")      { $json.value }
                             else { $null }
                     if ($lbl) { $currentLabels["INPUT_$i"] = $lbl }
+                } catch { }
+                try {
+                    $uri2  = "http://$RouterIP/config?action=get&configid=0&paramid=eParamID_XPT_Source${i}_Line_2"
+                    $resp2 = Invoke-SecureWebRequest -Uri $uri2 -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                    $json2 = $resp2.Content | ConvertFrom-Json
+                    $lbl2  = if ($json2.value_name -and $json2.value_name -ne "") { $json2.value_name }
+                             elseif ($json2.value -and $json2.value -ne "")      { $json2.value }
+                             else { $null }
+                    if ($lbl2) { $currentLabelsLine2["INPUT_$i"] = $lbl2 }
                 } catch { }
             }
             for ($i = 1; $i -le $outputCount; $i++) {
@@ -890,8 +935,17 @@ function New-RouterLabelTemplate {
                             else { $null }
                     if ($lbl) { $currentLabels["OUTPUT_$i"] = $lbl }
                 } catch { }
+                try {
+                    $uri2  = "http://$RouterIP/config?action=get&configid=0&paramid=eParamID_XPT_Destination${i}_Line_2"
+                    $resp2 = Invoke-SecureWebRequest -Uri $uri2 -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                    $json2 = $resp2.Content | ConvertFrom-Json
+                    $lbl2  = if ($json2.value_name -and $json2.value_name -ne "") { $json2.value_name }
+                             elseif ($json2.value -and $json2.value -ne "")      { $json2.value }
+                             else { $null }
+                    if ($lbl2) { $currentLabelsLine2["OUTPUT_$i"] = $lbl2 }
+                } catch { }
             }
-            Write-Host "  Downloaded $($currentLabels.Count) labels from router" -ForegroundColor Green
+            Write-Host "  Downloaded $($currentLabels.Count) Line 1 + $($currentLabelsLine2.Count) Line 2 labels from router" -ForegroundColor Green
         }
 
     } else {
@@ -929,23 +983,29 @@ function New-RouterLabelTemplate {
 
     for ($i = 1; $i -le $inputCount; $i++) {
         $curLabel = if ($currentLabels.ContainsKey("INPUT_$i")) { $currentLabels["INPUT_$i"] } else { "Input $i" }
+        $curLine2 = if ($currentLabelsLine2 -and $currentLabelsLine2.ContainsKey("INPUT_$i")) { $currentLabelsLine2["INPUT_$i"] } else { "" }
         $templateData += [PSCustomObject]@{
-            Port          = $i
-            Type          = "INPUT"
-            Current_Label = $curLabel
-            New_Label     = ""
-            Notes         = "Enter your desired label"
+            Port                = $i
+            Type                = "INPUT"
+            Current_Label       = $curLabel
+            New_Label           = ""
+            Current_Label_Line2 = $curLine2
+            New_Label_Line2     = ""
+            Notes               = "Enter your desired label"
         }
     }
 
     for ($i = 1; $i -le $outputCount; $i++) {
         $curLabel = if ($currentLabels.ContainsKey("OUTPUT_$i")) { $currentLabels["OUTPUT_$i"] } else { "Output $i" }
+        $curLine2 = if ($currentLabelsLine2 -and $currentLabelsLine2.ContainsKey("OUTPUT_$i")) { $currentLabelsLine2["OUTPUT_$i"] } else { "" }
         $templateData += [PSCustomObject]@{
-            Port          = $i
-            Type          = "OUTPUT"
-            Current_Label = $curLabel
-            New_Label     = ""
-            Notes         = "Enter your desired label"
+            Port                = $i
+            Type                = "OUTPUT"
+            Current_Label       = $curLabel
+            New_Label           = ""
+            Current_Label_Line2 = $curLine2
+            New_Label_Line2     = ""
+            Notes               = "Enter your desired label"
         }
     }
 
@@ -1007,11 +1067,15 @@ function Get-ExcelLabelData {
             }
         }
 
-        # Filter for rows with new labels
+        # Filter for rows with new labels (Line 1 or Line 2)
         $filteredData = $data | Where-Object {
-            $_.New_Label -and
-            $_.New_Label.ToString().Trim() -ne "" -and
-            $_.New_Label -ne $_.Current_Label
+            ($_.New_Label -and
+             $_.New_Label.ToString().Trim() -ne "" -and
+             $_.New_Label -ne $_.Current_Label) -or
+            ($_.PSObject.Properties.Name -contains "New_Label_Line2" -and
+             $_.New_Label_Line2 -and
+             $_.New_Label_Line2.ToString().Trim() -ne "" -and
+             $_.New_Label_Line2 -ne $_.Current_Label_Line2)
         }
 
         Write-Host "Found $($filteredData.Count) labels to update" -ForegroundColor Green
@@ -1037,30 +1101,61 @@ function Update-KumoLabelsREST {
     $errorCount = 0
 
     foreach ($item in $LabelData) {
-        try {
-            Write-Host "Updating $($item.Type) $($item.Port): $($item.New_Label)" -ForegroundColor Magenta
-
-            # Build correct eParamID
-            $paramId = if ($item.Type.ToUpper() -eq "INPUT") {
-                "eParamID_XPT_Source$($item.Port)_Line_1"
-            } else {
-                "eParamID_XPT_Destination$($item.Port)_Line_1"
-            }
-
-            $encoded = [System.Uri]::EscapeDataString($item.New_Label.ToString())
-            $uri = "http://$IP/config?action=set&configid=0&paramid=$paramId&value=$encoded"
-
+        # Upload Line 1 if changed
+        if ($item.New_Label -and $item.New_Label.ToString().Trim() -ne "" -and $item.New_Label -ne $item.Current_Label) {
             try {
-                $response = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
-                $successCount++
-                Write-Host "  OK  Success" -ForegroundColor Green
-            } catch {
-                throw "REST API set failed: $($_.Exception.Message)"
-            }
+                Write-Host "Updating $($item.Type) $($item.Port) Line 1: $($item.New_Label)" -ForegroundColor Magenta
 
-        } catch {
-            $errorCount++
-            Write-Host "  FAIL  $($_.Exception.Message)" -ForegroundColor Red
+                $paramId = if ($item.Type.ToUpper() -eq "INPUT") {
+                    "eParamID_XPT_Source$($item.Port)_Line_1"
+                } else {
+                    "eParamID_XPT_Destination$($item.Port)_Line_1"
+                }
+
+                $encoded = [System.Uri]::EscapeDataString($item.New_Label.ToString())
+                $uri = "http://$IP/config?action=set&configid=0&paramid=$paramId&value=$encoded"
+
+                try {
+                    $response = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                    $successCount++
+                    Write-Host "  OK  Success" -ForegroundColor Green
+                } catch {
+                    throw "REST API set failed: $($_.Exception.Message)"
+                }
+
+            } catch {
+                $errorCount++
+                Write-Host "  FAIL  $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+
+        # Upload Line 2 if changed
+        $hasLine2 = $item.PSObject.Properties.Name -contains "New_Label_Line2"
+        if ($hasLine2 -and $item.New_Label_Line2 -and $item.New_Label_Line2.ToString().Trim() -ne "" -and $item.New_Label_Line2 -ne $item.Current_Label_Line2) {
+            try {
+                Write-Host "Updating $($item.Type) $($item.Port) Line 2: $($item.New_Label_Line2)" -ForegroundColor Magenta
+
+                $paramId2 = if ($item.Type.ToUpper() -eq "INPUT") {
+                    "eParamID_XPT_Source$($item.Port)_Line_2"
+                } else {
+                    "eParamID_XPT_Destination$($item.Port)_Line_2"
+                }
+
+                $encoded2 = [System.Uri]::EscapeDataString($item.New_Label_Line2.ToString())
+                $uri2 = "http://$IP/config?action=set&configid=0&paramid=$paramId2&value=$encoded2"
+
+                try {
+                    $response = Invoke-SecureWebRequest -Uri $uri2 -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                    $successCount++
+                    Write-Host "  OK  Success" -ForegroundColor Green
+                } catch {
+                    throw "REST API set Line 2 failed: $($_.Exception.Message)"
+                }
+
+            } catch {
+                $errorCount++
+                Write-Host "  FAIL  $($_.Exception.Message)" -ForegroundColor Red
+            }
         }
     }
 
@@ -1263,7 +1358,7 @@ if (-not $labelData -or $labelData.Count -eq 0) {
 
 # Show preview
 Write-Host "`nLabels to update:" -ForegroundColor Yellow
-$labelData | Format-Table Port, Type, Current_Label, New_Label -AutoSize
+$labelData | Format-Table Port, Type, Current_Label, New_Label, Current_Label_Line2, New_Label_Line2 -AutoSize
 
 if ($TestOnly) {
     Write-Host "Test mode - no changes made" -ForegroundColor Yellow

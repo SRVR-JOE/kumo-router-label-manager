@@ -217,6 +217,8 @@ class DefaultLabelGenerator:
         return {
             "inputs": [f"Source {i + 1}" for i in range(port_count)],
             "outputs": [f"Dest {i + 1}" for i in range(port_count)],
+            "inputs_line2": [""] * port_count,
+            "outputs_line2": [""] * port_count,
         }
 
     @staticmethod
@@ -228,16 +230,16 @@ class DefaultLabelGenerator:
         return f"Dest {port}"
 
 
-# Timeout constants (seconds)
-TIMEOUT_REST_REQUEST = 5
-TIMEOUT_TELNET_CONNECT = 5
+# Timeout constants (seconds) - tuned for LAN connectivity
+TIMEOUT_REST_REQUEST = 4
+TIMEOUT_TELNET_CONNECT = 3
 TIMEOUT_TELNET_COMMAND = 2
 
 # Delay constants (seconds)
-DELAY_TELNET_INITIAL = 1
-DELAY_TELNET_COMMAND = 0.15
+DELAY_TELNET_INITIAL = 0.5
+DELAY_TELNET_COMMAND = 0.1
 
 # Retry constants
 MAX_RETRIES = 2
-RETRY_BACKOFF_BASE = 0.5
+RETRY_BACKOFF_BASE = 0.3
 RETRY_BACKOFF_MULTIPLIER = 2

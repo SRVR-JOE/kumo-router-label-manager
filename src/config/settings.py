@@ -20,23 +20,23 @@ class Settings(BaseSettings):
 
     # Router Settings
     router_ip: str = Field(
-        default="192.168.1.100",
+        default="192.168.100.52",
         description="Default IP address of the KUMO router"
     )
     router_connection_timeout: int = Field(
-        default=30,
+        default=10,
         ge=1,
         le=300,
         description="Router connection timeout in seconds"
     )
     router_retry_attempts: int = Field(
-        default=3,
+        default=2,
         ge=1,
         le=10,
         description="Number of connection retry attempts"
     )
     router_retry_delay: int = Field(
-        default=5,
+        default=2,
         ge=1,
         le=60,
         description="Delay between retry attempts in seconds"

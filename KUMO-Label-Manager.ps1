@@ -791,39 +791,54 @@ function Connect-KumoRouter {
 
     $routerName = if ($json.value -and $json.value -ne "") { $json.value } else { "KUMO" }
 
+    # Fetch firmware + port-count probes in parallel for faster connection
     $firmware = ""
-    try {
-        $fw = Get-KumoParam -IP $IP -ParamId "eParamID_SWVersion"
-        if ($fw) { $firmware = $fw }
-    } catch { }
+    $test64 = $null
+    $test17 = $null
+    $testDest5 = $null
 
-    # Detect port count (retry once on failure to avoid misdetection from network glitch)
+    $probeScript = {
+        param([string]$Uri)
+        try {
+            $r = Invoke-WebRequest -Uri $Uri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            $j = $r.Content | ConvertFrom-Json
+            if ($j.value_name -and $j.value_name -ne "") { return $j.value_name }
+            if ($j.value -and $j.value -ne "") { return $j.value }
+            return ""
+        } catch { return $null }
+    }
+
+    $probePool = [RunspaceFactory]::CreateRunspacePool(1, 4)
+    $probePool.Open()
+    $baseProbe = "http://$IP/config?action=get&configid=0&paramid="
+    $probes = @(
+        @{ Name = "fw";   Uri = "${baseProbe}eParamID_SWVersion" }
+        @{ Name = "p64";  Uri = "${baseProbe}eParamID_XPT_Source33_Line_1" }
+        @{ Name = "p32";  Uri = "${baseProbe}eParamID_XPT_Source17_Line_1" }
+        @{ Name = "d5";   Uri = "${baseProbe}eParamID_XPT_Destination5_Line_1" }
+    )
+    $probeJobs = [System.Collections.ArrayList]::new()
+    foreach ($p in $probes) {
+        $ps = [PowerShell]::Create().AddScript($probeScript).AddArgument($p.Uri)
+        $ps.RunspacePool = $probePool
+        $probeJobs.Add(@{ Name = $p.Name; PS = $ps; Handle = $ps.BeginInvoke() }) | Out-Null
+    }
+    $probeResults = @{}
+    foreach ($pj in $probeJobs) {
+        try { $probeResults[$pj.Name] = $pj.PS.EndInvoke($pj.Handle) } catch { $probeResults[$pj.Name] = $null }
+        $pj.PS.Dispose()
+    }
+    $probePool.Close(); $probePool.Dispose()
+
+    if ($probeResults["fw"]) { $firmware = $probeResults["fw"] }
+
+    # Determine port count from parallel probe results
     $inputCount = 32
-    $test64 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
-    if ($test64 -eq $null) {
-        Start-Sleep -Milliseconds 200
-        $test64 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source33_Line_1"
-    }
-    if ($test64 -ne $null) { $inputCount = 64 }
-
-    if ($inputCount -eq 32) {
-        $test17 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
-        if ($test17 -eq $null) {
-            Start-Sleep -Milliseconds 200
-            $test17 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source17_Line_1"
-        }
-        if ($test17 -eq $null) { $inputCount = 16 }
-    }
+    if ($probeResults["p64"] -ne $null) { $inputCount = 64 }
+    elseif ($probeResults["p32"] -eq $null) { $inputCount = 16 }
 
     $outputCount = $inputCount
-    if ($inputCount -eq 16) {
-        $testDest5 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination5_Line_1"
-        if ($testDest5 -eq $null) {
-            Start-Sleep -Milliseconds 200
-            $testDest5 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination5_Line_1"
-        }
-        if ($testDest5 -eq $null) { $outputCount = 4 }
-    }
+    if ($inputCount -eq 16 -and $probeResults["d5"] -eq $null) { $outputCount = 4 }
 
     $modelName = switch ("$inputCount`x$outputCount") {
         "16x4"  { "KUMO 1604" }
@@ -846,51 +861,92 @@ function Connect-KumoRouter {
 function Download-KumoLabels {
     param([string]$IP, [int]$InputCount, [int]$OutputCount, [scriptblock]$ProgressCallback = $null)
     # Returns an ArrayList of PSCustomObjects compatible with $global:allLabels format.
+    # Uses parallel HTTP requests via runspaces for dramatically faster downloads
+    # on large routers (KUMO 6464: ~3s parallel vs ~40s sequential).
+
     $labels = [System.Collections.ArrayList]::new()
     $restSuccess = $true
-    $consecutiveFailures = 0
 
+    # --- Parallel REST download using runspace pool ---
+    $maxParallel = 24  # concurrent HTTP requests (safe for KUMO 6464-12G on LAN)
+
+    # Build request list: each item is [port, type, paramId_line1, paramId_line2, defaultLabel]
+    $requests = [System.Collections.ArrayList]::new()
     for ($i = 1; $i -le $InputCount; $i++) {
-        $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source${i}_Line_1"
-        if ($label -eq $null) {
-            $label = "Source $i"
-            $consecutiveFailures++
-            if ($consecutiveFailures -ge 3) { $restSuccess = $false; break }
-        } else {
-            $consecutiveFailures = 0
-            if ($label -eq "") { $label = "Source $i" }
-        }
-        $label2 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Source${i}_Line_2"
-        if ($label2 -eq $null) { $label2 = "" }
-        $labels.Add([PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = $label2; New_Label_2 = ""; Notes = "From KUMO"
-        }) | Out-Null
-        if ($ProgressCallback) { & $ProgressCallback $i }
+        $requests.Add(@($i, "INPUT", "eParamID_XPT_Source${i}_Line_1", "eParamID_XPT_Source${i}_Line_2", "Source $i")) | Out-Null
+    }
+    for ($i = 1; $i -le $OutputCount; $i++) {
+        $requests.Add(@($i, "OUTPUT", "eParamID_XPT_Destination${i}_Line_1", "eParamID_XPT_Destination${i}_Line_2", "Dest $i")) | Out-Null
     }
 
-    if ($restSuccess) {
-        $consecutiveFailures = 0
-        for ($i = 1; $i -le $OutputCount; $i++) {
-            $label = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Line_1"
-            if ($label -eq $null) {
-                $label = "Dest $i"
-                $consecutiveFailures++
-                if ($consecutiveFailures -ge 3) { break }
-            } else {
-                $consecutiveFailures = 0
-                if ($label -eq "") { $label = "Dest $i" }
-            }
-            $label2 = Get-KumoParam -IP $IP -ParamId "eParamID_XPT_Destination${i}_Line_2"
-            if ($label2 -eq $null) { $label2 = "" }
-            $labels.Add([PSCustomObject]@{
-                Port = $i; Type = "OUTPUT"; Current_Label = $label; New_Label = ""; Current_Label_2 = $label2; New_Label_2 = ""; Notes = "From KUMO"
-            }) | Out-Null
-            if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
-        }
+    # Script block that each runspace executes
+    $fetchScript = {
+        param([string]$BaseUri, [string]$ParamId1, [string]$ParamId2)
+        $label1 = $null; $label2 = ""
+        try {
+            $r = Invoke-WebRequest -Uri "$BaseUri$ParamId1" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            $json = $r.Content | ConvertFrom-Json
+            if ($json.value_name -and $json.value_name -ne "") { $label1 = $json.value_name }
+            elseif ($json.value -and $json.value -ne "") { $label1 = $json.value }
+        } catch { $label1 = $null }
+        try {
+            $r2 = Invoke-WebRequest -Uri "$BaseUri$ParamId2" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            $json2 = $r2.Content | ConvertFrom-Json
+            if ($json2.value_name -and $json2.value_name -ne "") { $label2 = $json2.value_name }
+            elseif ($json2.value -and $json2.value -ne "") { $label2 = $json2.value }
+        } catch { $label2 = "" }
+        return @{ Label1 = $label1; Label2 = $label2 }
     }
+
+    $baseUri = "http://$IP/config?action=get&configid=0&paramid="
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, $maxParallel)
+    $pool.Open()
+    $jobs = [System.Collections.ArrayList]::new()
+
+    foreach ($req in $requests) {
+        $ps = [PowerShell]::Create().AddScript($fetchScript).AddArgument($baseUri).AddArgument($req[2]).AddArgument($req[3])
+        $ps.RunspacePool = $pool
+        $jobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $req[0]; Type = $req[1]; Default = $req[4] }) | Out-Null
+    }
+
+    # Collect results as they complete
+    $failCount = 0
+    $completed = 0
+    foreach ($job in $jobs) {
+        try {
+            $result = $job.PS.EndInvoke($job.Handle)
+            $label1 = if ($result -and $result.Label1) { $result.Label1 } else { $null }
+            $label2 = if ($result -and $result.Label2) { $result.Label2 } else { "" }
+        } catch {
+            $label1 = $null; $label2 = ""
+        }
+        $job.PS.Dispose()
+
+        if ($label1 -eq $null) {
+            $label1 = $job.Default
+            $failCount++
+        } elseif ($label1 -eq "") {
+            $label1 = $job.Default
+        }
+
+        $labels.Add([PSCustomObject]@{
+            Port = $job.Port; Type = $job.Type; Current_Label = $label1; New_Label = ""
+            Current_Label_2 = $label2; New_Label_2 = ""; Notes = "From KUMO"
+        }) | Out-Null
+
+        $completed++
+        if ($ProgressCallback) { & $ProgressCallback $completed }
+    }
+
+    $pool.Close()
+    $pool.Dispose()
+
+    # If more than half failed, fall back to Telnet
+    $totalPorts = $InputCount + $OutputCount
+    if ($failCount -gt ($totalPorts / 2)) { $restSuccess = $false }
 
     if (-not $restSuccess) {
-        # Telnet fallback
+        # Telnet fallback (sequential - required by protocol)
         $labels.Clear()
         $tcp = $null
         try {
@@ -2954,9 +3010,16 @@ $form.Add_KeyDown({
             $port = $row.Cells["Port"].Value
             $type = $row.Cells["Type"].Value
             foreach ($lbl in $global:allLabels) {
-                if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.New_Label) {
-                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; OldValue=$lbl.New_Label; NewValue="" }
-                    $lbl.New_Label = ""
+                if ($lbl.Port -eq $port -and $lbl.Type -eq $type) {
+                    if ($lbl.New_Label) {
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label"; OldValue=$lbl.New_Label; NewValue="" }
+                        $lbl.New_Label = ""
+                    }
+                    if ($colCurrentL2.Visible -and $lbl.New_Label_2) {
+                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Field="New_Label_2"; OldValue=$lbl.New_Label_2; NewValue="" }
+                        $lbl.New_Label_2 = ""
+                    }
+                    break
                 }
             }
         }
@@ -3852,7 +3915,10 @@ $btnUpload.Add_Click({
     }
 
     $maxLen = $global:maxLabelLength
-    $tooLong = @($changes | Where-Object { $_.New_Label.Trim().Length -gt $maxLen })
+    $tooLong = @($changes | Where-Object {
+        ($_.New_Label -and $_.New_Label.Trim().Length -gt $maxLen) -or
+        ($_.New_Label_2 -and $_.New_Label_2.Trim().Length -gt $maxLen)
+    })
     if ($tooLong.Count -gt 0) {
         $result = [System.Windows.Forms.MessageBox]::Show(
             "$($tooLong.Count) labels exceed the $maxLen-character limit. They may be truncated by the router.`n`nContinue anyway?",
@@ -3944,7 +4010,10 @@ $btnUpload.Add_Click({
     } finally {
         $btnDownload.Enabled   = $global:routerConnected
         $connectButton.Enabled = $true
-        $remainingChanges = @($global:allLabels | Where-Object { $_.New_Label -and $_.New_Label.Trim() -ne "" -and $_.New_Label.Trim() -ne $_.Current_Label })
+        $remainingChanges = @($global:allLabels | Where-Object {
+            ($_.New_Label -and $_.New_Label.Trim() -ne "" -and $_.New_Label.Trim() -ne $_.Current_Label) -or
+            ($_.New_Label_2 -and $_.New_Label_2.Trim() -ne "" -and $_.New_Label_2.Trim() -ne $_.Current_Label_2)
+        })
         $btnUpload.Enabled = ($remainingChanges.Count -gt 0)
         if (($global:routerType -eq "Videohub" -or $global:routerType -eq "Lightware") -and $global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }
     }

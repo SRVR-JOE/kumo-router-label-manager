@@ -16,7 +16,7 @@ class ExcelHandler:
     """Handler for Excel file operations."""
 
     WORKSHEET_NAME = "KUMO_Labels"
-    HEADERS = ["Port", "Type", "Current_Label", "New_Label", "Notes"]
+    HEADERS = ["Port", "Type", "Current_Label", "New_Label", "Current_Label_Line2", "New_Label_Line2", "Notes"]
 
     def __init__(self):
         """Initialize the Excel handler."""
@@ -53,6 +53,15 @@ class ExcelHandler:
         worksheet = workbook[self.WORKSHEET_NAME]
         ports = []
 
+        # Detect column layout from header row
+        header_row = worksheet[1]
+        col_map = {}
+        for idx, cell in enumerate(header_row):
+            if cell.value:
+                col_map[str(cell.value).strip()] = idx
+
+        has_line2 = "Current_Label_Line2" in col_map
+
         # Start from row 2 (skip header)
         for row_idx in range(2, worksheet.max_row + 1):
             row = worksheet[row_idx]
@@ -68,13 +77,24 @@ class ExcelHandler:
 
                 current_label = str(row[2].value).strip() if row[2].value else ""
                 new_label = str(row[3].value).strip() if row[3].value else None
-                notes = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
+
+                if has_line2:
+                    current_label_line2 = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
+                    new_label_line2 = str(row[5].value).strip() if len(row) > 5 and row[5].value else None
+                    notes = str(row[6].value).strip() if len(row) > 6 and row[6].value else ""
+                else:
+                    # Legacy 5-column format: Port, Type, Current_Label, New_Label, Notes
+                    current_label_line2 = ""
+                    new_label_line2 = None
+                    notes = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
 
                 port_data = PortData(
                     port=int(port_value),
                     type=str(row[1].value).strip() if row[1].value else "INPUT",
                     current_label=current_label,
                     new_label=new_label,
+                    current_label_line2=current_label_line2,
+                    new_label_line2=new_label_line2,
                     notes=notes,
                 )
                 ports.append(port_data)
@@ -129,6 +149,8 @@ class ExcelHandler:
                     port_data.type,
                     port_data.current_label,
                     port_data.new_label or "",
+                    port_data.current_label_line2,
+                    port_data.new_label_line2 or "",
                     port_data.notes,
                 )
 
@@ -145,6 +167,9 @@ class ExcelHandler:
         # Apply to all data rows
         max_row = 65 if create_template else len(data.ports) + 1
         type_validation.add(f"B2:B{max_row}")
+
+        # Add data validation for New_Label_Line2 column header (column F)
+        # No special validation needed — just ensure column width accommodates it
         worksheet.add_data_validation(type_validation)
 
         # Auto-fit columns
@@ -169,6 +194,8 @@ class ExcelHandler:
         port_type: str,
         current_label: str = "",
         new_label: str = "",
+        current_label_line2: str = "",
+        new_label_line2: str = "",
         notes: str = "",
     ) -> None:
         """Write a single row to the worksheet."""
@@ -176,7 +203,9 @@ class ExcelHandler:
         worksheet.cell(row=row_idx, column=2, value=port_type)
         worksheet.cell(row=row_idx, column=3, value=current_label)
         worksheet.cell(row=row_idx, column=4, value=new_label)
-        worksheet.cell(row=row_idx, column=5, value=notes)
+        worksheet.cell(row=row_idx, column=5, value=current_label_line2)
+        worksheet.cell(row=row_idx, column=6, value=new_label_line2)
+        worksheet.cell(row=row_idx, column=7, value=notes)
 
         # Center align port and type columns
         worksheet.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center")

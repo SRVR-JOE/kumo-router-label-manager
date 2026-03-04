@@ -189,11 +189,11 @@ class TelnetClient:
 
         logger.info(f"Downloading labels via Telnet from {self.router_ip}")
 
-        labels = {"inputs": [], "outputs": []}
+        labels = {"inputs": [], "outputs": [], "inputs_line2": [], "outputs_line2": []}
         success_count = 0
         port_count = self._port_count
 
-        # Query all inputs
+        # Query all inputs (Line 1 only — Telnet LABEL command does not support Line 2)
         for port in range(1, port_count + 1):
             command = TelnetCommand.query_input(port)
             response = await self._send_command(command)
@@ -209,10 +209,12 @@ class TelnetClient:
             else:
                 labels["inputs"].append(DefaultLabelGenerator.generate_input_label(port))
 
+            labels["inputs_line2"].append("")
+
             # Delay between commands
             await asyncio.sleep(DELAY_TELNET_COMMAND)
 
-        # Query all outputs
+        # Query all outputs (Line 1 only)
         for port in range(1, port_count + 1):
             command = TelnetCommand.query_output(port)
             response = await self._send_command(command)
@@ -227,6 +229,8 @@ class TelnetClient:
                     labels["outputs"].append(DefaultLabelGenerator.generate_output_label(port))
             else:
                 labels["outputs"].append(DefaultLabelGenerator.generate_output_label(port))
+
+            labels["outputs_line2"].append("")
 
             # Delay between commands
             await asyncio.sleep(DELAY_TELNET_COMMAND)

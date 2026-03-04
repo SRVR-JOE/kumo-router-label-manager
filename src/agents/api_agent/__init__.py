@@ -191,14 +191,23 @@ class APIAgent:
             logger.info("No labels to upload")
             return 0, 0, []
 
-        # Convert to upload format
+        # Convert to upload format (Line 1 and Line 2)
         upload_data = []
         for label in labels_to_upload:
-            upload_data.append({
-                "port": label.port_number,
-                "type": label.port_type.value,
-                "label": label.new_label,
-            })
+            if label.new_label is not None and label.new_label != label.current_label:
+                upload_data.append({
+                    "port": label.port_number,
+                    "type": label.port_type.value,
+                    "label": label.new_label,
+                    "line": 1,
+                })
+            if label.new_label_line2 is not None and label.new_label_line2 != label.current_label_line2:
+                upload_data.append({
+                    "port": label.port_number,
+                    "type": label.port_type.value,
+                    "label": label.new_label_line2,
+                    "line": 2,
+                })
 
         success_count = 0
         error_count = 0
@@ -261,26 +270,34 @@ class APIAgent:
             List of Label objects
         """
         labels = []
+        inputs_line2 = labels_dict.get("inputs_line2", [])
+        outputs_line2 = labels_dict.get("outputs_line2", [])
 
         # Convert inputs
         for i, label_text in enumerate(labels_dict.get("inputs", []), start=1):
+            line2 = inputs_line2[i - 1] if i - 1 < len(inputs_line2) else ""
             labels.append(
                 Label(
                     port_number=i,
                     port_type=PortType.INPUT,
                     current_label=label_text,
                     new_label=None,
+                    current_label_line2=line2,
+                    new_label_line2=None,
                 )
             )
 
         # Convert outputs
         for i, label_text in enumerate(labels_dict.get("outputs", []), start=1):
+            line2 = outputs_line2[i - 1] if i - 1 < len(outputs_line2) else ""
             labels.append(
                 Label(
                     port_number=i,
                     port_type=PortType.OUTPUT,
                     current_label=label_text,
                     new_label=None,
+                    current_label_line2=line2,
+                    new_label_line2=None,
                 )
             )
 

@@ -26,8 +26,9 @@ from .router_protocols import (
 
 logger = logging.getLogger(__name__)
 
-# Concurrency limit for parallel requests to avoid overwhelming the router
-MAX_CONCURRENT_REQUESTS = 16
+# Concurrency limit for parallel requests to avoid overwhelming the router.
+# 32 works well for KUMO 6464-12G on a LAN; 16 is safer for smaller models.
+MAX_CONCURRENT_REQUESTS = 32
 
 
 class RestClientError(Exception):
@@ -63,8 +64,13 @@ class RestClient:
             connector = aiohttp.TCPConnector(
                 limit=MAX_CONCURRENT_REQUESTS,
                 keepalive_timeout=30,
+                enable_cleanup_closed=True,
             )
-            timeout = aiohttp.ClientTimeout(total=TIMEOUT_REST_REQUEST)
+            timeout = aiohttp.ClientTimeout(
+                total=TIMEOUT_REST_REQUEST,
+                connect=3,
+                sock_read=TIMEOUT_REST_REQUEST,
+            )
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
@@ -88,7 +94,7 @@ class RestClient:
                 async with self._session.get(url, timeout=req_timeout) as response:
                     if response.status == 200:
                         try:
-                            return await response.json()
+                            return await response.json(content_type=None)
                         except Exception:
                             text = await response.text()
                             return {"value": text.strip()} if text.strip() else None
@@ -135,18 +141,22 @@ class RestClient:
         return "Unknown"
 
     async def detect_port_count(self) -> int:
-        """Detect router size (16, 32, or 64 ports)."""
-        # Check for 64-port
-        endpoint = APIEndpoint.get_source_name(33)
-        result = await self._get(endpoint, timeout=3)
-        if result and ResponseParser.parse_param_response(result):
+        """Detect router size (16, 32, or 64 ports).
+
+        Probes in parallel for faster detection on LAN.
+        """
+        # Probe 64-port and 32-port simultaneously
+        ep64 = APIEndpoint.get_source_name(33)
+        ep32 = APIEndpoint.get_source_name(17)
+        r64, r32 = await asyncio.gather(
+            self._get(ep64, timeout=3),
+            self._get(ep32, timeout=3),
+        )
+
+        if r64 and ResponseParser.parse_param_response(r64):
             self._port_count = 64
             return 64
-
-        # Check for 32-port (try source 17)
-        endpoint = APIEndpoint.get_source_name(17)
-        result = await self._get(endpoint, timeout=3)
-        if result and ResponseParser.parse_param_response(result):
+        if r32 and ResponseParser.parse_param_response(r32):
             self._port_count = 32
             return 32
 
@@ -159,29 +169,30 @@ class RestClient:
         return self._port_count
 
     async def _fetch_label(
-        self, port: int, port_type: str, semaphore: asyncio.Semaphore
-    ) -> Tuple[int, str, Optional[str]]:
+        self, port: int, port_type: str, semaphore: asyncio.Semaphore, line: int = 1
+    ) -> Tuple[int, str, int, Optional[str]]:
         """Fetch a single label with concurrency control.
 
         Args:
             port: Port number
             port_type: 'input' or 'output'
             semaphore: Semaphore for concurrency limiting
+            line: Label line number (1 or 2)
 
         Returns:
-            Tuple of (port_number, port_type, label_or_None)
+            Tuple of (port_number, port_type, line, label_or_None)
         """
         async with semaphore:
             if port_type == "input":
-                endpoint = APIEndpoint.get_source_name(port)
+                endpoint = APIEndpoint.get_source_name(port, line=line)
             else:
-                endpoint = APIEndpoint.get_dest_name(port)
+                endpoint = APIEndpoint.get_dest_name(port, line=line)
 
             result = await self._get(endpoint)
             label = None
             if result:
                 label = ResponseParser.parse_param_response(result)
-            return port, port_type, label
+            return port, port_type, line, label
 
     async def download_labels(
         self, progress_callback=None
@@ -201,16 +212,29 @@ class RestClient:
         port_count = self._port_count
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-        # Build all fetch tasks for inputs and outputs
+        # Build all fetch tasks for inputs and outputs (Line 1 and Line 2)
         tasks = []
         for port in range(1, port_count + 1):
-            tasks.append(self._fetch_label(port, "input", semaphore))
+            tasks.append(self._fetch_label(port, "input", semaphore, line=1))
+            tasks.append(self._fetch_label(port, "input", semaphore, line=2))
         for port in range(1, port_count + 1):
-            tasks.append(self._fetch_label(port, "output", semaphore))
+            tasks.append(self._fetch_label(port, "output", semaphore, line=1))
+            tasks.append(self._fetch_label(port, "output", semaphore, line=2))
 
-        # Execute all fetches concurrently
+        # Execute all fetches concurrently with incremental progress
         total_tasks = len(tasks)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        completed = 0
+
+        async def _tracked_fetch(coro):
+            nonlocal completed
+            result = await coro
+            completed += 1
+            if progress_callback and completed % 16 == 0:
+                await progress_callback(completed, total_tasks)
+            return result
+
+        tracked = [_tracked_fetch(t) for t in tasks]
+        results = await asyncio.gather(*tracked, return_exceptions=True)
 
         if progress_callback:
             await progress_callback(total_tasks, total_tasks)
@@ -218,17 +242,25 @@ class RestClient:
         # Organize results into labels dict
         input_labels = [""] * port_count
         output_labels = [""] * port_count
+        input_labels_line2 = [""] * port_count
+        output_labels_line2 = [""] * port_count
 
         for result in results:
             if isinstance(result, Exception):
                 logger.warning(f"Label fetch error: {result}")
                 continue
 
-            port, port_type, label = result
+            port, port_type, line, label = result
             if port_type == "input":
-                input_labels[port - 1] = label or DefaultLabelGenerator.generate_input_label(port)
+                if line == 1:
+                    input_labels[port - 1] = label or DefaultLabelGenerator.generate_input_label(port)
+                else:
+                    input_labels_line2[port - 1] = label or ""
             else:
-                output_labels[port - 1] = label or DefaultLabelGenerator.generate_output_label(port)
+                if line == 1:
+                    output_labels[port - 1] = label or DefaultLabelGenerator.generate_output_label(port)
+                else:
+                    output_labels_line2[port - 1] = label or ""
 
         # Fill any gaps with defaults
         for i in range(port_count):
@@ -237,25 +269,30 @@ class RestClient:
             if not output_labels[i]:
                 output_labels[i] = DefaultLabelGenerator.generate_output_label(i + 1)
 
-        labels = {"inputs": input_labels, "outputs": output_labels}
+        labels = {
+            "inputs": input_labels,
+            "outputs": output_labels,
+            "inputs_line2": input_labels_line2,
+            "outputs_line2": output_labels_line2,
+        }
 
         return Protocol.REST, labels
 
     async def upload_label(
-        self, port: int, port_type: str, label: str
+        self, port: int, port_type: str, label: str, line: int = 1
     ) -> Tuple[bool, Optional[str]]:
         """Upload a single label using the real AJA KUMO REST API."""
         if port_type.upper() == "INPUT":
-            endpoint = APIEndpoint.set_source_name(port, label)
+            endpoint = APIEndpoint.set_source_name(port, label, line=line)
         elif port_type.upper() == "OUTPUT":
-            endpoint = APIEndpoint.set_dest_name(port, label)
+            endpoint = APIEndpoint.set_dest_name(port, label, line=line)
         else:
             return False, f"Invalid port type: {port_type}"
 
         result = await self._get(endpoint)
         if result is not None:
             return True, None
-        return False, f"Failed to set {port_type} {port} label"
+        return False, f"Failed to set {port_type} {port} line {line} label"
 
     async def _upload_single(
         self, label_data: Dict[str, Any], semaphore: asyncio.Semaphore
@@ -265,7 +302,8 @@ class RestClient:
             port = label_data["port"]
             port_type = label_data["type"]
             label = label_data["label"]
-            success, error_msg = await self.upload_label(port, port_type, label)
+            line = label_data.get("line", 1)
+            success, error_msg = await self.upload_label(port, port_type, label, line=line)
             return success, error_msg, label_data
 
     async def upload_labels_batch(

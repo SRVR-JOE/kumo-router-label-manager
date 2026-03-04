@@ -375,6 +375,6 @@ class TestDefaultLabelGenerator:
         result = DefaultLabelGenerator.generate_default_labels(port_count=4)
         assert result["outputs"] == ["Dest 1", "Dest 2", "Dest 3", "Dest 4"]
 
-    def test_generate_default_labels_returns_dict_with_two_keys(self):
+    def test_generate_default_labels_returns_dict_with_expected_keys(self):
         result = DefaultLabelGenerator.generate_default_labels()
-        assert set(result.keys()) == {"inputs", "outputs"}
+        assert set(result.keys()) == {"inputs", "outputs", "inputs_line2", "outputs_line2"}

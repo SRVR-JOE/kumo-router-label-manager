@@ -10,7 +10,8 @@ from .schema import FileData, PortData
 class CSVHandler:
     """Handler for CSV file operations."""
 
-    COLUMNS = ["Port", "Type", "Current_Label", "New_Label", "Notes"]
+    COLUMNS = ["Port", "Type", "Current_Label", "New_Label", "Current_Label_Line2", "New_Label_Line2", "Notes"]
+    REQUIRED_COLUMNS = ["Port", "Type", "Current_Label", "New_Label", "Notes"]
 
     def __init__(self):
         """Initialize the CSV handler."""
@@ -43,6 +44,8 @@ class CSVHandler:
                     "Type": str,
                     "Current_Label": str,
                     "New_Label": str,
+                    "Current_Label_Line2": str,
+                    "New_Label_Line2": str,
                     "Notes": str,
                 },
                 keep_default_na=False,  # Don't convert empty strings to NaN
@@ -50,12 +53,12 @@ class CSVHandler:
         except Exception as e:
             raise ValueError(f"Failed to read CSV file: {e}")
 
-        # Validate columns
-        if not all(col in df.columns for col in self.COLUMNS):
-            missing = set(self.COLUMNS) - set(df.columns)
+        # Validate required columns (Line 2 columns are optional for backward compat)
+        if not all(col in df.columns for col in self.REQUIRED_COLUMNS):
+            missing = set(self.REQUIRED_COLUMNS) - set(df.columns)
             raise ValueError(
                 f"CSV missing required columns: {missing}. "
-                f"Expected: {self.COLUMNS}"
+                f"Expected: {self.REQUIRED_COLUMNS}"
             )
 
         ports = []
@@ -64,6 +67,12 @@ class CSVHandler:
                 # Handle NaN values
                 current_label = row["Current_Label"] if pd.notna(row["Current_Label"]) else ""
                 new_label = row["New_Label"] if pd.notna(row["New_Label"]) else None
+                current_label_line2 = row.get("Current_Label_Line2", "")
+                if pd.isna(current_label_line2):
+                    current_label_line2 = ""
+                new_label_line2 = row.get("New_Label_Line2", None)
+                if pd.isna(new_label_line2) or (isinstance(new_label_line2, str) and new_label_line2.strip() == ""):
+                    new_label_line2 = None
                 notes = row["Notes"] if pd.notna(row["Notes"]) else ""
 
                 port_data = PortData(
@@ -71,6 +80,8 @@ class CSVHandler:
                     type=str(row["Type"]).strip(),
                     current_label=str(current_label).strip(),
                     new_label=str(new_label).strip() if new_label else None,
+                    current_label_line2=str(current_label_line2).strip(),
+                    new_label_line2=str(new_label_line2).strip() if new_label_line2 else None,
                     notes=str(notes).strip(),
                 )
                 ports.append(port_data)
@@ -98,6 +109,8 @@ class CSVHandler:
                 "Type": port_data.type,
                 "Current_Label": port_data.current_label,
                 "New_Label": port_data.new_label or "",
+                "Current_Label_Line2": port_data.current_label_line2,
+                "New_Label_Line2": port_data.new_label_line2 or "",
                 "Notes": port_data.notes,
             })
 
@@ -131,6 +144,8 @@ class CSVHandler:
                 "Type": "INPUT",
                 "Current_Label": "",
                 "New_Label": "",
+                "Current_Label_Line2": "",
+                "New_Label_Line2": "",
                 "Notes": "",
             })
 
@@ -141,6 +156,8 @@ class CSVHandler:
                 "Type": "OUTPUT",
                 "Current_Label": "",
                 "New_Label": "",
+                "Current_Label_Line2": "",
+                "New_Label_Line2": "",
                 "Notes": "",
             })
 

@@ -31,6 +31,8 @@ class Label:
     port_type: PortType
     current_label: str = ""
     new_label: Optional[str] = None
+    current_label_line2: str = ""
+    new_label_line2: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate label data after initialization."""
@@ -92,15 +94,20 @@ class Label:
         """Check if there are pending changes to apply.
 
         Returns:
-            True if new_label is set and different from current_label
+            True if new_label or new_label_line2 is set and different from current
         """
-        return self.new_label is not None and self.new_label != self.current_label
+        line1 = self.new_label is not None and self.new_label != self.current_label
+        line2 = self.new_label_line2 is not None and self.new_label_line2 != self.current_label_line2
+        return line1 or line2
 
     def apply_changes(self) -> None:
-        """Apply new label to current label and clear new_label."""
+        """Apply new labels to current labels and clear new values."""
         if self.new_label is not None:
             self.current_label = self.new_label
             self.new_label = None
+        if self.new_label_line2 is not None:
+            self.current_label_line2 = self.new_label_line2
+            self.new_label_line2 = None
 
     def to_dict(self) -> dict:
         """Convert label to dictionary representation.
@@ -113,6 +120,8 @@ class Label:
             "port_type": self.port_type.value,
             "current_label": self.current_label,
             "new_label": self.new_label,
+            "current_label_line2": self.current_label_line2,
+            "new_label_line2": self.new_label_line2,
             "has_changes": self.has_changes(),
         }
 
@@ -138,6 +147,8 @@ class Label:
             port_type=port_type,
             current_label=data.get("current_label", ""),
             new_label=data.get("new_label"),
+            current_label_line2=data.get("current_label_line2", ""),
+            new_label_line2=data.get("new_label_line2"),
         )
 
     def __str__(self) -> str:

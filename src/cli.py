@@ -63,12 +63,16 @@ class RouterLabel:
     port_type: str          # "INPUT" or "OUTPUT"
     current_label: str = ""
     new_label: Optional[str] = None
+    current_label_line2: str = ""
+    new_label_line2: Optional[str] = None
 
     def has_changes(self) -> bool:
-        return self.new_label is not None and self.new_label != self.current_label
+        line1 = self.new_label is not None and self.new_label != self.current_label
+        line2 = self.new_label_line2 is not None and self.new_label_line2 != self.current_label_line2
+        return line1 or line2
 
     def __str__(self) -> str:
-        change = f" -> {self.new_label}" if self.has_changes() else ""
+        change = f" -> {self.new_label}" if self.new_label is not None and self.new_label != self.current_label else ""
         return f"Port {self.port_number} ({self.port_type}): {self.current_label}{change}"
 
 
@@ -724,14 +728,21 @@ def display_router_labels_table(
         padding=(0, 1),
     )
     input_table.add_column("#", style="dim", justify="right", width=4)
-    input_table.add_column("Label", style="white", min_width=20)
-    input_table.add_column("Change", style="yellow", min_width=15)
+    input_table.add_column("Label", style="white", min_width=16)
+    input_table.add_column("Line 2", style="dim white", min_width=12)
+    input_table.add_column("Change", style="yellow", min_width=12)
 
     for lbl in sorted(inputs, key=lambda l: l.port_number):
-        change = lbl.new_label if lbl.has_changes() else ""
+        change_parts = []
+        if lbl.new_label is not None and lbl.new_label != lbl.current_label:
+            change_parts.append(lbl.new_label)
+        if lbl.new_label_line2 is not None and lbl.new_label_line2 != lbl.current_label_line2:
+            change_parts.append(f"L2:{lbl.new_label_line2}")
+        change = " | ".join(change_parts)
         input_table.add_row(
             str(lbl.port_number),
             lbl.current_label or "[dim italic]empty[/dim italic]",
+            lbl.current_label_line2 or "[dim]-[/dim]",
             Text(change, style="bold yellow") if change else Text("-", style="dim"),
         )
 
@@ -744,14 +755,21 @@ def display_router_labels_table(
         padding=(0, 1),
     )
     output_table.add_column("#", style="dim", justify="right", width=4)
-    output_table.add_column("Label", style="white", min_width=20)
-    output_table.add_column("Change", style="yellow", min_width=15)
+    output_table.add_column("Label", style="white", min_width=16)
+    output_table.add_column("Line 2", style="dim white", min_width=12)
+    output_table.add_column("Change", style="yellow", min_width=12)
 
     for lbl in sorted(outputs, key=lambda l: l.port_number):
-        change = lbl.new_label if lbl.has_changes() else ""
+        change_parts = []
+        if lbl.new_label is not None and lbl.new_label != lbl.current_label:
+            change_parts.append(lbl.new_label)
+        if lbl.new_label_line2 is not None and lbl.new_label_line2 != lbl.current_label_line2:
+            change_parts.append(f"L2:{lbl.new_label_line2}")
+        change = " | ".join(change_parts)
         output_table.add_row(
             str(lbl.port_number),
             lbl.current_label or "[dim italic]empty[/dim italic]",
+            lbl.current_label_line2 or "[dim]-[/dim]",
             Text(change, style="bold yellow") if change else Text("-", style="dim"),
         )
 
@@ -784,6 +802,8 @@ def labels_to_filedata(labels: List[Label]) -> FileData:
             type=label.port_type.value,
             current_label=label.current_label,
             new_label=label.new_label,
+            current_label_line2=label.current_label_line2,
+            new_label_line2=label.new_label_line2,
             notes="",
         ))
     return FileData(ports=ports)
@@ -799,6 +819,8 @@ def filedata_to_labels(data: FileData) -> List[Label]:
             port_type=port_type,
             current_label=port_data.current_label,
             new_label=port_data.new_label,
+            current_label_line2=port_data.current_label_line2,
+            new_label_line2=port_data.new_label_line2,
         ))
     return labels
 
@@ -811,6 +833,8 @@ def domain_labels_to_router_labels(labels: List[Label]) -> List[RouterLabel]:
             port_type=l.port_type.value,
             current_label=l.current_label,
             new_label=l.new_label,
+            current_label_line2=l.current_label_line2,
+            new_label_line2=l.new_label_line2,
         )
         for l in labels
     ]
