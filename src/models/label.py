@@ -33,6 +33,8 @@ class Label:
     new_label: Optional[str] = None
     current_label_line2: str = ""
     new_label_line2: Optional[str] = None
+    current_color: int = 4       # 1-9, default blue
+    new_color: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Validate label data after initialization."""
@@ -100,20 +102,24 @@ class Label:
         """Check if there are pending changes to apply.
 
         Returns:
-            True if new_label or new_label_line2 is set and different from current
+            True if new_label, new_label_line2, or new_color is set and different from current
         """
         line1 = self.new_label is not None and self.new_label != self.current_label
         line2 = self.new_label_line2 is not None and self.new_label_line2 != self.current_label_line2
-        return line1 or line2
+        color = self.new_color is not None and self.new_color != self.current_color
+        return line1 or line2 or color
 
     def apply_changes(self) -> None:
-        """Apply new labels to current labels and clear new values."""
+        """Apply new labels/color to current values and clear new values."""
         if self.new_label is not None:
             self.current_label = self.new_label
             self.new_label = None
         if self.new_label_line2 is not None:
             self.current_label_line2 = self.new_label_line2
             self.new_label_line2 = None
+        if self.new_color is not None:
+            self.current_color = self.new_color
+            self.new_color = None
 
     def to_dict(self) -> dict:
         """Convert label to dictionary representation.
@@ -128,6 +134,8 @@ class Label:
             "new_label": self.new_label,
             "current_label_line2": self.current_label_line2,
             "new_label_line2": self.new_label_line2,
+            "current_color": self.current_color,
+            "new_color": self.new_color,
             "has_changes": self.has_changes(),
         }
 
@@ -155,6 +163,8 @@ class Label:
             new_label=data.get("new_label"),
             current_label_line2=data.get("current_label_line2", ""),
             new_label_line2=data.get("new_label_line2"),
+            current_color=data.get("current_color", 4),
+            new_color=data.get("new_color"),
         )
 
     def __str__(self) -> str:

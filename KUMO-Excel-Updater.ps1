@@ -338,6 +338,8 @@ function Get-VideohubCurrentLabels {
             Type          = "INPUT"
             Current_Label = $label
             New_Label     = ""
+            Current_Color = 4
+            New_Color     = $null
             Notes         = "From $($state.DeviceName) TCP 9990"
         }
         Write-Host "  Input $port`: $label" -ForegroundColor White
@@ -357,6 +359,8 @@ function Get-VideohubCurrentLabels {
             Type          = "OUTPUT"
             Current_Label = $label
             New_Label     = ""
+            Current_Color = 4
+            New_Color     = $null
             Notes         = "From $($state.DeviceName) TCP 9990"
         }
         Write-Host "  Output $port`: $label" -ForegroundColor White
@@ -592,21 +596,71 @@ function Get-KumoCurrentLabels {
     }
     $pool.Close(); $pool.Dispose()
 
+    # Download button colors in parallel (KUMO only)
+    $colorLookup = @{}
+    try {
+        Write-Host "  Downloading button colors..." -ForegroundColor Cyan
+        $colorPool = [RunspaceFactory]::CreateRunspacePool(1, $maxParallel)
+        $colorPool.Open()
+        $colorJobs = [System.Collections.ArrayList]::new()
+
+        $colorFetchScript = {
+            param([string]$Uri)
+            try {
+                $r = Invoke-WebRequest -Uri $Uri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+                $j = $r.Content | ConvertFrom-Json
+                $val = if ($j.value) { $j.value } else { "" }
+                if ($val -match '"classes"\s*:\s*"color_(\d+)"') {
+                    return [int]$matches[1]
+                }
+                return 4
+            } catch { return 4 }
+        }
+
+        for ($i = 1; $i -le $inputCount; $i++) {
+            $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument("${baseUri}eParamID_Button_Settings_$i")
+            $ps.RunspacePool = $colorPool
+            $colorJobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $i; Type = "INPUT" }) | Out-Null
+        }
+        for ($i = 1; $i -le $outputCount; $i++) {
+            $btnIdx = $i + 64
+            $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument("${baseUri}eParamID_Button_Settings_$btnIdx")
+            $ps.RunspacePool = $colorPool
+            $colorJobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $i; Type = "OUTPUT" }) | Out-Null
+        }
+
+        foreach ($cj in $colorJobs) {
+            try { $colorVal = $cj.PS.EndInvoke($cj.Handle) } catch { $colorVal = 4 }
+            $cj.PS.Dispose()
+            if ($colorVal -is [System.Collections.ObjectModel.Collection[psobject]]) { $colorVal = $colorVal[0] }
+            if ($colorVal -lt 1 -or $colorVal -gt 9) { $colorVal = 4 }
+            $colorLookup["$($cj.Type)_$($cj.Port)"] = [int]$colorVal
+        }
+        $colorPool.Close(); $colorPool.Dispose()
+        Write-Host "  Downloaded $($colorLookup.Count) button colors" -ForegroundColor Green
+    } catch {
+        Write-Warning "Color download failed (non-fatal): $($_.Exception.Message)"
+    }
+
     # Build allLabels with both Line 1 and Line 2
     for ($i = 1; $i -le $inputCount; $i++) {
         $l1 = $labelLookup["INPUT_${i}_1"]; $l2 = $labelLookup["INPUT_${i}_2"]
+        $curColor = if ($colorLookup.ContainsKey("INPUT_$i")) { $colorLookup["INPUT_$i"] } else { 4 }
         $allLabels += [PSCustomObject]@{
             Port = $i; Type = "INPUT"; Current_Label = $l1; Current_Label_Line2 = $l2
-            New_Label = ""; New_Label_Line2 = ""; Notes = "From $routerName REST API"
+            New_Label = ""; New_Label_Line2 = ""; Current_Color = $curColor; New_Color = $null
+            Notes = "From $routerName REST API"
         }
         $line2Disp = if ($l2) { " | $l2" } else { "" }
         Write-Host "  INPUT $i`: $l1$line2Disp" -ForegroundColor White
     }
     for ($i = 1; $i -le $outputCount; $i++) {
         $l1 = $labelLookup["OUTPUT_${i}_1"]; $l2 = $labelLookup["OUTPUT_${i}_2"]
+        $curColor = if ($colorLookup.ContainsKey("OUTPUT_$i")) { $colorLookup["OUTPUT_$i"] } else { 4 }
         $allLabels += [PSCustomObject]@{
             Port = $i; Type = "OUTPUT"; Current_Label = $l1; Current_Label_Line2 = $l2
-            New_Label = ""; New_Label_Line2 = ""; Notes = "From $routerName REST API"
+            New_Label = ""; New_Label_Line2 = ""; Current_Color = $curColor; New_Color = $null
+            Notes = "From $routerName REST API"
         }
         $line2Disp = if ($l2) { " | $l2" } else { "" }
         Write-Host "  OUTPUT $i`: $l1$line2Disp" -ForegroundColor White
@@ -664,6 +718,8 @@ function Get-KumoCurrentLabels {
                         Type          = "INPUT"
                         Current_Label = $label
                         New_Label     = ""
+                        Current_Color = 4
+                        New_Color     = $null
                         Notes         = "Retrieved via Telnet"
                     }
 
@@ -675,6 +731,8 @@ function Get-KumoCurrentLabels {
                         Type          = "INPUT"
                         Current_Label = "Input $i"
                         New_Label     = ""
+                        Current_Color = 4
+                        New_Color     = $null
                         Notes         = "Default (telnet query failed)"
                     }
                 }
@@ -712,6 +770,8 @@ function Get-KumoCurrentLabels {
                         Type          = "OUTPUT"
                         Current_Label = $label
                         New_Label     = ""
+                        Current_Color = 4
+                        New_Color     = $null
                         Notes         = "Retrieved via Telnet"
                     }
 
@@ -723,6 +783,8 @@ function Get-KumoCurrentLabels {
                         Type          = "OUTPUT"
                         Current_Label = "Output $i"
                         New_Label     = ""
+                        Current_Color = 4
+                        New_Color     = $null
                         Notes         = "Default (telnet query failed)"
                     }
                 }
@@ -749,6 +811,8 @@ function Get-KumoCurrentLabels {
                 Type          = "INPUT"
                 Current_Label = "Input $i"
                 New_Label     = ""
+                Current_Color = 4
+                New_Color     = $null
                 Notes         = "Default (download failed)"
             }
         }
@@ -759,6 +823,8 @@ function Get-KumoCurrentLabels {
                 Type          = "OUTPUT"
                 Current_Label = "Output $i"
                 New_Label     = ""
+                Current_Color = 4
+                New_Color     = $null
                 Notes         = "Default (download failed)"
             }
         }
@@ -1007,6 +1073,8 @@ function New-RouterLabelTemplate {
             Current_Label_Line2 = $curLine2
             New_Label           = ""
             New_Label_Line2     = ""
+            Current_Color       = 4
+            New_Color           = ""
             Notes               = "Enter your desired label"
         }
     }
@@ -1021,6 +1089,8 @@ function New-RouterLabelTemplate {
             Current_Label_Line2 = $curLine2
             New_Label           = ""
             New_Label_Line2     = ""
+            Current_Color       = 4
+            New_Color           = ""
             Notes               = "Enter your desired label"
         }
     }
@@ -1083,7 +1153,7 @@ function Get-ExcelLabelData {
             }
         }
 
-        # Filter for rows with new labels (Line 1 or Line 2)
+        # Filter for rows with new labels (Line 1, Line 2, or Color)
         $filteredData = $data | Where-Object {
             ($_.New_Label -and
              $_.New_Label.ToString().Trim() -ne "" -and
@@ -1091,7 +1161,11 @@ function Get-ExcelLabelData {
             ($_.PSObject.Properties.Name -contains "New_Label_Line2" -and
              $_.New_Label_Line2 -and
              $_.New_Label_Line2.ToString().Trim() -ne "" -and
-             $_.New_Label_Line2 -ne $_.Current_Label_Line2)
+             $_.New_Label_Line2 -ne $_.Current_Label_Line2) -or
+            ($_.PSObject.Properties.Name -contains "New_Color" -and
+             $_.New_Color -ne $null -and
+             $_.New_Color.ToString().Trim() -ne "" -and
+             $_.New_Color.ToString() -ne $_.Current_Color.ToString())
         }
 
         Write-Host "Found $($filteredData.Count) labels to update" -ForegroundColor Green
@@ -1175,12 +1249,38 @@ function Update-KumoLabelsREST {
         }
     }
 
+    # Upload changed button colors (KUMO only)
+    $colorChangeCount = 0
+    foreach ($item in $LabelData) {
+        $hasNewColor = $item.PSObject.Properties.Name -contains "New_Color"
+        if ($hasNewColor -and $item.New_Color -ne $null -and $item.New_Color.ToString().Trim() -ne "") {
+            $newColorId = [int]$item.New_Color
+            $curColorId = if ($item.PSObject.Properties.Name -contains "Current_Color" -and $item.Current_Color) { [int]$item.Current_Color } else { 4 }
+            if ($newColorId -ne $curColorId -and $newColorId -ge 1 -and $newColorId -le 9) {
+                try {
+                    $btnIdx = if ($item.Type.ToUpper() -eq "INPUT") { $item.Port } else { [int]$item.Port + 64 }
+                    $colorJson = "{`"classes`":`"color_$newColorId`"}"
+                    $encodedColor = [System.Uri]::EscapeDataString($colorJson)
+                    $colorUri = "http://$IP/config?action=set&configid=0&paramid=eParamID_Button_Settings_$btnIdx&value=$encodedColor"
+
+                    Write-Host "  Setting $($item.Type) $($item.Port) color -> $newColorId" -ForegroundColor Magenta
+                    $response = Invoke-SecureWebRequest -Uri $colorUri -TimeoutSec 5 -UseBasicParsing -ForceHTTP:$ForceHTTP
+                    $colorChangeCount++
+                    Write-Host "  OK  Color set" -ForegroundColor Green
+                } catch {
+                    Write-Host "  FAIL  Color set failed: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+        }
+    }
+
     Write-Host "`nUpdate Summary:" -ForegroundColor Yellow
-    Write-Host "  Success: $successCount" -ForegroundColor Green
+    Write-Host "  Labels: $successCount" -ForegroundColor Green
+    if ($colorChangeCount -gt 0) { Write-Host "  Colors: $colorChangeCount" -ForegroundColor Green }
     Write-Host "  Errors: $errorCount" -ForegroundColor Red
 
     # If all REST updates failed, throw so caller can fall back to Telnet
-    if ($successCount -eq 0 -and $errorCount -gt 0) {
+    if ($successCount -eq 0 -and $errorCount -gt 0 -and $colorChangeCount -eq 0) {
         throw "All REST API updates failed ($errorCount errors)"
     }
 }
@@ -1386,7 +1486,7 @@ if (-not $labelData -or $labelData.Count -eq 0) {
 
 # Show preview
 Write-Host "`nLabels to update:" -ForegroundColor Yellow
-$labelData | Format-Table Port, Type, Current_Label, Current_Label_Line2, New_Label, New_Label_Line2 -AutoSize
+$labelData | Format-Table Port, Type, Current_Label, Current_Label_Line2, New_Label, New_Label_Line2, Current_Color, New_Color -AutoSize
 
 if ($TestOnly) {
     Write-Host "Test mode - no changes made" -ForegroundColor Yellow

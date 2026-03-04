@@ -707,6 +707,19 @@ $clrStatusBar     = [System.Drawing.Color]::FromArgb(25, 20, 35)
 $clrSelectedRow   = [System.Drawing.Color]::FromArgb(103, 58, 183)
 $clrAltRow        = [System.Drawing.Color]::FromArgb(45, 40, 60)
 
+# --- KUMO Button Color Presets (1-9) ------------------------------------------
+$script:kumoColors = @{
+    1 = @{ Name = "Red";         IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#cb7676"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#fe0000") }
+    2 = @{ Name = "Orange";      IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#e6a52e"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#f76700") }
+    3 = @{ Name = "Yellow";      IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#d9cb7e"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#d7af00") }
+    4 = @{ Name = "Blue";        IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#87b4c8"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#009af4") }
+    5 = @{ Name = "Teal";        IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#64c896"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#00a263") }
+    6 = @{ Name = "Light Green"; IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#ade68e"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#60b71f") }
+    7 = @{ Name = "Indigo";      IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#7888cb"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#3a5ef6") }
+    8 = @{ Name = "Purple";      IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#9b8ce1"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#8100f4") }
+    9 = @{ Name = "Pink";        IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#c84b91"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#f30088") }
+}
+
 # --- AJA KUMO REST API Helpers -----------------------------------------------
 
 function Get-KumoParam {
@@ -982,7 +995,7 @@ function Download-KumoLabels {
 
         $labels.Add([PSCustomObject]@{
             Port = $job.Port; Type = $job.Type; Current_Label = $label1; Current_Label_2 = $label2
-            New_Label = ""; New_Label_2 = ""; Notes = "From KUMO"
+            New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "From KUMO"
         }) | Out-Null
 
         $completed++
@@ -1017,7 +1030,7 @@ function Download-KumoLabels {
                     $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Input $i" }
                 } catch { $label = "Input $i" }
                 $labels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "Via Telnet"
+                    Port = $i; Type = "INPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "Via Telnet"
                 }) | Out-Null
                 if ($ProgressCallback) { & $ProgressCallback $i }
             }
@@ -1029,7 +1042,7 @@ function Download-KumoLabels {
                     $label = if ($resp -and $resp -match '"([^"]+)"') { $matches[1] } else { "Output $i" }
                 } catch { $label = "Output $i" }
                 $labels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "Via Telnet"
+                    Port = $i; Type = "OUTPUT"; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "Via Telnet"
                 }) | Out-Null
                 if ($ProgressCallback) { & $ProgressCallback ($InputCount + $i) }
             }
@@ -1517,14 +1530,14 @@ function Download-RouterLabels {
                 $zeroIdx = $i - 1
                 $label = if ($inputLabels.ContainsKey($zeroIdx)) { $inputLabels[$zeroIdx] } else { "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
+                    Port = $i; Type = "INPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "From Videohub"
                 }) | Out-Null
             }
             for ($i = 1; $i -le $outputCount; $i++) {
                 $zeroIdx = $i - 1
                 $label = if ($outputLabels.ContainsKey($zeroIdx)) { $outputLabels[$zeroIdx] } else { "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Videohub"
+                    Port = $i; Type = "OUTPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "From Videohub"
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
@@ -1552,13 +1565,13 @@ function Download-RouterLabels {
             for ($i = 1; $i -le $inputCount; $i++) {
                 $label = if ($inputLabels.ContainsKey($i)) { $inputLabels[$i] } else { "Input $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "INPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
+                    Port = $i; Type = "INPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "From Lightware"
                 }) | Out-Null
             }
             for ($i = 1; $i -le $outputCount; $i++) {
                 $label = if ($outputLabels.ContainsKey($i)) { $outputLabels[$i] } else { "Output $i" }
                 $global:allLabels.Add([PSCustomObject]@{
-                    Port = $i; Type = "OUTPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = "From Lightware"
+                    Port = $i; Type = "OUTPUT"; Router = $IP; Current_Label = $label; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "From Lightware"
                 }) | Out-Null
             }
             if ($ProgressCallback) { & $ProgressCallback 100 }
@@ -1571,6 +1584,61 @@ function Download-RouterLabels {
             }
             if ($global:allLabels.Count -eq 0) {
                 Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
+            }
+
+            # --- Download button colors (KUMO only, parallel) ---
+            try {
+                $colorRequests = [System.Collections.ArrayList]::new()
+                $inCount = $global:routerInputCount
+                $outCount = $global:routerOutputCount
+                for ($ci = 1; $ci -le $inCount; $ci++) {
+                    $colorRequests.Add(@($ci, "INPUT", "eParamID_Button_Settings_$ci")) | Out-Null
+                }
+                for ($ci = 1; $ci -le $outCount; $ci++) {
+                    $colorRequests.Add(@($ci, "OUTPUT", "eParamID_Button_Settings_$($ci + 64)")) | Out-Null
+                }
+
+                $colorFetchScript = {
+                    param([string]$BaseUri, [string]$ParamId)
+                    try {
+                        $r = Invoke-WebRequest -Uri "$BaseUri$ParamId" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+                        $json = $r.Content | ConvertFrom-Json
+                        $val = if ($json.value_name -and $json.value_name -ne "") { $json.value_name } elseif ($json.value -and $json.value -ne "") { $json.value } else { $null }
+                        if ($val) {
+                            $parsed = $val | ConvertFrom-Json -ErrorAction SilentlyContinue
+                            if ($parsed -and $parsed.classes -and $parsed.classes -match 'color_(\d+)') { return [int]$matches[1] }
+                        }
+                    } catch { }
+                    return 4
+                }
+
+                $colorPool = [RunspaceFactory]::CreateRunspacePool(1, 24)
+                $colorPool.Open()
+                $colorJobs = [System.Collections.ArrayList]::new()
+
+                foreach ($creq in $colorRequests) {
+                    $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument($baseUri).AddArgument($creq[2])
+                    $ps.RunspacePool = $colorPool
+                    $colorJobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $creq[0]; Type = $creq[1] }) | Out-Null
+                }
+
+                foreach ($cjob in $colorJobs) {
+                    $colorId = 4
+                    try {
+                        $cresult = $cjob.PS.EndInvoke($cjob.Handle)
+                        if ($cresult -ne $null) { $colorId = [int]$cresult }
+                    } catch { }
+                    $cjob.PS.Dispose()
+
+                    if ($colorId -lt 1 -or $colorId -gt 9) { $colorId = 4 }
+                    $matchLabel = $global:allLabels | Where-Object { $_.Port -eq $cjob.Port -and $_.Type -eq $cjob.Type -and $_.Router -eq $IP } | Select-Object -First 1
+                    if ($matchLabel) { $matchLabel.Color = $colorId }
+                }
+
+                $colorPool.Close()
+                $colorPool.Dispose()
+            } catch {
+                Write-ErrorLog "COLOR-DL" "Color download failed (non-fatal): $($_.Exception.Message)" "WARN"
             }
         }
     } catch {
@@ -2300,6 +2368,20 @@ $btnClearNew.Cursor = [System.Windows.Forms.Cursors]::Hand
 $btnClearNew.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $filterRail.Controls.Add($btnClearNew)
 
+# Auto-Color by Name button (KUMO only)
+$btnAutoColor = New-Object System.Windows.Forms.Button
+$btnAutoColor.Text = "Auto-Color"
+$btnAutoColor.Location = New-Object System.Drawing.Point(884, 7)
+$btnAutoColor.Size = New-Object System.Drawing.Size(90, 28)
+$btnAutoColor.BackColor = $clrField
+$btnAutoColor.ForeColor = $clrText
+$btnAutoColor.FlatStyle = "Flat"
+$btnAutoColor.FlatAppearance.BorderColor = $clrBorder
+$btnAutoColor.Cursor = [System.Windows.Forms.Cursors]::Hand
+$btnAutoColor.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$btnAutoColor.Visible = $false  # Shown only for KUMO
+$filterRail.Controls.Add($btnAutoColor)
+
 # Search box (right-aligned in filter rail)
 $searchBox = New-Object System.Windows.Forms.TextBox
 $searchBox.Size = New-Object System.Drawing.Size(170, 24)
@@ -2432,9 +2514,24 @@ $colRouter.ReadOnly = $true
 $colRouter.FillWeight = 12
 $colRouter.MinimumWidth = 80
 
+# Color column (ComboBox, KUMO only)
+$colColor = New-Object System.Windows.Forms.DataGridViewComboBoxColumn
+$colColor.Name = "Color"
+$colColor.HeaderText = "Color"
+$colColor.FillWeight = 10
+$colColor.MinimumWidth = 80
+$colColor.FlatStyle = "Flat"
+$colColor.DisplayStyle = "Nothing"  # Only show dropdown on edit
+$colColor.Visible = $false  # Hidden by default, shown for KUMO
+foreach ($cid in 1..9) {
+    $cname = $script:kumoColors[$cid].Name
+    $colColor.Items.Add("$cid-$cname") | Out-Null
+}
+
 $dataGrid.Columns.Add($colPort)      | Out-Null
 $dataGrid.Columns.Add($colType)      | Out-Null
 $dataGrid.Columns.Add($colRouter)    | Out-Null
+$dataGrid.Columns.Add($colColor)     | Out-Null
 $dataGrid.Columns.Add($colCurrent)   | Out-Null
 $dataGrid.Columns.Add($colCurrentL2) | Out-Null
 $dataGrid.Columns.Add($colNew)       | Out-Null
@@ -2512,6 +2609,61 @@ $dataGrid.Add_CellPainting({
         return
     }
 
+    # -- Color column: colored rounded rectangle --
+    if ($sender.Columns[$e.ColumnIndex].Name -eq "Color") {
+        $e.PaintBackground($e.ClipBounds, $true)
+        $val = if ($e.Value) { $e.Value.ToString() } else { "" }
+
+        if ($val -match '^(\d+)-') {
+            $cId = [int]$matches[1]
+            if ($script:kumoColors.ContainsKey($cId)) {
+                $idleClr = $script:kumoColors[$cId].IdleColor
+                $cName   = $script:kumoColors[$cId].Name
+
+                $badgeRect = New-Object System.Drawing.RectangleF(
+                    ($e.CellBounds.X + 4),
+                    ($e.CellBounds.Y + ($e.CellBounds.Height - 18) / 2),
+                    ($e.CellBounds.Width - 8),
+                    18
+                )
+
+                $g = $e.Graphics
+                $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+                $badgePath = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $bx = [int]$badgeRect.X; $by = [int]$badgeRect.Y; $bw = [int]$badgeRect.Width; $bh = [int]$badgeRect.Height
+                $rd = 4
+                $badgePath.AddArc($bx, $by, $rd*2, $rd*2, 180, 90)
+                $badgePath.AddArc($bx+$bw-$rd*2, $by, $rd*2, $rd*2, 270, 90)
+                $badgePath.AddArc($bx+$bw-$rd*2, $by+$bh-$rd*2, $rd*2, $rd*2, 0, 90)
+                $badgePath.AddArc($bx, $by+$bh-$rd*2, $rd*2, $rd*2, 90, 90)
+                $badgePath.CloseFigure()
+
+                $clrBrush = $null; $txtBrush = $null; $cFont = $null; $cFmt = $null
+                try {
+                    $clrBrush = New-Object System.Drawing.SolidBrush($idleClr)
+                    $g.FillPath($clrBrush, $badgePath)
+
+                    $txtBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+                    $cFmt = New-Object System.Drawing.StringFormat
+                    $cFmt.Alignment = [System.Drawing.StringAlignment]::Center
+                    $cFmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+                    $cFont = New-Object System.Drawing.Font("Segoe UI", 7.5, [System.Drawing.FontStyle]::Bold)
+                    $g.DrawString($cName, $cFont, $txtBrush, $badgeRect, $cFmt)
+                } finally {
+                    if ($clrBrush)  { $clrBrush.Dispose() }
+                    if ($badgePath) { $badgePath.Dispose() }
+                    if ($txtBrush)  { $txtBrush.Dispose() }
+                    if ($cFont)     { $cFont.Dispose() }
+                    if ($cFmt)      { $cFmt.Dispose() }
+                }
+            }
+        }
+
+        $e.Handled = $true
+        return
+    }
+
     # -- Status column: colored dot --
     if ($sender.Columns[$e.ColumnIndex].Name -eq "Status") {
         $e.PaintBackground($e.ClipBounds, $true)
@@ -2559,6 +2711,54 @@ $ctxCopyClipboard    = $gridContextMenu.Items.Add("Copy to Clipboard")
 $gridContextMenu.Items.Add("-") | Out-Null
 $ctxSelectInputs     = $gridContextMenu.Items.Add("Select All Inputs")
 $ctxSelectOutputs    = $gridContextMenu.Items.Add("Select All Outputs")
+
+# "Set Color" submenu (KUMO only)
+$gridContextMenu.Items.Add("-") | Out-Null
+$ctxSetColor = New-Object System.Windows.Forms.ToolStripMenuItem("Set Color")
+$ctxSetColor.BackColor = $clrPanel
+$ctxSetColor.ForeColor = $clrText
+foreach ($scId in 1..9) {
+    $scName = $script:kumoColors[$scId].Name
+    $scItem = New-Object System.Windows.Forms.ToolStripMenuItem("$scId - $scName")
+    $scItem.BackColor = $clrPanel
+    $scItem.ForeColor = $clrText
+    $scItem.Tag = $scId
+    $scItem.Add_Click({
+        $colorId = $this.Tag
+        foreach ($row in $dataGrid.SelectedRows) {
+            $port = $row.Cells["Port"].Value
+            $type = $row.Cells["Type"].Value
+            $router = $row.Cells["Router"].Value
+            foreach ($lbl in $global:allLabels) {
+                if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Color"; OldValue=$lbl.New_Color; NewValue=$colorId }
+                    $lbl.New_Color = $colorId
+                    break
+                }
+            }
+        }
+        Populate-Grid
+    })
+    $ctxSetColor.DropDownItems.Add($scItem) | Out-Null
+}
+$gridContextMenu.Items.Add($ctxSetColor) | Out-Null
+
+$ctxResetColor = $gridContextMenu.Items.Add("Reset Color")
+$ctxResetColor.Add_Click({
+    foreach ($row in $dataGrid.SelectedRows) {
+        $port = $row.Cells["Port"].Value
+        $type = $row.Cells["Type"].Value
+        $router = $row.Cells["Router"].Value
+        foreach ($lbl in $global:allLabels) {
+            if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field="New_Color"; OldValue=$lbl.New_Color; NewValue=$null }
+                $lbl.New_Color = $null
+                break
+            }
+        }
+    }
+    Populate-Grid
+})
 
 $ctxCopyCurrentToNew.Add_Click({
     foreach ($row in $dataGrid.SelectedRows) {
@@ -2704,6 +2904,62 @@ $contentPanel.Controls.Add($headerBar)      # Dock=Top (very top of content)
 $form.Controls.Add($contentPanel)  # Dock=Fill
 $form.Controls.Add($sidebarPanel)  # Dock=Left
 
+# --- Auto-Color by Name handler -----------------------------------------------
+
+$btnAutoColor.Add_Click({
+    Sync-GridToData
+
+    if ($global:allLabels.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("No labels loaded. Download labels first.", "No Labels", "OK", "Information")
+        return
+    }
+
+    # Extract base name: strip trailing digits/separators
+    $groups = @{}
+    foreach ($lbl in $global:allLabels) {
+        $name = $lbl.Current_Label
+        if (-not $name -or $name.Trim() -eq "") { continue }
+        $baseName = ($name.Trim() -replace '[\s\d\-_\.]+$', '').ToLower()
+        if (-not $baseName) { $baseName = $name.Trim().ToLower() }
+        if (-not $groups.ContainsKey($baseName)) { $groups[$baseName] = @() }
+        $groups[$baseName] += $lbl
+    }
+
+    # Only color groups with 2+ members
+    $multiGroups = @{}
+    foreach ($key in $groups.Keys) {
+        if ($groups[$key].Count -ge 2) { $multiGroups[$key] = $groups[$key] }
+    }
+
+    if ($multiGroups.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("No label groups found with 2+ matching base names.", "No Groups", "OK", "Information")
+        return
+    }
+
+    # Color cycle: skip 4 (Blue, the default)
+    $colorCycle = @(1, 2, 3, 5, 6, 7, 8, 9)
+    $changed = 0
+    $ci = 0
+    foreach ($baseName in ($multiGroups.Keys | Sort-Object)) {
+        $colorId = $colorCycle[$ci % $colorCycle.Count]
+        $ci++
+        foreach ($lbl in $multiGroups[$baseName]) {
+            if ($colorId -ne $lbl.Color) {
+                $lbl.New_Color = $colorId
+                $changed++
+            }
+        }
+    }
+
+    Populate-Grid
+    Set-StatusMessage "Grouped $changed labels into $($multiGroups.Count) color groups" "Success"
+
+    [System.Windows.Forms.MessageBox]::Show(
+        "Grouped $changed labels into $($multiGroups.Count) color groups.`n`nClick 'Upload Changes' to apply colors to the router.",
+        "Auto-Color Complete", "OK", "Information"
+    )
+})
+
 # --- Helper Functions ---------------------------------------------------------
 
 function Populate-Grid {
@@ -2723,7 +2979,8 @@ function Populate-Grid {
             $nl2 = $lbl.New_Label_2
             $hasL1 = ($nl -and $nl.Trim() -ne "" -and $nl.Trim() -ne $lbl.Current_Label)
             $hasL2 = ($nl2 -and $nl2.Trim() -ne "" -and $nl2.Trim() -ne $lbl.Current_Label_2)
-            if (-not $hasL1 -and -not $hasL2) { continue }
+            $hasClr = ($lbl.New_Color -ne $null -and $lbl.New_Color -ne $lbl.Color)
+            if (-not $hasL1 -and -not $hasL2 -and -not $hasClr) { continue }
         }
 
         if ($searchTerm) {
@@ -2742,14 +2999,19 @@ function Populate-Grid {
         $charCount  = ""
         $hasL1Change = ($newLabel -and $newLabel.Trim() -ne "" -and $newLabel.Trim() -ne $lbl.Current_Label)
         $hasL2Change = ($newLabel2 -and $newLabel2.Trim() -ne "" -and $newLabel2.Trim() -ne $curLabel2)
-        if ($hasL1Change -or $hasL2Change) {
+        $hasClrChange = ($lbl.New_Color -ne $null -and $lbl.New_Color -ne $lbl.Color)
+        if ($hasL1Change -or $hasL2Change -or $hasClrChange) {
             $status = "Changed"
             $len = if ($hasL1Change) { $newLabel.Trim().Length } else { $newLabel2.Trim().Length }
             $charCount = "$len/$maxLen"
         }
 
         $routerVal = if ($lbl.Router) { $lbl.Router } else { "" }
-        $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $routerVal, $lbl.Current_Label, $curLabel2, $newLabel, $newLabel2, $status, $charCount)
+        $displayColor = if ($lbl.New_Color -ne $null) { $lbl.New_Color } else { $lbl.Color }
+        if (-not $displayColor) { $displayColor = 4 }
+        $colorName = if ($script:kumoColors.ContainsKey([int]$displayColor)) { $script:kumoColors[[int]$displayColor].Name } else { "Blue" }
+        $colorVal = "$displayColor-$colorName"
+        $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $routerVal, $colorVal, $lbl.Current_Label, $curLabel2, $newLabel, $newLabel2, $status, $charCount)
 
         if ($newLabel -and $newLabel.Trim().Length -gt $maxLen) {
             $dataGrid.Rows[$rowIndex].Cells["Chars"].Style.ForeColor     = $clrDanger
@@ -2772,7 +3034,8 @@ function Update-ChangeCount {
         $nl2 = $lbl.New_Label_2
         $hasL1 = ($nl -and $nl.Trim() -ne "" -and $nl.Trim() -ne $lbl.Current_Label)
         $hasL2 = ($nl2 -and $nl2.Trim() -ne "" -and $nl2.Trim() -ne $lbl.Current_Label_2)
-        if ($hasL1 -or $hasL2) { $count++ }
+        $hasColor = ($lbl.New_Color -ne $null -and $lbl.New_Color -ne $lbl.Color)
+        if ($hasL1 -or $hasL2 -or $hasColor) { $count++ }
     }
 
     if ($count -gt 0) {
@@ -2798,11 +3061,19 @@ function Sync-GridToData {
         $router  = $row.Cells["Router"].Value
         $newVal  = $row.Cells["New_Label"].Value
         $newVal2 = $row.Cells["New_Label_2"].Value
+        $colorVal = $row.Cells["Color"].Value
 
         foreach ($lbl in $global:allLabels) {
             if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
                 $lbl.New_Label   = if ($newVal)  { $newVal.ToString() }  else { "" }
                 $lbl.New_Label_2 = if ($newVal2) { $newVal2.ToString() } else { "" }
+                # Sync color if changed via ComboBox
+                if ($colorVal -and $colorVal -match '^(\d+)-') {
+                    $newColorId = [int]$matches[1]
+                    if ($newColorId -ne $lbl.Color) {
+                        $lbl.New_Color = $newColorId
+                    }
+                }
                 break
             }
         }
@@ -2814,12 +3085,12 @@ function Create-DefaultLabels {
     $global:allLabels.Clear()
     for ($i = 1; $i -le $InputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Router = $Router; Current_Label = "Input $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
+            Port = $i; Type = "INPUT"; Router = $Router; Current_Label = "Input $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = ""
         }) | Out-Null
     }
     for ($i = 1; $i -le $OutputCount; $i++) {
         $global:allLabels.Add([PSCustomObject]@{
-            Port = $i; Type = "OUTPUT"; Router = $Router; Current_Label = "Output $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Notes = ""
+            Port = $i; Type = "OUTPUT"; Router = $Router; Current_Label = "Output $i"; Current_Label_2 = ""; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = ""
         }) | Out-Null
     }
 }
@@ -3193,9 +3464,11 @@ $connectButton.Add_Click({
         $connIndicator.StatusText = "$connectedCount router(s) connected"
         $connIndicator.ForeColor  = $clrSuccess
 
-        # Show Label 2 columns if any router is KUMO
+        # Show Label 2, Color columns, and Auto-Color button if any router is KUMO
         $colCurrentL2.Visible = $hasKumo
         $colNewL2.Visible     = $hasKumo
+        $colColor.Visible     = $hasKumo
+        $btnAutoColor.Visible = $hasKumo
 
         $connectButton.Text  = "Reconnect"
         $btnDownload.Enabled = $true
@@ -3312,7 +3585,7 @@ $btnDownload.Add_Click({
     try {
         $docsPath     = Get-DocumentsPath
         $autoSavePath = Join-Path $docsPath "Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
-        $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+        $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
             Export-Csv -Path $autoSavePath -NoTypeInformation
         $statusMsg = "Downloaded $($global:allLabels.Count) labels from $($connectedIPs.Count) router(s) - saved to Documents\KUMO_Labels"
     } catch {
@@ -3407,6 +3680,11 @@ $btnOpenFile.Add_Click({
                     $cl2 = if ($row.Current_Label_2) { $row.Current_Label_2.ToString() } else { "" }
                     $nl2 = if ($row.New_Label_2)     { $row.New_Label_2.ToString() }     else { "" }
                     $rtr = if ($row.Router) { $row.Router.ToString() } else { "" }
+                    $clr = 4
+                    try { if ($row.Color -and $row.Color.ToString().Trim() -ne "") { $clr = [int]$row.Color } } catch { }
+                    if ($clr -lt 1 -or $clr -gt 9) { $clr = 4 }
+                    $nclr = $null
+                    try { if ($row.New_Color -and $row.New_Color.ToString().Trim() -ne "") { $nclr = [int]$row.New_Color } } catch { }
                     $global:allLabels.Add([PSCustomObject]@{
                         Port            = [int]$row.Port
                         Type            = $row.Type.ToString().ToUpper().Trim()
@@ -3415,6 +3693,8 @@ $btnOpenFile.Add_Click({
                         Current_Label_2 = $cl2
                         New_Label       = $nl
                         New_Label_2     = $nl2
+                        Color           = $clr
+                        New_Color       = $nclr
                         Notes           = if ($row.Notes) { $row.Notes.ToString() } else { "" }
                     }) | Out-Null
                 }
@@ -3459,17 +3739,17 @@ $btnSaveFile.Add_Click({
                         "Lightware" { "Lightware_Labels" }
                         default     { "KUMO_Labels" }
                     }
-                    $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+                    $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
                         Export-Excel -Path $dlg.FileName -WorksheetName $saveWsName -AutoSize -TableStyle Medium6 -FreezeTopRow
                 } else {
                     $csvPath = $dlg.FileName -replace "\.xlsx$", ".csv"
-                    $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+                    $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
                         Export-Csv -Path $csvPath -NoTypeInformation
                     $dlg.FileName = $csvPath
                     Set-StatusMessage "ImportExcel module not found -- saved as CSV instead" "Warning"
                 }
             } else {
-                $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Notes |
+                $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
                     Export-Csv -Path $dlg.FileName -NoTypeInformation
             }
             Set-StatusMessage "Saved to $([System.IO.Path]::GetFileName($dlg.FileName))" "Success"
@@ -3834,7 +4114,7 @@ $btnTemplate.Add_Click({
             if ($existing -and $existing.Current_Label_2) { $currentLabel2 = $existing.Current_Label_2 }
         }
         $templateData += [PSCustomObject]@{
-            Port = $i; Type = "INPUT"; Current_Label = $currentLabel; Current_Label_2 = $currentLabel2; New_Label = ""; New_Label_2 = ""; Notes = "Enter your new label name here"
+            Port = $i; Type = "INPUT"; Current_Label = $currentLabel; Current_Label_2 = $currentLabel2; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "Enter your new label name here"
         }
     }
     for ($i = 1; $i -le $outCount; $i++) {
@@ -3846,7 +4126,7 @@ $btnTemplate.Add_Click({
             if ($existing -and $existing.Current_Label_2) { $currentLabel2 = $existing.Current_Label_2 }
         }
         $templateData += [PSCustomObject]@{
-            Port = $i; Type = "OUTPUT"; Current_Label = $currentLabel; Current_Label_2 = $currentLabel2; New_Label = ""; New_Label_2 = ""; Notes = "Enter your new label name here"
+            Port = $i; Type = "OUTPUT"; Current_Label = $currentLabel; Current_Label_2 = $currentLabel2; New_Label = ""; New_Label_2 = ""; Color = 4; New_Color = $null; Notes = "Enter your new label name here"
         }
     }
 
@@ -4042,7 +4322,8 @@ $btnUpload.Add_Click({
         $nl2 = $lbl.New_Label_2
         $hasLine1Change = ($nl -and $nl.Trim() -ne "" -and $nl.Trim() -ne $lbl.Current_Label)
         $hasLine2Change = ($nl2 -ne $null -and $nl2.Trim() -ne "" -and $nl2.Trim() -ne $lbl.Current_Label_2)
-        if ($hasLine1Change -or $hasLine2Change) {
+        $hasColorChange = ($lbl.New_Color -ne $null -and $lbl.New_Color -ne $lbl.Color)
+        if ($hasLine1Change -or $hasLine2Change -or $hasColorChange) {
             $changes += $lbl
         }
     }
@@ -4077,7 +4358,7 @@ $btnUpload.Add_Click({
     $global:backupLabels = @()
     foreach ($lbl in $global:allLabels) {
         $global:backupLabels += [PSCustomObject]@{
-            Port = $lbl.Port; Type = $lbl.Type; Router = $lbl.Router; Current_Label = $lbl.Current_Label; Current_Label_2 = $lbl.Current_Label_2; New_Label = ""; New_Label_2 = ""; Notes = "Backup"
+            Port = $lbl.Port; Type = $lbl.Type; Router = $lbl.Router; Current_Label = $lbl.Current_Label; Current_Label_2 = $lbl.Current_Label_2; New_Label = ""; New_Label_2 = ""; Color = $lbl.Color; New_Color = $null; Notes = "Backup"
         }
     }
     $backupSaved = $false
@@ -4139,6 +4420,31 @@ $btnUpload.Add_Click({
                         }
                     }
                 }
+
+                # Upload color changes (KUMO only)
+                if ($global:routerType -eq "KUMO") {
+                    $colorChanges = @($routerChanges | Where-Object { $_.New_Color -ne $null -and $_.New_Color -ne $_.Color })
+                    if ($colorChanges.Count -gt 0) {
+                        Set-StatusMessage "Uploading $($colorChanges.Count) color changes to $rip..." "Dim"
+                        $form.Refresh()
+                        foreach ($citem in $colorChanges) {
+                            $cParamIdx = if ($citem.Type -eq "INPUT") { $citem.Port } else { $citem.Port + 64 }
+                            $cParamId = "eParamID_Button_Settings_$cParamIdx"
+                            $cValue = "{`"classes`":`"color_$($citem.New_Color)`"}"
+                            try {
+                                $cOk = Set-KumoParam -IP $rip -ParamId $cParamId -Value $cValue
+                                if ($cOk) {
+                                    $citem.Color = $citem.New_Color
+                                    $citem.New_Color = $null
+                                    $totalSuccess++
+                                } else { $totalError++ }
+                            } catch {
+                                Write-ErrorLog "COLOR-UL" "Color upload failed for $($citem.Type) $($citem.Port): $($_.Exception.Message)"
+                                $totalError++
+                            }
+                        }
+                    }
+                }
             } else {
                 $totalError += $routerChanges.Count
                 Write-ErrorLog "UPLOAD" "Router $rip not in connected routers hashtable -- skipping"
@@ -4166,7 +4472,8 @@ $btnUpload.Add_Click({
         $connectButton.Enabled = $true
         $remainingChanges = @($global:allLabels | Where-Object {
             ($_.New_Label -and $_.New_Label.Trim() -ne "" -and $_.New_Label.Trim() -ne $_.Current_Label) -or
-            ($_.New_Label_2 -and $_.New_Label_2.Trim() -ne "" -and $_.New_Label_2.Trim() -ne $_.Current_Label_2)
+            ($_.New_Label_2 -and $_.New_Label_2.Trim() -ne "" -and $_.New_Label_2.Trim() -ne $_.Current_Label_2) -or
+            ($_.New_Color -ne $null -and $_.New_Color -ne $_.Color)
         })
         $btnUpload.Enabled = ($remainingChanges.Count -gt 0)
         if ($global:routerConnected -and $keepaliveTimer -ne $null) { $keepaliveTimer.Start() }

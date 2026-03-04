@@ -19,10 +19,31 @@ Key eParamID values for labels:
   eParamID_SWVersion                 - Firmware version
 """
 
+import json
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import re
 import urllib.parse
+
+
+# ---------------------------------------------------------------------------
+# KUMO Button Color Presets (1-9)
+# ---------------------------------------------------------------------------
+
+KUMO_COLORS: Dict[int, Tuple[str, str, str]] = {
+    # id: (name, idle_hex, active_hex)
+    1: ("Red",         "#cb7676", "#fe0000"),
+    2: ("Orange",      "#e6a52e", "#f76700"),
+    3: ("Yellow",      "#d9cb7e", "#d7af00"),
+    4: ("Blue",        "#87b4c8", "#009af4"),
+    5: ("Teal",        "#64c896", "#00a263"),
+    6: ("Light Green", "#ade68e", "#60b71f"),
+    7: ("Indigo",      "#7888cb", "#3a5ef6"),
+    8: ("Purple",      "#9b8ce1", "#8100f4"),
+    9: ("Pink",        "#c84b91", "#f30088"),
+}
+
+KUMO_DEFAULT_COLOR = 4  # Blue
 
 
 class Protocol(Enum):
@@ -67,6 +88,20 @@ class KumoParamID:
             port: Destination port number (1-64)
         """
         return f"eParamID_XPT_Destination{port}_Status"
+
+    @staticmethod
+    def button_color(port: int, port_type: str) -> str:
+        """Get eParamID for button color setting.
+
+        Button settings use indices 1-128: inputs 1-64, outputs 65-128.
+
+        Args:
+            port: Port number (1-64)
+            port_type: 'input' or 'output' (case-insensitive)
+        """
+        if port_type.upper() == "OUTPUT":
+            return f"eParamID_Button_Settings_{port + 64}"
+        return f"eParamID_Button_Settings_{port}"
 
 
 class APIEndpoint:
@@ -135,6 +170,19 @@ class APIEndpoint:
     def get_firmware_version() -> str:
         """Build endpoint to get firmware version."""
         return APIEndpoint.get_param(KumoParamID.SW_VERSION)
+
+    @staticmethod
+    def get_button_color(port: int, port_type: str) -> str:
+        """Build endpoint to get button color."""
+        return APIEndpoint.get_param(KumoParamID.button_color(port, port_type))
+
+    @staticmethod
+    def set_button_color(port: int, port_type: str, color_id: int) -> str:
+        """Build endpoint to set button color."""
+        value = ResponseParser.encode_button_color(color_id)
+        return APIEndpoint.set_param(
+            KumoParamID.button_color(port, port_type), value
+        )
 
 
 class TelnetCommand:
@@ -207,6 +255,46 @@ class ResponseParser:
             return str(response["value"]).strip()
 
         return None
+
+    @staticmethod
+    def parse_button_color(value: Optional[str]) -> int:
+        """Parse button color from API response value.
+
+        The API returns JSON like: {"classes":"color_N"}
+
+        Args:
+            value: Raw value string from the API response
+
+        Returns:
+            Color ID (1-9), defaults to KUMO_DEFAULT_COLOR (4/Blue)
+        """
+        if not value:
+            return KUMO_DEFAULT_COLOR
+        try:
+            data = json.loads(value)
+            classes = data.get("classes", "")
+            match = re.search(r"color_(\d+)", classes)
+            if match:
+                color_id = int(match.group(1))
+                if 1 <= color_id <= 9:
+                    return color_id
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            pass
+        return KUMO_DEFAULT_COLOR
+
+    @staticmethod
+    def encode_button_color(color_id: int) -> str:
+        """Encode a color ID into the JSON value for the SET API.
+
+        Args:
+            color_id: Color ID (1-9)
+
+        Returns:
+            JSON string like {"classes":"color_N"}
+        """
+        if not 1 <= color_id <= 9:
+            color_id = KUMO_DEFAULT_COLOR
+        return json.dumps({"classes": f"color_{color_id}"})
 
 
 class DefaultLabelGenerator:

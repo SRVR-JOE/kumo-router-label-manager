@@ -27,6 +27,7 @@ from .config.settings import Settings
 from .coordinator.event_bus import EventBus
 from .agents.api_agent import APIAgent
 from .agents.api_agent.rest_client import RestClient
+from .agents.api_agent.router_protocols import KUMO_COLORS, KUMO_DEFAULT_COLOR
 from .agents.file_handler import FileHandlerAgent, FileData, PortData
 from .models import Label, PortType
 
@@ -65,11 +66,14 @@ class RouterLabel:
     new_label: Optional[str] = None
     current_label_line2: str = ""
     new_label_line2: Optional[str] = None
+    current_color: int = 4
+    new_color: Optional[int] = None
 
     def has_changes(self) -> bool:
         line1 = self.new_label is not None and self.new_label != self.current_label
         line2 = self.new_label_line2 is not None and self.new_label_line2 != self.current_label_line2
-        return line1 or line2
+        color = self.new_color is not None and self.new_color != self.current_color
+        return line1 or line2 or color
 
     def __str__(self) -> str:
         change = f" -> {self.new_label}" if self.new_label is not None and self.new_label != self.current_label else ""
@@ -711,9 +715,18 @@ def print_banner() -> None:
     ))
 
 
+def _color_block(color_id: int) -> str:
+    """Return a Rich markup colored block for a KUMO color ID."""
+    if color_id in KUMO_COLORS:
+        _, idle_hex, _ = KUMO_COLORS[color_id]
+        return f"[on {idle_hex}]  [/]"
+    return "  "
+
+
 def display_router_labels_table(
     labels: List[RouterLabel],
     title: str = "Router Labels",
+    show_colors: bool = False,
 ) -> None:
     """Display RouterLabel objects in a Rich table with inputs and outputs side by side."""
     inputs = [l for l in labels if l.port_type == "INPUT"]
@@ -728,6 +741,8 @@ def display_router_labels_table(
         padding=(0, 1),
     )
     input_table.add_column("#", style="dim", justify="right", width=3)
+    if show_colors:
+        input_table.add_column("Color", width=4, justify="center")
     input_table.add_column("Label", style="white", min_width=14)
     input_table.add_column("Line 2", style="dim white", min_width=8)
     input_table.add_column("Change", style="yellow", min_width=10)
@@ -738,13 +753,20 @@ def display_router_labels_table(
             change_parts.append(lbl.new_label)
         if lbl.new_label_line2 is not None and lbl.new_label_line2 != lbl.current_label_line2:
             change_parts.append(f"L2:{lbl.new_label_line2}")
+        if lbl.new_color is not None and lbl.new_color != lbl.current_color:
+            cname = KUMO_COLORS.get(lbl.new_color, ("?",))[0]
+            change_parts.append(f"C:{cname}")
         change = "|".join(change_parts)
-        input_table.add_row(
-            str(lbl.port_number),
+        row = [str(lbl.port_number)]
+        if show_colors:
+            display_color = lbl.new_color if lbl.new_color is not None else lbl.current_color
+            row.append(_color_block(display_color))
+        row.extend([
             lbl.current_label or "[dim]\u00b7[/dim]",
             lbl.current_label_line2 or "",
             Text(change, style="bold yellow") if change else "",
-        )
+        ])
+        input_table.add_row(*row)
 
     output_table = Table(
         title="[bold purple]OUTPUTS (Destinations)[/bold purple]",
@@ -755,6 +777,8 @@ def display_router_labels_table(
         padding=(0, 1),
     )
     output_table.add_column("#", style="dim", justify="right", width=3)
+    if show_colors:
+        output_table.add_column("Color", width=4, justify="center")
     output_table.add_column("Label", style="white", min_width=14)
     output_table.add_column("Line 2", style="dim white", min_width=8)
     output_table.add_column("Change", style="yellow", min_width=10)
@@ -765,13 +789,20 @@ def display_router_labels_table(
             change_parts.append(lbl.new_label)
         if lbl.new_label_line2 is not None and lbl.new_label_line2 != lbl.current_label_line2:
             change_parts.append(f"L2:{lbl.new_label_line2}")
+        if lbl.new_color is not None and lbl.new_color != lbl.current_color:
+            cname = KUMO_COLORS.get(lbl.new_color, ("?",))[0]
+            change_parts.append(f"C:{cname}")
         change = "|".join(change_parts)
-        output_table.add_row(
-            str(lbl.port_number),
+        row = [str(lbl.port_number)]
+        if show_colors:
+            display_color = lbl.new_color if lbl.new_color is not None else lbl.current_color
+            row.append(_color_block(display_color))
+        row.extend([
             lbl.current_label or "[dim]\u00b7[/dim]",
             lbl.current_label_line2 or "",
             Text(change, style="bold yellow") if change else "",
-        )
+        ])
+        output_table.add_row(*row)
 
     console.print()
     console.print(Columns([input_table, output_table], padding=1))
@@ -803,6 +834,8 @@ def labels_to_filedata(labels: List[Label]) -> FileData:
             new_label=label.new_label,
             current_label_line2=label.current_label_line2,
             new_label_line2=label.new_label_line2,
+            current_color=label.current_color,
+            new_color=label.new_color,
             notes="",
         ))
     return FileData(ports=ports)
@@ -820,6 +853,8 @@ def filedata_to_labels(data: FileData) -> List[Label]:
             new_label=port_data.new_label,
             current_label_line2=port_data.current_label_line2,
             new_label_line2=port_data.new_label_line2,
+            current_color=port_data.current_color,
+            new_color=port_data.new_color,
         ))
     return labels
 
@@ -834,6 +869,8 @@ def domain_labels_to_router_labels(labels: List[Label]) -> List[RouterLabel]:
             new_label=l.new_label,
             current_label_line2=l.current_label_line2,
             new_label_line2=l.new_label_line2,
+            current_color=l.current_color,
+            new_color=l.new_color,
         )
         for l in labels
     ]
@@ -841,7 +878,7 @@ def domain_labels_to_router_labels(labels: List[Label]) -> List[RouterLabel]:
 
 def display_labels_table(labels: List[Label], title: str = "Router Labels") -> None:
     """Display domain Label objects — retained for KUMO backward compatibility."""
-    display_router_labels_table(domain_labels_to_router_labels(labels), title)
+    display_router_labels_table(domain_labels_to_router_labels(labels), title, show_colors=True)
 
 
 def videohub_info_to_router_labels(info: VideohubInfo) -> List[RouterLabel]:
@@ -1691,6 +1728,121 @@ class LightwareManager:
 # Argument parser
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# "Like Names" auto-color algorithm
+# ---------------------------------------------------------------------------
+
+# Color cycle: skip 4 (Blue, the default) so grouped labels stand out
+LIKE_NAMES_COLOR_CYCLE = [1, 2, 3, 5, 6, 7, 8, 9]
+
+
+def _extract_base_name(label: str) -> str:
+    """Extract the base name from a label by stripping trailing digits/separators.
+
+    "CAM 1" -> "CAM", "Monitor-3" -> "Monitor", "DECK_01" -> "DECK"
+    """
+    stripped = re.sub(r'[\s\d\-_\.]+$', '', label.strip())
+    return stripped if stripped else label.strip()
+
+
+def assign_like_name_colors(labels: List[RouterLabel]) -> Dict[str, int]:
+    """Group labels by base name and assign colors.
+
+    Returns:
+        Dict mapping base_name (lowercase) -> color_id
+    """
+    # Group by base name (case-insensitive)
+    groups: Dict[str, List[RouterLabel]] = {}
+    for lbl in labels:
+        if not lbl.current_label.strip():
+            continue
+        base = _extract_base_name(lbl.current_label).lower()
+        groups.setdefault(base, []).append(lbl)
+
+    # Only color groups with 2+ members
+    multi_groups = {k: v for k, v in groups.items() if len(v) >= 2}
+
+    # Assign colors cycling through the palette
+    color_map: Dict[str, int] = {}
+    for i, base_name in enumerate(sorted(multi_groups.keys())):
+        color_map[base_name] = LIKE_NAMES_COLOR_CYCLE[i % len(LIKE_NAMES_COLOR_CYCLE)]
+
+    return color_map
+
+
+def run_like_names(csv_file: str, preview: bool = False) -> bool:
+    """Run the like-names auto-color algorithm on a CSV file."""
+    csv_path = Path(csv_file)
+
+    if not csv_path.exists():
+        console.print(f"[red]File not found:[/red] {csv_file}")
+        return False
+
+    try:
+        file_handler = FileHandlerAgent()
+        file_data = file_handler.load(csv_path)
+        labels = filedata_to_labels(file_data)
+        router_labels = domain_labels_to_router_labels(labels)
+
+        color_map = assign_like_name_colors(router_labels)
+
+        if not color_map:
+            console.print("[yellow]No label groups found with 2+ matching base names.[/yellow]")
+            return True
+
+        # Apply colors
+        changed = 0
+        for lbl in labels:
+            base = _extract_base_name(lbl.current_label).lower()
+            if base in color_map:
+                new_c = color_map[base]
+                if new_c != lbl.current_color:
+                    lbl.new_color = new_c
+                    changed += 1
+
+        # Display groupings
+        console.print()
+        group_table = Table(
+            title="[bold]Like-Name Color Groups[/bold]",
+            box=box.ROUNDED,
+            border_style="purple",
+        )
+        group_table.add_column("Base Name", style="white")
+        group_table.add_column("Color", width=6, justify="center")
+        group_table.add_column("Members", style="dim")
+
+        # Rebuild groups for display
+        groups: Dict[str, List[str]] = {}
+        for lbl in labels:
+            base = _extract_base_name(lbl.current_label).lower()
+            if base in color_map:
+                groups.setdefault(base, []).append(lbl.current_label)
+
+        for base_name in sorted(color_map.keys()):
+            color_id = color_map[base_name]
+            cname = KUMO_COLORS.get(color_id, ("?",))[0]
+            members = ", ".join(groups.get(base_name, []))
+            group_table.add_row(base_name.title(), f"{_color_block(color_id)} {cname}", members)
+
+        console.print(group_table)
+        console.print(f"\n[bold]Grouped {changed} labels into {len(color_map)} color groups[/bold]")
+
+        if preview:
+            console.print("[yellow]Preview mode - no changes saved.[/yellow]")
+        else:
+            # Write back
+            file_data = labels_to_filedata(labels)
+            file_handler.save(csv_path, file_data)
+            console.print(f"[green]Saved color assignments to {csv_file}[/green]")
+
+        return True
+
+    except Exception as e:
+        console.print(f"[red bold]Error:[/red bold] {e}")
+        logger.exception("Like-names failed")
+        return False
+
+
 ROUTER_TYPE_CHOICES = ["auto", "kumo", "videohub", "lightware"]
 
 ROUTER_TYPE_HELP = (
@@ -1719,6 +1871,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  kumo-cli template labels.xlsx\n"
             "  kumo-cli template labels.xlsx -t lightware --size 16\n"
             "  kumo-cli view labels.csv\n"
+            "  kumo-cli like-names labels.csv --preview\n"
             "\n"
             "Multi-router:\n"
             "  kumo-cli download labels.csv --ip 192.168.100.51 --ip 192.168.100.52\n"
@@ -1792,6 +1945,18 @@ def build_parser() -> argparse.ArgumentParser:
     # View command
     vw = subparsers.add_parser("view", help="View labels from a file")
     vw.add_argument("input", help="Input file path (.xlsx, .csv, .json)")
+
+    # Like-names command (KUMO only)
+    ln = subparsers.add_parser(
+        "like-names",
+        help="Auto-assign button colors to labels with matching base names (KUMO only)",
+    )
+    ln.add_argument("input", help="CSV/Excel file path")
+    ln.add_argument(
+        "--preview",
+        action="store_true",
+        help="Preview groupings without saving changes",
+    )
 
     return parser
 
@@ -1977,6 +2142,9 @@ def main() -> None:
         elif args.command == "view":
             manager = KumoManager(settings)
             success = manager.view_file(args.input)
+
+        elif args.command == "like-names":
+            success = run_like_names(args.input, preview=args.preview)
 
         else:
             console.print(f"[red]Unknown command:[/red] {args.command}")

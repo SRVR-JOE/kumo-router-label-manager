@@ -14,6 +14,8 @@ class PortData(BaseModel):
     new_label: Optional[str] = Field(default=None, max_length=255, description="New label to apply (Line 1)")
     current_label_line2: str = Field(default="", max_length=255, description="Current label (Line 2)")
     new_label_line2: Optional[str] = Field(default=None, max_length=255, description="New label to apply (Line 2)")
+    current_color: int = Field(default=4, ge=1, le=9, description="Current button color (1-9)")
+    new_color: Optional[int] = Field(default=None, ge=1, le=9, description="New button color to apply (1-9)")
     notes: str = Field(default="", max_length=500, description="Additional notes")
 
     @field_validator("type")

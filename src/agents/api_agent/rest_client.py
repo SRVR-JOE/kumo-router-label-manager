@@ -17,6 +17,7 @@ from .router_protocols import (
     DefaultLabelGenerator,
     Protocol,
     KumoParamID,
+    KUMO_DEFAULT_COLOR,
     TIMEOUT_REST_REQUEST,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
@@ -336,3 +337,81 @@ class RestClient:
             await progress_callback(len(labels), len(labels))
 
         return success_count, error_count, error_messages
+
+    # ------------------------------------------------------------------
+    # Button color methods
+    # ------------------------------------------------------------------
+
+    async def _fetch_color(
+        self, port: int, port_type: str, semaphore: asyncio.Semaphore
+    ) -> Tuple[int, str, int]:
+        """Fetch a single button color with concurrency control.
+
+        Returns:
+            Tuple of (port_number, port_type, color_id)
+        """
+        async with semaphore:
+            endpoint = APIEndpoint.get_button_color(port, port_type)
+            result = await self._get(endpoint)
+            color_id = KUMO_DEFAULT_COLOR
+            if result:
+                raw = ResponseParser.parse_param_response(result)
+                color_id = ResponseParser.parse_button_color(raw)
+            return port, port_type, color_id
+
+    async def download_colors(
+        self, port_count: Optional[int] = None
+    ) -> Dict[str, List[int]]:
+        """Download all button colors using parallel requests.
+
+        Args:
+            port_count: Number of ports per type. Uses detected count if None.
+
+        Returns:
+            Dict with 'input_colors' and 'output_colors' lists (1-indexed values)
+        """
+        pc = port_count or self._port_count
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+        tasks = []
+        for port in range(1, pc + 1):
+            tasks.append(self._fetch_color(port, "input", semaphore))
+        for port in range(1, pc + 1):
+            tasks.append(self._fetch_color(port, "output", semaphore))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        input_colors = [KUMO_DEFAULT_COLOR] * pc
+        output_colors = [KUMO_DEFAULT_COLOR] * pc
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning(f"Color fetch error: {result}")
+                continue
+            port, port_type, color_id = result
+            if port_type == "input":
+                input_colors[port - 1] = color_id
+            else:
+                output_colors[port - 1] = color_id
+
+        return {"input_colors": input_colors, "output_colors": output_colors}
+
+    async def upload_color(
+        self, port: int, port_type: str, color_id: int
+    ) -> Tuple[bool, Optional[str]]:
+        """Upload a single button color.
+
+        Args:
+            port: Port number (1-64)
+            port_type: 'INPUT' or 'OUTPUT'
+            color_id: Color ID (1-9)
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        pt = "output" if port_type.upper() == "OUTPUT" else "input"
+        endpoint = APIEndpoint.set_button_color(port, pt, color_id)
+        result = await self._get(endpoint)
+        if result is not None:
+            return True, None
+        return False, f"Failed to set {port_type} {port} color to {color_id}"

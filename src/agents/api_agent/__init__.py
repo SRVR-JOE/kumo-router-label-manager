@@ -14,6 +14,7 @@ from .telnet_client import TelnetClient
 from .router_protocols import (
     Protocol,
     DefaultLabelGenerator,
+    KUMO_DEFAULT_COLOR,
 )
 
 
@@ -103,12 +104,22 @@ class APIAgent:
         labels_dict = None
         protocol_used = Protocol.DEFAULT
 
+        colors_dict = None
+
         try:
             # Method 1: Try REST API (uses real AJA /config?action=get&paramid= endpoints)
             logger.debug("Attempting REST download via AJA KUMO API")
             async with RestClient(self.router_ip) as rest:
                 self._detected_port_count = await rest.detect_port_count()
                 protocol_used, labels_dict = await rest.download_labels()
+
+                # Fetch button colors (REST only)
+                if labels_dict is not None:
+                    try:
+                        colors_dict = await rest.download_colors(self._detected_port_count)
+                        logger.debug(f"Downloaded colors for {self._detected_port_count} ports")
+                    except Exception as e:
+                        logger.warning(f"Color download failed (non-fatal): {e}")
 
             # Method 3: Try Telnet if REST failed
             if labels_dict is None:
@@ -133,7 +144,7 @@ class APIAgent:
             self._last_protocol = protocol_used
 
             # Convert to Label objects
-            labels = self._dict_to_labels(labels_dict)
+            labels = self._dict_to_labels(labels_dict, colors_dict)
 
             logger.info(
                 f"Downloaded {len(labels)} labels using protocol: {protocol_used.value}"
@@ -211,6 +222,12 @@ class APIAgent:
         error_count = 0
         error_messages = []
 
+        # Collect color changes
+        color_changes = [
+            label for label in labels
+            if label.new_color is not None and label.new_color != label.current_color
+        ]
+
         try:
             # Try REST first (preferred method)
             try:
@@ -220,6 +237,23 @@ class APIAgent:
                         upload_data, progress_callback
                     )
 
+                    # Upload color changes (REST only)
+                    if color_changes:
+                        for label in color_changes:
+                            try:
+                                ok, err = await rest.upload_color(
+                                    label.port_number, label.port_type.value, label.new_color
+                                )
+                                if ok:
+                                    success_count += 1
+                                else:
+                                    error_count += 1
+                                    if err:
+                                        error_messages.append(err)
+                            except Exception as e:
+                                error_count += 1
+                                error_messages.append(f"Color upload error port {label.port_number}: {e}")
+
                     if success_count > 0:
                         logger.info(f"Upload via REST: {success_count} succeeded, {error_count} failed")
                         await self._emit_upload_success_event(labels_to_upload, success_count, error_count)
@@ -228,7 +262,7 @@ class APIAgent:
             except Exception as e:
                 logger.warning(f"REST upload failed: {e}")
 
-            # Try Telnet as fallback
+            # Try Telnet as fallback (no color support via Telnet)
             try:
                 logger.debug("Attempting upload via Telnet")
                 async with TelnetClient(self.router_ip) as telnet:
@@ -237,6 +271,8 @@ class APIAgent:
                     )
 
                     logger.info(f"Upload via Telnet: {success_count} succeeded, {error_count} failed")
+                    if color_changes:
+                        logger.warning(f"Skipped {len(color_changes)} color changes (Telnet does not support colors)")
                     await self._emit_upload_success_event(labels_to_upload, success_count, error_count)
                     return success_count, error_count, error_messages
 
@@ -258,11 +294,14 @@ class APIAgent:
 
         return success_count, error_count, error_messages
 
-    def _dict_to_labels(self, labels_dict: Dict[str, List[str]]) -> List[Label]:
+    def _dict_to_labels(
+        self, labels_dict: Dict[str, List[str]], colors_dict: Optional[Dict[str, List[int]]] = None
+    ) -> List[Label]:
         """Convert labels dictionary to Label objects.
 
         Args:
             labels_dict: Dictionary with 'inputs' and 'outputs' lists
+            colors_dict: Optional dict with 'input_colors' and 'output_colors' lists
 
         Returns:
             List of Label objects
@@ -270,10 +309,13 @@ class APIAgent:
         labels = []
         inputs_line2 = labels_dict.get("inputs_line2", [])
         outputs_line2 = labels_dict.get("outputs_line2", [])
+        input_colors = (colors_dict or {}).get("input_colors", [])
+        output_colors = (colors_dict or {}).get("output_colors", [])
 
         # Convert inputs
         for i, label_text in enumerate(labels_dict.get("inputs", []), start=1):
             line2 = inputs_line2[i - 1] if i - 1 < len(inputs_line2) else ""
+            color = input_colors[i - 1] if i - 1 < len(input_colors) else KUMO_DEFAULT_COLOR
             labels.append(
                 Label(
                     port_number=i,
@@ -282,12 +324,14 @@ class APIAgent:
                     new_label=None,
                     current_label_line2=line2,
                     new_label_line2=None,
+                    current_color=color,
                 )
             )
 
         # Convert outputs
         for i, label_text in enumerate(labels_dict.get("outputs", []), start=1):
             line2 = outputs_line2[i - 1] if i - 1 < len(outputs_line2) else ""
+            color = output_colors[i - 1] if i - 1 < len(output_colors) else KUMO_DEFAULT_COLOR
             labels.append(
                 Label(
                     port_number=i,
@@ -296,6 +340,7 @@ class APIAgent:
                     new_label=None,
                     current_label_line2=line2,
                     new_label_line2=None,
+                    current_color=color,
                 )
             )
 

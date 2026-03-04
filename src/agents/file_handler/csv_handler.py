@@ -10,7 +10,7 @@ from .schema import FileData, PortData
 class CSVHandler:
     """Handler for CSV file operations."""
 
-    COLUMNS = ["Port", "Type", "Current_Label", "Current_Label_Line2", "New_Label", "New_Label_Line2", "Notes"]
+    COLUMNS = ["Port", "Type", "Current_Label", "Current_Label_Line2", "New_Label", "New_Label_Line2", "Current_Color", "New_Color", "Notes"]
     REQUIRED_COLUMNS = ["Port", "Type", "Current_Label", "New_Label", "Notes"]
 
     def __init__(self):
@@ -36,18 +36,21 @@ class CSVHandler:
 
         try:
             # Read CSV with UTF-8 encoding
+            dtype_map = {
+                "Port": int,
+                "Type": str,
+                "Current_Label": str,
+                "New_Label": str,
+                "Current_Label_Line2": str,
+                "New_Label_Line2": str,
+                "Current_Color": str,
+                "New_Color": str,
+                "Notes": str,
+            }
             df = pd.read_csv(
                 file_path,
                 encoding="utf-8",
-                dtype={
-                    "Port": int,
-                    "Type": str,
-                    "Current_Label": str,
-                    "New_Label": str,
-                    "Current_Label_Line2": str,
-                    "New_Label_Line2": str,
-                    "Notes": str,
-                },
+                dtype=dtype_map,
                 keep_default_na=False,  # Don't convert empty strings to NaN
             )
         except Exception as e:
@@ -75,6 +78,18 @@ class CSVHandler:
                     new_label_line2 = None
                 notes = row["Notes"] if pd.notna(row["Notes"]) else ""
 
+                # Parse color fields (optional for backward compat)
+                raw_cur_color = row.get("Current_Color", "")
+                raw_new_color = row.get("New_Color", "")
+                try:
+                    current_color = int(raw_cur_color) if str(raw_cur_color).strip() else 4
+                except (ValueError, TypeError):
+                    current_color = 4
+                try:
+                    new_color_val = int(raw_new_color) if str(raw_new_color).strip() else None
+                except (ValueError, TypeError):
+                    new_color_val = None
+
                 port_data = PortData(
                     port=int(row["Port"]),
                     type=str(row["Type"]).strip(),
@@ -82,6 +97,8 @@ class CSVHandler:
                     new_label=str(new_label).strip() if new_label else None,
                     current_label_line2=str(current_label_line2).strip(),
                     new_label_line2=str(new_label_line2).strip() if new_label_line2 else None,
+                    current_color=current_color,
+                    new_color=new_color_val,
                     notes=str(notes).strip(),
                 )
                 ports.append(port_data)
@@ -111,6 +128,8 @@ class CSVHandler:
                 "Current_Label_Line2": port_data.current_label_line2,
                 "New_Label": port_data.new_label or "",
                 "New_Label_Line2": port_data.new_label_line2 or "",
+                "Current_Color": port_data.current_color,
+                "New_Color": port_data.new_color if port_data.new_color is not None else "",
                 "Notes": port_data.notes,
             })
 
@@ -146,6 +165,8 @@ class CSVHandler:
                 "Current_Label_Line2": "",
                 "New_Label": "",
                 "New_Label_Line2": "",
+                "Current_Color": 4,
+                "New_Color": "",
                 "Notes": "",
             })
 
@@ -158,6 +179,8 @@ class CSVHandler:
                 "Current_Label_Line2": "",
                 "New_Label": "",
                 "New_Label_Line2": "",
+                "Current_Color": 4,
+                "New_Color": "",
                 "Notes": "",
             })
 
