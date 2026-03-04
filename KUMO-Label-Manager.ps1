@@ -782,6 +782,9 @@ $global:lightwareSendId   = 0
 $global:crosspoints       = @()      # int array: index=output, value=routed input (0-based, -1=none)
 $global:matrixViewActive  = $false    # true when Matrix tab is active
 
+# Router display name mapping (IP -> friendly name for grid display)
+$global:routerDisplayNames = @{}
+
 # --- Multi-Router State Helpers -----------------------------------------------
 
 function Set-ActiveRouter {
@@ -2135,6 +2138,71 @@ $btnUpload.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.
 $btnUpload.Enabled = $false
 $actionSectionPanel.Controls.Add($btnUpload)
 
+# --- Matrix Selector Section (sidebar) ----------------------------------------
+
+$matrixSelectorSep = New-Object System.Windows.Forms.Label
+$matrixSelectorSep.Height = 1
+$matrixSelectorSep.BackColor = [System.Drawing.Color]::FromArgb(50, 45, 65)
+
+$matrixSelectorPanel = New-Object System.Windows.Forms.Panel
+$matrixSelectorPanel.Height = 140
+$matrixSelectorPanel.BackColor = $clrSidebarBg
+$matrixSelectorPanel.Visible = $false
+
+$lblMatrixSection = New-Object System.Windows.Forms.Label
+$lblMatrixSection.Text = "MATRICES"
+$lblMatrixSection.Font = New-Object System.Drawing.Font("Segoe UI", 7, [System.Drawing.FontStyle]::Bold)
+$lblMatrixSection.ForeColor = [System.Drawing.Color]::FromArgb(100, 90, 130)
+$lblMatrixSection.Location = New-Object System.Drawing.Point(16, 8)
+$lblMatrixSection.Size = New-Object System.Drawing.Size(168, 16)
+$matrixSelectorPanel.Controls.Add($lblMatrixSection)
+
+# CheckedListBox for toggling which routers/matrices are visible
+$matrixCheckedList = New-Object System.Windows.Forms.CheckedListBox
+$matrixCheckedList.Location = New-Object System.Drawing.Point(14, 28)
+$matrixCheckedList.Size = New-Object System.Drawing.Size(172, 100)
+$matrixCheckedList.BackColor = $clrField
+$matrixCheckedList.ForeColor = $clrText
+$matrixCheckedList.BorderStyle = "FixedSingle"
+$matrixCheckedList.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$matrixCheckedList.CheckOnClick = $true
+$matrixCheckedList.IntegralHeight = $false
+$matrixSelectorPanel.Controls.Add($matrixCheckedList)
+
+# Track which routers are toggled on for display
+$global:visibleRouters = @{}
+
+function Update-MatrixSelector {
+    $matrixCheckedList.Items.Clear()
+    $global:visibleRouters = @{}
+    foreach ($rip in @($global:routers.Keys)) {
+        $displayName = if ($global:routerDisplayNames.ContainsKey($rip)) { $global:routerDisplayNames[$rip] } else { $rip }
+        $matrixCheckedList.Items.Add($displayName, $true) | Out-Null
+        $global:visibleRouters[$rip] = $true
+    }
+    $matrixSelectorPanel.Visible = ($global:routers.Count -gt 0)
+    # Adjust panel height based on item count
+    $itemCount = [Math]::Max($matrixCheckedList.Items.Count, 1)
+    $listHeight = [Math]::Min(($itemCount * 20 + 4), 100)
+    $matrixCheckedList.Height = $listHeight
+    $matrixSelectorPanel.Height = $listHeight + 38
+}
+
+$matrixCheckedList.Add_ItemCheck({
+    param($sender, $e)
+    # Use BeginInvoke to read the new check state after the event completes
+    $matrixCheckedList.BeginInvoke([Action]{
+        $global:visibleRouters = @{}
+        $routerKeys = @($global:routers.Keys)
+        for ($idx = 0; $idx -lt $matrixCheckedList.Items.Count; $idx++) {
+            if ($idx -lt $routerKeys.Count) {
+                $global:visibleRouters[$routerKeys[$idx]] = $matrixCheckedList.GetItemChecked($idx)
+            }
+        }
+        Populate-Grid
+    })
+})
+
 # Assemble sidebar inner panel with manual layout
 $sidebarInner = New-Object System.Windows.Forms.Panel
 $sidebarInner.Dock = "Fill"
@@ -2161,6 +2229,16 @@ function Update-SidebarLayout {
         $y += $routerInfoWrapper.Height
     }
 
+    if ($matrixSelectorPanel.Visible) {
+        $matrixSelectorSep.Location = New-Object System.Drawing.Point(0, $y)
+        $matrixSelectorSep.Width = $sidebarInner.Width
+        $y += 1
+
+        $matrixSelectorPanel.Location = New-Object System.Drawing.Point(0, $y)
+        $matrixSelectorPanel.Width = $sidebarInner.Width
+        $y += $matrixSelectorPanel.Height
+    }
+
     # Push actions to bottom with spacer
     $actionsY = $sidebarInner.Height - $actionSectionPanel.Height - 10
     if ($actionsY -lt $y) { $actionsY = $y }
@@ -2171,6 +2249,8 @@ function Update-SidebarLayout {
 $sidebarInner.Controls.Add($connSectionPanel)
 $sidebarInner.Controls.Add($sidebarSep1)
 $sidebarInner.Controls.Add($routerInfoWrapper)
+$sidebarInner.Controls.Add($matrixSelectorSep)
+$sidebarInner.Controls.Add($matrixSelectorPanel)
 $sidebarInner.Controls.Add($actionSectionPanel)
 
 $sidebarInner.Add_Resize({ Update-SidebarLayout })
@@ -2184,38 +2264,38 @@ $contentPanel.BackColor = $clrBg
 # Accent header stripe (8px purple bar at top of content)
 $headerBar = New-Object System.Windows.Forms.Label
 $headerBar.Dock = "Top"
-$headerBar.Height = 8
+$headerBar.Height = 4
 $headerBar.BackColor = $clrAccent
 
 # Content header (router info + change count)
 $contentHeader = New-Object System.Windows.Forms.Panel
 $contentHeader.Dock = "Top"
-$contentHeader.Height = 50
+$contentHeader.Height = 42
 $contentHeader.BackColor = $clrPanel
-$contentHeader.Padding = New-Object System.Windows.Forms.Padding(16, 0, 16, 0)
+$contentHeader.Padding = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
 
 $lblContentTitle = New-Object System.Windows.Forms.Label
 $lblContentTitle.Text = "No router connected"
-$lblContentTitle.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$lblContentTitle.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $lblContentTitle.ForeColor = $clrText
-$lblContentTitle.Location = New-Object System.Drawing.Point(16, 8)
-$lblContentTitle.Size = New-Object System.Drawing.Size(500, 22)
+$lblContentTitle.Location = New-Object System.Drawing.Point(12, 5)
+$lblContentTitle.Size = New-Object System.Drawing.Size(500, 20)
 $contentHeader.Controls.Add($lblContentTitle)
 
 $changesCount = New-Object System.Windows.Forms.Label
 $changesCount.Text = "0 changes pending"
-$changesCount.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$changesCount.Font = New-Object System.Drawing.Font("Segoe UI", 8)
 $changesCount.ForeColor = $clrDimText
-$changesCount.Location = New-Object System.Drawing.Point(16, 30)
-$changesCount.Size = New-Object System.Drawing.Size(300, 16)
+$changesCount.Location = New-Object System.Drawing.Point(12, 25)
+$changesCount.Size = New-Object System.Drawing.Size(300, 14)
 $contentHeader.Controls.Add($changesCount)
 
 # Filter rail (tab chips + search box)
 $filterRail = New-Object System.Windows.Forms.Panel
 $filterRail.Dock = "Top"
-$filterRail.Height = 44
+$filterRail.Height = 38
 $filterRail.BackColor = $clrBg
-$filterRail.Padding = New-Object System.Windows.Forms.Padding(12, 7, 12, 7)
+$filterRail.Padding = New-Object System.Windows.Forms.Padding(8, 5, 8, 5)
 
 # Tab chip style buttons
 function New-TabChip {
@@ -2223,8 +2303,8 @@ function New-TabChip {
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $Text
     $btn.Tag = $Tag
-    $btn.Location = New-Object System.Drawing.Point($X, 7)
-    $btn.Size = New-Object System.Drawing.Size(78, 28)
+    $btn.Location = New-Object System.Drawing.Point($X, 5)
+    $btn.Size = New-Object System.Drawing.Size(74, 26)
     $btn.BackColor = $clrField
     $btn.ForeColor = $clrText
     $btn.FlatStyle = "Flat"
@@ -2234,19 +2314,19 @@ function New-TabChip {
     return $btn
 }
 
-$tabAll     = New-TabChip "All Ports" "ALL"     12
-$tabInputs  = New-TabChip "Inputs"   "INPUT"   96
-$tabOutputs = New-TabChip "Outputs"  "OUTPUT"  180
-$tabChanged = New-TabChip "Changed"  "CHANGED" 264
-$tabAll.Size = New-Object System.Drawing.Size(80, 28)
+$tabAll     = New-TabChip "All Ports" "ALL"     8
+$tabInputs  = New-TabChip "Inputs"   "INPUT"   86
+$tabOutputs = New-TabChip "Outputs"  "OUTPUT"  164
+$tabChanged = New-TabChip "Changed"  "CHANGED" 242
+$tabAll.Size = New-Object System.Drawing.Size(74, 26)
 $tabAll.BackColor = $clrAccent
 
 $filterRail.Controls.Add($tabAll)
 $filterRail.Controls.Add($tabInputs)
 $filterRail.Controls.Add($tabOutputs)
 $filterRail.Controls.Add($tabChanged)
-$tabMatrix  = New-TabChip "Matrix"   "MATRIX"  348
-$tabMatrix.Size = New-Object System.Drawing.Size(84, 28)
+$tabMatrix  = New-TabChip "Matrix"   "MATRIX"  320
+$tabMatrix.Size = New-Object System.Drawing.Size(74, 26)
 $tabMatrix.FlatAppearance.BorderSize = 1
 $tabMatrix.FlatAppearance.BorderColor = $clrAccent
 $filterRail.Controls.Add($tabMatrix)
@@ -2254,8 +2334,8 @@ $filterRail.Controls.Add($tabMatrix)
 # Batch tools
 $btnFindReplace = New-Object System.Windows.Forms.Button
 $btnFindReplace.Text = "Find && Replace"
-$btnFindReplace.Location = New-Object System.Drawing.Point(440, 7)
-$btnFindReplace.Size = New-Object System.Drawing.Size(110, 28)
+$btnFindReplace.Location = New-Object System.Drawing.Point(402, 5)
+$btnFindReplace.Size = New-Object System.Drawing.Size(100, 26)
 $btnFindReplace.BackColor = $clrField
 $btnFindReplace.ForeColor = $clrText
 $btnFindReplace.FlatStyle = "Flat"
@@ -2266,8 +2346,8 @@ $filterRail.Controls.Add($btnFindReplace)
 
 $btnAutoNumber = New-Object System.Windows.Forms.Button
 $btnAutoNumber.Text = "Auto-Number"
-$btnAutoNumber.Location = New-Object System.Drawing.Point(558, 7)
-$btnAutoNumber.Size = New-Object System.Drawing.Size(98, 28)
+$btnAutoNumber.Location = New-Object System.Drawing.Point(508, 5)
+$btnAutoNumber.Size = New-Object System.Drawing.Size(90, 26)
 $btnAutoNumber.BackColor = $clrField
 $btnAutoNumber.ForeColor = $clrText
 $btnAutoNumber.FlatStyle = "Flat"
@@ -2278,8 +2358,8 @@ $filterRail.Controls.Add($btnAutoNumber)
 
 $btnTemplate = New-Object System.Windows.Forms.Button
 $btnTemplate.Text = "Create Template"
-$btnTemplate.Location = New-Object System.Drawing.Point(664, 7)
-$btnTemplate.Size = New-Object System.Drawing.Size(108, 28)
+$btnTemplate.Location = New-Object System.Drawing.Point(604, 5)
+$btnTemplate.Size = New-Object System.Drawing.Size(100, 26)
 $btnTemplate.BackColor = $clrField
 $btnTemplate.ForeColor = $clrText
 $btnTemplate.FlatStyle = "Flat"
@@ -2290,8 +2370,8 @@ $filterRail.Controls.Add($btnTemplate)
 
 $btnClearNew = New-Object System.Windows.Forms.Button
 $btnClearNew.Text = "Clear All New"
-$btnClearNew.Location = New-Object System.Drawing.Point(780, 7)
-$btnClearNew.Size = New-Object System.Drawing.Size(96, 28)
+$btnClearNew.Location = New-Object System.Drawing.Point(710, 5)
+$btnClearNew.Size = New-Object System.Drawing.Size(88, 26)
 $btnClearNew.BackColor = $clrField
 $btnClearNew.ForeColor = $clrText
 $btnClearNew.FlatStyle = "Flat"
@@ -2302,7 +2382,7 @@ $filterRail.Controls.Add($btnClearNew)
 
 # Search box (right-aligned in filter rail)
 $searchBox = New-Object System.Windows.Forms.TextBox
-$searchBox.Size = New-Object System.Drawing.Size(170, 24)
+$searchBox.Size = New-Object System.Drawing.Size(160, 22)
 $searchBox.BackColor = $clrField
 $searchBox.ForeColor = $clrDimText
 $searchBox.BorderStyle = "FixedSingle"
@@ -2312,9 +2392,9 @@ $searchWatermark = "Search labels..."
 $searchBox.Text = $searchWatermark
 
 $filterRail.Add_Resize({
-    # Clamp search box so it never overlaps the Clear All New button (right edge ~800px)
-    $searchX = [Math]::Max($filterRail.Width - 182, 0)
-    $searchBox.Location = New-Object System.Drawing.Point($searchX, 9)
+    # Clamp search box so it never overlaps the Clear All New button
+    $searchX = [Math]::Max($filterRail.Width - 172, 0)
+    $searchBox.Location = New-Object System.Drawing.Point($searchX, 7)
 })
 
 $filterRail.Controls.Add($searchBox)
@@ -2336,20 +2416,20 @@ $dataGrid.MultiSelect = $true
 $dataGrid.RowHeadersVisible = $false
 $dataGrid.AutoSizeColumnsMode = "Fill"
 $dataGrid.EnableHeadersVisualStyles = $false
-$dataGrid.ColumnHeadersHeight = 36
-$dataGrid.RowTemplate.Height = 32
+$dataGrid.ColumnHeadersHeight = 30
+$dataGrid.RowTemplate.Height = 26
 $dataGrid.DefaultCellStyle.BackColor = $clrBg
 $dataGrid.DefaultCellStyle.ForeColor = $clrText
 $dataGrid.DefaultCellStyle.SelectionBackColor = $clrSelectedRow
 $dataGrid.DefaultCellStyle.SelectionForeColor = $clrText
-$dataGrid.DefaultCellStyle.Padding = New-Object System.Windows.Forms.Padding(6, 0, 4, 0)
+$dataGrid.DefaultCellStyle.Padding = New-Object System.Windows.Forms.Padding(4, 0, 2, 0)
 $dataGrid.AlternatingRowsDefaultCellStyle.BackColor = $clrAltRow
 $dataGrid.AlternatingRowsDefaultCellStyle.SelectionBackColor = $clrSelectedRow
 $dataGrid.ColumnHeadersDefaultCellStyle.BackColor = $clrPanel
 $dataGrid.ColumnHeadersDefaultCellStyle.ForeColor = $clrDimText
 $dataGrid.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $dataGrid.ColumnHeadersDefaultCellStyle.Alignment = "MiddleLeft"
-$dataGrid.ColumnHeadersDefaultCellStyle.Padding = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
+$dataGrid.ColumnHeadersDefaultCellStyle.Padding = New-Object System.Windows.Forms.Padding(4, 0, 0, 0)
 
 # Enable double-buffering on DataGridView via reflection
 $dgType = $dataGrid.GetType()
@@ -2364,30 +2444,30 @@ $colPort = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colPort.Name = "Port"
 $colPort.HeaderText = "Port"
 $colPort.ReadOnly = $true
-$colPort.FillWeight = 6
-$colPort.MinimumWidth = 45
+$colPort.FillWeight = 5
+$colPort.MinimumWidth = 38
 
 $colType = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colType.Name = "Type"
 $colType.HeaderText = "Type"
 $colType.ReadOnly = $true
-$colType.FillWeight = 8
-$colType.MinimumWidth = 55
+$colType.FillWeight = 7
+$colType.MinimumWidth = 50
 
 $colCurrent = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colCurrent.Name = "Current_Label"
 $colCurrent.HeaderText = "Current Label"
 $colCurrent.ReadOnly = $true
-$colCurrent.FillWeight = 28
-$colCurrent.MinimumWidth = 120
+$colCurrent.FillWeight = 30
+$colCurrent.MinimumWidth = 100
 $colCurrent.DefaultCellStyle.ForeColor = $clrDimText
 
 $colNew = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colNew.Name = "New_Label"
 $colNew.HeaderText = "New Label (click to edit)"
 $colNew.ReadOnly = $false
-$colNew.FillWeight = 28
-$colNew.MinimumWidth = 120
+$colNew.FillWeight = 30
+$colNew.MinimumWidth = 100
 $colNew.DefaultCellStyle.ForeColor = $clrChanged
 $colNew.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 
@@ -2395,8 +2475,8 @@ $colCurrentL2 = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colCurrentL2.Name = "Current_Label_2"
 $colCurrentL2.HeaderText = "Current Label 2"
 $colCurrentL2.ReadOnly = $true
-$colCurrentL2.FillWeight = 20
-$colCurrentL2.MinimumWidth = 90
+$colCurrentL2.FillWeight = 18
+$colCurrentL2.MinimumWidth = 80
 $colCurrentL2.DefaultCellStyle.ForeColor = $clrDimText
 $colCurrentL2.Visible = $false
 
@@ -2404,8 +2484,8 @@ $colNewL2 = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colNewL2.Name = "New_Label_2"
 $colNewL2.HeaderText = "New Label 2 (click to edit)"
 $colNewL2.ReadOnly = $false
-$colNewL2.FillWeight = 20
-$colNewL2.MinimumWidth = 90
+$colNewL2.FillWeight = 18
+$colNewL2.MinimumWidth = 80
 $colNewL2.DefaultCellStyle.ForeColor = $clrChanged
 $colNewL2.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $colNewL2.Visible = $false
@@ -2414,23 +2494,23 @@ $colStatus = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colStatus.Name = "Status"
 $colStatus.HeaderText = "Status"
 $colStatus.ReadOnly = $true
-$colStatus.FillWeight = 10
-$colStatus.MinimumWidth = 60
+$colStatus.FillWeight = 8
+$colStatus.MinimumWidth = 50
 
 $colCharCount = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colCharCount.Name = "Chars"
 $colCharCount.HeaderText = "Chars"
 $colCharCount.ReadOnly = $true
-$colCharCount.FillWeight = 6
-$colCharCount.MinimumWidth = 40
+$colCharCount.FillWeight = 5
+$colCharCount.MinimumWidth = 36
 $colCharCount.DefaultCellStyle.Alignment = "MiddleCenter"
 
 $colRouter = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colRouter.Name = "Router"
 $colRouter.HeaderText = "Router"
 $colRouter.ReadOnly = $true
-$colRouter.FillWeight = 12
-$colRouter.MinimumWidth = 80
+$colRouter.FillWeight = 10
+$colRouter.MinimumWidth = 70
 
 $dataGrid.Columns.Add($colPort)      | Out-Null
 $dataGrid.Columns.Add($colType)      | Out-Null
@@ -2466,10 +2546,10 @@ $dataGrid.Add_CellPainting({
             }
 
             $badgeRect = New-Object System.Drawing.RectangleF(
-                ($e.CellBounds.X + 5),
-                ($e.CellBounds.Y + ($e.CellBounds.Height - 18) / 2),
-                ($e.CellBounds.Width - 10),
-                18
+                ($e.CellBounds.X + 3),
+                ($e.CellBounds.Y + ($e.CellBounds.Height - 16) / 2),
+                ($e.CellBounds.Width - 6),
+                16
             )
 
             $g = $e.Graphics
@@ -2651,13 +2731,13 @@ $gridContextMenu.Add_Opening({
 
 $statusBar = New-Object System.Windows.Forms.Panel
 $statusBar.Dock = "Bottom"
-$statusBar.Height = 32
+$statusBar.Height = 26
 $statusBar.BackColor = $clrStatusBar
-$statusBar.Padding = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
+$statusBar.Padding = New-Object System.Windows.Forms.Padding(8, 0, 8, 0)
 
 $progressBar = New-Object SmoothProgressBar
 $progressBar.Location = New-Object System.Drawing.Point(0, 0)
-$progressBar.Size = New-Object System.Drawing.Size(200, 4)
+$progressBar.Size = New-Object System.Drawing.Size(200, 3)
 $progressBar.BackColor = [System.Drawing.Color]::FromArgb(50, 45, 65)
 $progressBar.FillColor = $clrAccent
 $progressBar.Maximum = 100
@@ -2667,22 +2747,22 @@ $statusBar.Controls.Add($progressBar)
 $progressLabel = New-Object System.Windows.Forms.Label
 $progressLabel.Text = "Ready"
 $progressLabel.ForeColor = $clrDimText
-$progressLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
-$progressLabel.Location = New-Object System.Drawing.Point(12, 8)
+$progressLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+$progressLabel.Location = New-Object System.Drawing.Point(8, 6)
 $progressLabel.AutoSize = $true
 $statusBar.Controls.Add($progressLabel)
 
 $lblStatusRight = New-Object System.Windows.Forms.Label
 $lblStatusRight.Text = ""
 $lblStatusRight.ForeColor = $clrDimText
-$lblStatusRight.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$lblStatusRight.Font = New-Object System.Drawing.Font("Segoe UI", 8)
 $lblStatusRight.TextAlign = "MiddleRight"
 $statusBar.Controls.Add($lblStatusRight)
 
 $statusBar.Add_Resize({
     $progressBar.Width = $statusBar.Width
-    $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 300), 8)
-    $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
+    $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 280), 6)
+    $lblStatusRight.Size = New-Object System.Drawing.Size(265, 16)
 })
 
 # --- Matrix Panel ---------------------------------------------------------------
@@ -2716,6 +2796,11 @@ function Populate-Grid {
     $maxLen = $global:maxLabelLength
 
     foreach ($lbl in $global:allLabels) {
+        # Skip labels from routers toggled off in the matrix selector
+        if ($lbl.Router -and $global:visibleRouters.Count -gt 0) {
+            if ($global:visibleRouters.ContainsKey($lbl.Router) -and -not $global:visibleRouters[$lbl.Router]) { continue }
+        }
+
         if ($global:currentFilter -eq "INPUT"  -and $lbl.Type -ne "INPUT")  { continue }
         if ($global:currentFilter -eq "OUTPUT" -and $lbl.Type -ne "OUTPUT") { continue }
         if ($global:currentFilter -eq "CHANGED") {
@@ -2748,7 +2833,15 @@ function Populate-Grid {
             $charCount = "$len/$maxLen"
         }
 
-        $routerVal = if ($lbl.Router) { $lbl.Router } else { "" }
+        # Show friendly router name instead of IP address
+        $routerVal = ""
+        if ($lbl.Router) {
+            if ($global:routerDisplayNames.ContainsKey($lbl.Router)) {
+                $routerVal = $global:routerDisplayNames[$lbl.Router]
+            } else {
+                $routerVal = $lbl.Router
+            }
+        }
         $rowIndex = $dataGrid.Rows.Add($lbl.Port, $lbl.Type, $routerVal, $lbl.Current_Label, $curLabel2, $newLabel, $newLabel2, $status, $charCount)
 
         if ($newLabel -and $newLabel.Trim().Length -gt $maxLen) {
@@ -3149,6 +3242,7 @@ $connectButton.Add_Click({
         }
     }
     $global:routers = @{}
+    $global:routerDisplayNames = @{}
     $global:videohubTcp = $null; $global:videohubWriter = $null; $global:videohubReader = $null
     $global:lightwareTcp = $null; $global:lightwareWriter = $null; $global:lightwareReader = $null
     $global:crosspoints = @()
@@ -3182,6 +3276,12 @@ $connectButton.Add_Click({
             $totalInputs  += $info.InputCount
             $totalOutputs += $info.OutputCount
             $modelNames   += "$($info.RouterModel) ($ip)"
+            # Store friendly display name for grid (model + name, no IP)
+            $displayName = $info.RouterModel
+            if ($info.RouterName -and $info.RouterName -ne $info.RouterModel) {
+                $displayName = "$($info.RouterModel) - $($info.RouterName)"
+            }
+            $global:routerDisplayNames[$ip] = $displayName
         } catch {
             Write-ErrorLog "CONNECT" "Connection to $ip failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
             $failedIPs += $ip
@@ -3200,13 +3300,22 @@ $connectButton.Add_Click({
         $connectButton.Text  = "Reconnect"
         $btnDownload.Enabled = $true
 
-        # Update router info card with combined info
-        $lblRouterModel.Text = ($modelNames -join ", ")
+        # Update router info card with combined info (show model names without IPs)
+        $cleanModelNames = @()
+        foreach ($rip in @($global:routers.Keys)) {
+            if ($global:routerDisplayNames.ContainsKey($rip)) {
+                $cleanModelNames += $global:routerDisplayNames[$rip]
+            } else {
+                $cleanModelNames += $rip
+            }
+        }
+        $lblRouterModel.Text = ($cleanModelNames -join ", ")
         $lblRouterPorts.Text = "$totalInputs inputs / $totalOutputs outputs"
         $lblRouterFw.Text    = if ($lastInfo.Firmware) { $lastInfo.Firmware } else { "" }
         $lblRouterName.Text  = if ($connectedCount -eq 1) { "`"$($lastInfo.RouterName)`"" } else { "$connectedCount routers" }
         $routerInfoWrapper.Visible = $true
         $routerInfoCard.Visible    = $true
+        Update-MatrixSelector
         Update-SidebarLayout
 
         if ($connectedCount -eq 1) {
@@ -3252,6 +3361,8 @@ $connectButton.Add_Click({
         $connIndicator.ForeColor  = $clrDimText
         $btnDownload.Enabled = $false
         $progressBar.Value = 0
+        $matrixSelectorPanel.Visible = $false
+        Update-SidebarLayout
         Set-StatusMessage "Connection failed for all IPs" "Danger"
         $connectButton.Enabled = $true
 
@@ -4211,6 +4322,8 @@ $keepaliveTimer.Add_Tick({
         $connectButton.Text = "Connect"
         $btnDownload.Enabled = $false
         $btnUpload.Enabled = $false
+        $matrixSelectorPanel.Visible = $false
+        Update-SidebarLayout
         Set-StatusMessage "All router connections lost" "Danger"
     } elseif ($disconnected.Count -gt 0) {
         $connIndicator.StatusText = "$($global:routers.Count) router(s) connected"
@@ -4247,10 +4360,10 @@ $form.Add_FormClosing({
 
 $form.Add_Resize({
     Update-SidebarLayout
-    $searchX = [Math]::Max($filterRail.Width - 182, 0)
-    $searchBox.Location = New-Object System.Drawing.Point($searchX, 9)
-    $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 300), 8)
-    $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
+    $searchX = [Math]::Max($filterRail.Width - 172, 0)
+    $searchBox.Location = New-Object System.Drawing.Point($searchX, 7)
+    $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 280), 6)
+    $lblStatusRight.Size = New-Object System.Drawing.Size(265, 16)
     $progressBar.Width = $statusBar.Width
 })
 
@@ -4258,10 +4371,10 @@ $form.Add_Resize({
 
 $form.Add_Load({
     Update-SidebarLayout
-    $searchBox.Location = New-Object System.Drawing.Point(($filterRail.Width - 182), 9)
+    $searchBox.Location = New-Object System.Drawing.Point(($filterRail.Width - 172), 7)
     $progressBar.Width  = $statusBar.Width
-    $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 300), 8)
-    $lblStatusRight.Size = New-Object System.Drawing.Size(285, 16)
+    $lblStatusRight.Location = New-Object System.Drawing.Point(($statusBar.Width - 280), 6)
+    $lblStatusRight.Size = New-Object System.Drawing.Size(265, 16)
 })
 
 # --- Initialize ---------------------------------------------------------------
