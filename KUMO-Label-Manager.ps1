@@ -17,7 +17,7 @@ try {
     "OS: $([System.Environment]::OSVersion.VersionString)" | Out-File $global:errorLogPath -Append -Encoding ascii
     "" | Out-File $global:errorLogPath -Append -Encoding ascii
 } catch {
-    # If we cannot write the log, continue without logging
+    Write-Warning "Could not initialize error log at '$global:errorLogPath': $($_.Exception.Message). Error logging is disabled."
 }
 
 function Write-ErrorLog {
@@ -25,7 +25,9 @@ function Write-ErrorLog {
     try {
         $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         "[$ts] [$Level] [$Source] $Message" | Out-File $global:errorLogPath -Append -Encoding ascii
-    } catch { }
+    } catch {
+        Write-Warning "Could not write to error log: $($_.Exception.Message)"
+    }
 }
 
 # Global trap: catch any unhandled terminating error and log it
@@ -666,9 +668,9 @@ public class CrosspointClickEventArgs : EventArgs
 }
 '@ -ErrorAction Stop
 
-# --- HTTPS Helper Functions --------------------------------------------------
+# --- HTTP Helper Functions ---------------------------------------------------
 
-function Invoke-SecureWebRequest {
+function Invoke-RouterWebRequest {
     param(
         [Parameter(Mandatory=$true)][string]$Uri,
         [string]$Method = "GET",
@@ -711,7 +713,7 @@ function Get-KumoParam {
     param([string]$IP, [string]$ParamId, [switch]$RawValue)
     $uri = "http://$IP/config?action=get&configid=0&paramid=$ParamId"
     try {
-        $r = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
+        $r = Invoke-RouterWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
         $json = $r.Content | ConvertFrom-Json
         if ($RawValue) {
             # Return numeric value field directly (for crosspoint status queries)
@@ -721,7 +723,10 @@ function Get-KumoParam {
         if ($json.value_name -and $json.value_name -ne "") { return $json.value_name }
         if ($json.value -and $json.value -ne "") { return $json.value }
         return ""
-    } catch { return $null }
+    } catch {
+        Write-ErrorLog "KUMO-GET" "Failed to get $ParamId from $IP : $($_.Exception.Message)"
+        return $null
+    }
 }
 
 function Set-KumoParam {
@@ -729,7 +734,7 @@ function Set-KumoParam {
     $encoded = [System.Uri]::EscapeDataString($Value)
     $uri = "http://$IP/config?action=set&configid=0&paramid=$ParamId&value=$encoded"
     try {
-        $r = Invoke-SecureWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
+        $r = Invoke-RouterWebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
         return $true
     } catch {
         Write-ErrorLog "KUMO-SET" "Failed to set $ParamId = $Value on $IP : $($_.Exception.Message)"
@@ -780,7 +785,7 @@ function Connect-KumoRouter {
     param([string]$IP)
     # Returns a hashtable with connection info or throws on failure.
     $testUri  = "http://$IP/config?action=get&configid=0&paramid=eParamID_SysName"
-    $response = Invoke-SecureWebRequest -Uri $testUri -TimeoutSec 8 -UseBasicParsing -ErrorAction Stop
+    $response = Invoke-RouterWebRequest -Uri $testUri -TimeoutSec 8 -UseBasicParsing -ErrorAction Stop
     $json     = $response.Content | ConvertFrom-Json
 
     $routerName = if ($json.value -and $json.value -ne "") { $json.value } else { "KUMO" }
@@ -951,16 +956,19 @@ function Upload-KumoLabels-Telnet {
         Start-Sleep -Milliseconds 300
         foreach ($item in $Items) {
             try {
-                $w.WriteLine("LABEL $($item.Type) $($item.Port) `"$($item.New_Label.Trim())`"")
+                $escapedLabel = $item.New_Label.Trim() -replace '"', '\"'
+                $escapedLabel = $escapedLabel -replace '[\r\n]', ''
+                $w.WriteLine("LABEL $($item.Type) $($item.Port) `"$escapedLabel`"")
                 $w.Flush()
                 Start-Sleep -Milliseconds 150
                 $succeeded.Add($item)
             } catch {
-                # Per-label write failed -- skip this label but continue with the rest
+                Write-ErrorLog "TELNET-UPLOAD" "Failed to upload port $($item.Port) ($($item.Type)): $($_.Exception.Message)"
             }
         }
+        try { $w.WriteLine("SAVE"); $w.Flush(); Start-Sleep -Milliseconds 200 } catch { }
     } catch {
-        # Connection failed -- return whatever succeeded so far
+        Write-ErrorLog "TELNET-UPLOAD" "Telnet connection to $IP failed: $($_.Exception.Message)"
     } finally {
         try { if ($w)   { $w.Close() } } catch { }
         try { if ($tcp) { $tcp.Close() } } catch { }
@@ -1069,8 +1077,8 @@ function Connect-LightwareRouter {
             Write-ErrorLog "LW3-CONNECT" "Failed to query DestinationPortCount: $($_.Exception.Message)"
         }
 
-        if ($inputCount -eq 0)  { $inputCount  = 8 }
-        if ($outputCount -eq 0) { $outputCount = 8 }
+        if ($inputCount -eq 0)  { $inputCount  = 8; Write-ErrorLog "LW3" "Could not determine input port count - defaulting to 8" "WARN" }
+        if ($outputCount -eq 0) { $outputCount = 8; Write-ErrorLog "LW3" "Could not determine output port count - defaulting to 8" "WARN" }
 
         return @{
             RouterType   = "Lightware"
@@ -1133,11 +1141,19 @@ function Download-LightwareLabels {
     }
 }
 
+function Sanitize-LW3Label {
+    param([string]$Label)
+    $Label = $Label -replace '[\r\n]', ''
+    $Label = $Label -replace ';', ','
+    return $Label
+}
+
 function Upload-LightwareLabel {
     param([string]$Type, [int]$Port, [string]$Label)
     # Sends a SET command to update a single port label.
     # Returns $true on success, $false on error.
 
+    $Label = Sanitize-LW3Label -Label $Label
     $prefix = if ($Type -eq "INPUT") { "I" } else { "O" }
     try {
         $resp = Send-LW3Command "SET /MEDIA/NAMES/VIDEO.$prefix${Port}=$Port;$Label"
@@ -1146,6 +1162,7 @@ function Upload-LightwareLabel {
         }
         return $true
     } catch {
+        Write-ErrorLog "LW3-UPLOAD" "Failed to upload port $Port : $($_.Exception.Message)"
         return $false
     }
 }
@@ -1507,10 +1524,14 @@ function Upload-RouterLabels {
                         $line = $reader.ReadLine()
                         if ($line -eq "ACK") { $response = "ACK"; break }
                         if ($line -eq "NAK") { $response = "NAK"; break }
+                        # Otherwise skip notification/status lines and keep reading
                     } else { Start-Sleep -Milliseconds 50 }
                 }
                 return ($response -eq "ACK")
-            } catch { return $false }
+            } catch {
+                Write-ErrorLog "VH-UPLOAD" "Send block failed: $($_.Exception.Message)"
+                return $false
+            }
         }
 
         $blockNum = 0
@@ -2549,7 +2570,7 @@ function Populate-Grid {
         }
     }
 
-    $dataGrid.ResumeLayout()
+    $dataGrid.ResumeLayout($true)
     Update-ChangeCount
 }
 
@@ -2871,6 +2892,12 @@ $form.Add_KeyDown({
 $connectButton.Add_Click({
     $ip = $ipTextBox.Text.Trim()
     if (-not $ip) { return }
+    $parsedIP = $null
+    if (-not [System.Net.IPAddress]::TryParse($ip, [ref]$parsedIP)) {
+        [System.Windows.Forms.MessageBox]::Show("Please enter a valid IP address.", "Invalid IP", "OK", "Warning")
+        return
+    }
+    $ip = $parsedIP.ToString()
 
     $connectButton.Enabled = $false
 
@@ -3741,7 +3768,9 @@ $btnUpload.Add_Click({
         $backupPath  = Join-Path $docsPath "${safeName}_Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
         $global:backupLabels | Export-Csv -Path $backupPath -NoTypeInformation
         $backupSaved = $true
-    } catch { }
+    } catch {
+        Write-ErrorLog "BACKUP" "Failed to save backup: $($_.Exception.Message)"
+    }
 
     $ip = $ipTextBox.Text.Trim()
     $progressBar.Maximum = [Math]::Max($changes.Count, 1)

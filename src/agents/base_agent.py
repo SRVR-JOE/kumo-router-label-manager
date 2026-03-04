@@ -95,9 +95,8 @@ class BaseAgent(ABC):
         await self._subscribe_to_events()
 
         # Start event processing task
-        self._event_task = asyncio.create_task(self._process_events())
-
         self._running = True
+        self._event_task = asyncio.create_task(self._process_events())
         logger.info("Agent '%s' started successfully", self.name)
 
     async def stop(self) -> None:

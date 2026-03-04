@@ -110,7 +110,6 @@ class CSVHandler:
                 index=False,
                 encoding="utf-8",
                 quoting=1,  # QUOTE_ALL - escape all fields
-                escapechar="\\",
                 lineterminator="\n",
             )
         except Exception as e:
@@ -153,7 +152,6 @@ class CSVHandler:
                 index=False,
                 encoding="utf-8",
                 quoting=1,
-                escapechar="\\",
                 lineterminator="\n",
             )
         except Exception as e:

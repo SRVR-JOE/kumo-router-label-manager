@@ -108,7 +108,6 @@ class ExcelHandler:
         # Write headers
         for col_idx, header in enumerate(self.HEADERS, start=1):
             cell = worksheet.cell(row=1, column=col_idx, value=header)
-            cell.font = Font(bold=True, size=12)
             cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
             cell.font = Font(bold=True, color="FFFFFF", size=12)
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -138,7 +137,7 @@ class ExcelHandler:
             type="list",
             formula1='"INPUT,OUTPUT"',
             allow_blank=False,
-            showDropDown=True,
+            showDropDown=False,
         )
         type_validation.error = "Please select INPUT or OUTPUT"
         type_validation.errorTitle = "Invalid Type"
