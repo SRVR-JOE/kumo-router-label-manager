@@ -354,9 +354,20 @@ class RestClient:
             endpoint = APIEndpoint.get_button_color(port, port_type)
             result = await self._get(endpoint)
             color_id = KUMO_DEFAULT_COLOR
-            if result:
-                raw = ResponseParser.parse_param_response(result)
-                color_id = ResponseParser.parse_button_color(raw)
+            if result and isinstance(result, dict):
+                # Button settings store JSON like {"classes":"color_N"} in
+                # the "value" field.  parse_param_response() prefers
+                # "value_name" which may not contain valid JSON for button
+                # settings, so try each candidate directly.
+                for key in ("value", "value_name"):
+                    candidate = result.get(key)
+                    if candidate and isinstance(candidate, str) and "color_" in candidate:
+                        color_id = ResponseParser.parse_button_color(candidate.strip())
+                        break
+                else:
+                    # Fallback: use parse_param_response output
+                    raw = ResponseParser.parse_param_response(result)
+                    color_id = ResponseParser.parse_button_color(raw)
             return port, port_type, color_id
 
     async def download_colors(

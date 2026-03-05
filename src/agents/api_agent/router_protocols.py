@@ -270,6 +270,7 @@ class ResponseParser:
         """
         if not value:
             return KUMO_DEFAULT_COLOR
+        # Try JSON format first: {"classes":"color_N"}
         try:
             data = json.loads(value)
             classes = data.get("classes", "")
@@ -280,6 +281,12 @@ class ResponseParser:
                     return color_id
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
+        # Fallback: search raw string for color_N pattern
+        match = re.search(r"color_(\d+)", value)
+        if match:
+            color_id = int(match.group(1))
+            if 1 <= color_id <= 9:
+                return color_id
         return KUMO_DEFAULT_COLOR
 
     @staticmethod
