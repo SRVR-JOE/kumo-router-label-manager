@@ -245,6 +245,7 @@ class APIAgent:
                                     label.port_number, label.port_type.value, label.new_color
                                 )
                                 if ok:
+                                    label.apply_changes()
                                     success_count += 1
                                 else:
                                     error_count += 1
