@@ -1681,7 +1681,8 @@ function Download-RouterLabels {
                     $colorId = 4
                     try {
                         $cresult = $cjob.PS.EndInvoke($cjob.Handle)
-                        if ($cresult -ne $null) { $colorId = [int]$cresult }
+                        # EndInvoke returns PSDataCollection — unwrap the first element
+                        if ($cresult -ne $null -and $cresult.Count -gt 0) { $colorId = [int]$cresult[0] }
                     } catch { }
                     $cjob.PS.Dispose()
 
