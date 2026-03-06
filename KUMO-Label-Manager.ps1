@@ -1629,70 +1629,69 @@ function Download-RouterLabels {
                 Create-DefaultLabels -InputCount $global:routerInputCount -OutputCount $global:routerOutputCount
             }
 
-            # --- Download button colors (KUMO only, parallel) ---
-            $baseUri = "http://$IP/config?action=get&configid=0&paramid="
+            # --- Download button colors (KUMO only, sequential for reliability) ---
             try {
-                $colorRequests = [System.Collections.ArrayList]::new()
+                $colorLog = [System.Collections.ArrayList]::new()
                 $inCount = $global:routerInputCount
                 $outCount = $global:routerOutputCount
+                $amp = [char]38
+                $colorBaseUri = "http://${IP}/config?action=get" + $amp + "configid=0" + $amp + "paramid="
+                $colorLog.Add("Color download: inCount=$inCount outCount=$outCount baseUri=$colorBaseUri") | Out-Null
+
+                # Download colors sequentially to avoid RunspacePool issues
                 for ($ci = 1; $ci -le $inCount; $ci++) {
-                    $colorRequests.Add(@($ci, "INPUT", "eParamID_Button_Settings_$ci")) | Out-Null
-                }
-                for ($ci = 1; $ci -le $outCount; $ci++) {
-                    $colorRequests.Add(@($ci, "OUTPUT", "eParamID_Button_Settings_$($ci + 64)")) | Out-Null
-                }
-
-                $colorFetchScript = {
-                    param([string]$BaseUri, [string]$ParamId)
-                    try {
-                        $r = Invoke-WebRequest -Uri "$BaseUri$ParamId" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-                        $raw = $r.Content
-                        # Router returns malformed JSON (unescaped inner braces), so try
-                        # JSON parse first, then fall back to raw regex on the full response
-                        $json = $null
-                        try { $json = $raw | ConvertFrom-Json } catch { }
-                        if ($json) {
-                            $val = if ($json.value_name -and $json.value_name -ne "") { $json.value_name } elseif ($json.value -and $json.value -ne "") { $json.value } else { $null }
-                            if ($val) {
-                                $parsed = $val | ConvertFrom-Json -ErrorAction SilentlyContinue
-                                if ($parsed -and $parsed.classes -and $parsed.classes -match 'color_(\d+)') { return [int]$matches[1] }
-                            }
-                        }
-                        # Fallback: search raw response text for color_N pattern
-                        if ($raw -match 'color_(\d+)') {
-                            $cid = [int]$matches[1]
-                            if ($cid -ge 1 -and $cid -le 9) { return $cid }
-                        }
-                    } catch { }
-                    return 4
-                }
-
-                $colorPool = [RunspaceFactory]::CreateRunspacePool(1, 24)
-                $colorPool.Open()
-                $colorJobs = [System.Collections.ArrayList]::new()
-
-                foreach ($creq in $colorRequests) {
-                    $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument($baseUri).AddArgument($creq[2])
-                    $ps.RunspacePool = $colorPool
-                    $colorJobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $creq[0]; Type = $creq[1] }) | Out-Null
-                }
-
-                foreach ($cjob in $colorJobs) {
                     $colorId = 4
                     try {
-                        $cresult = $cjob.PS.EndInvoke($cjob.Handle)
-                        # EndInvoke returns PSDataCollection — unwrap the first element
-                        if ($cresult -ne $null -and $cresult.Count -gt 0) { $colorId = [int]$cresult[0] }
-                    } catch { }
-                    $cjob.PS.Dispose()
-
-                    if ($colorId -lt 1 -or $colorId -gt 9) { $colorId = 4 }
-                    $matchLabel = $global:allLabels | Where-Object { $_.Port -eq $cjob.Port -and $_.Type -eq $cjob.Type -and $_.Router -eq $IP } | Select-Object -First 1
-                    if ($matchLabel) { $matchLabel.Color = $colorId }
+                        $cParamId = "eParamID_Button_Settings_$ci"
+                        $cUri = "${colorBaseUri}${cParamId}"
+                        $cResp = Invoke-WebRequest -Uri $cUri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+                        $cRaw = $cResp.Content
+                        if ($cRaw -match 'color_(\d+)') {
+                            $cid = [int]$matches[1]
+                            if ($cid -ge 1 -and $cid -le 9) { $colorId = $cid }
+                        }
+                    } catch {
+                        $colorLog.Add("  IN $ci FETCH ERROR: $($_.Exception.Message)") | Out-Null
+                    }
+                    $matchLabel = $global:allLabels | Where-Object { $_.Port -eq $ci -and $_.Type -eq "INPUT" -and $_.Router -eq $IP } | Select-Object -First 1
+                    if ($matchLabel) {
+                        $matchLabel.Color = $colorId
+                        if ($ci -le 5) { $colorLog.Add("  IN $ci = color_$colorId (matched)") | Out-Null }
+                    } else {
+                        $colorLog.Add("  IN $ci = color_$colorId (NO MATCH in allLabels!)") | Out-Null
+                    }
                 }
 
-                $colorPool.Close()
-                $colorPool.Dispose()
+                for ($ci = 1; $ci -le $outCount; $ci++) {
+                    $colorId = 4
+                    try {
+                        $cIdx = $ci + 64
+                        $cParamId = "eParamID_Button_Settings_$cIdx"
+                        $cUri = "${colorBaseUri}${cParamId}"
+                        $cResp = Invoke-WebRequest -Uri $cUri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+                        $cRaw = $cResp.Content
+                        if ($cRaw -match 'color_(\d+)') {
+                            $cid = [int]$matches[1]
+                            if ($cid -ge 1 -and $cid -le 9) { $colorId = $cid }
+                        }
+                    } catch {
+                        $colorLog.Add("  OUT $ci FETCH ERROR: $($_.Exception.Message)") | Out-Null
+                    }
+                    $matchLabel = $global:allLabels | Where-Object { $_.Port -eq $ci -and $_.Type -eq "OUTPUT" -and $_.Router -eq $IP } | Select-Object -First 1
+                    if ($matchLabel) {
+                        $matchLabel.Color = $colorId
+                        if ($ci -le 5) { $colorLog.Add("  OUT $ci = color_$colorId (matched)") | Out-Null }
+                    } else {
+                        $colorLog.Add("  OUT $ci = color_$colorId (NO MATCH in allLabels!)") | Out-Null
+                    }
+                }
+
+                # Write diagnostic log
+                $colorLog.Add("Color download complete: $($inCount + $outCount) ports processed") | Out-Null
+                $logPath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "KUMO_Labels"
+                if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
+                $colorLog | Out-File (Join-Path $logPath "color_debug.log") -Encoding UTF8
+
             } catch {
                 Write-ErrorLog "COLOR-DL" "Color download failed (non-fatal): $($_.Exception.Message)" "WARN"
             }
