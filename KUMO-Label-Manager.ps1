@@ -3494,6 +3494,26 @@ $connectButton.Add_Click({
     $modelNames = @()
 
     foreach ($ip in $ipList) {
+        Set-StatusMessage "Pinging $ip..." "Dim"
+        $form.Refresh()
+
+        # Ping check: 4 attempts, skip to next IP if all fail
+        $pingOk = $false
+        for ($pingAttempt = 1; $pingAttempt -le 4; $pingAttempt++) {
+            try {
+                $pingResult = Test-Connection -ComputerName $ip -Count 1 -Quiet -ErrorAction SilentlyContinue
+                if ($pingResult) { $pingOk = $true; break }
+            } catch { }
+            Set-StatusMessage "Pinging $ip ($pingAttempt/4)..." "Dim"
+            $form.Refresh()
+        }
+
+        if (-not $pingOk) {
+            Write-ErrorLog "PING" "No response from $ip after 4 pings -- skipping"
+            $failedIPs += $ip
+            continue
+        }
+
         Set-StatusMessage "Connecting to $ip..." "Dim"
         $form.Refresh()
         try {

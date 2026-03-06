@@ -1433,6 +1433,23 @@ if ($DownloadLabels) {
     foreach ($ip in $ipList) {
         Write-Host "`n--- Router: $ip ---" -ForegroundColor Cyan
 
+        # Ping check: 4 attempts, skip to next IP if all fail
+        $pingOk = $false
+        for ($pa = 1; $pa -le 4; $pa++) {
+            Write-Host "  Pinging $ip ($pa/4)..." -ForegroundColor DarkGray -NoNewline
+            try {
+                if (Test-Connection -ComputerName $ip -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+                    Write-Host " OK" -ForegroundColor Green
+                    $pingOk = $true; break
+                }
+            } catch { }
+            Write-Host " no response" -ForegroundColor Yellow
+        }
+        if (-not $pingOk) {
+            Write-Warning "No response from $ip after 4 pings -- skipping."
+            continue
+        }
+
         # Determine output path per router
         if ($DownloadPath) {
             if ($multi) {
@@ -1574,6 +1591,23 @@ if ($confirm -ne 'y' -and $confirm -ne 'Y') {
 
 foreach ($ip in $ipList) {
     Write-Host "`n--- Router: $ip ---" -ForegroundColor Cyan
+
+    # Ping check: 4 attempts, skip to next IP if all fail
+    $pingOk = $false
+    for ($pa = 1; $pa -le 4; $pa++) {
+        Write-Host "  Pinging $ip ($pa/4)..." -ForegroundColor DarkGray -NoNewline
+        try {
+            if (Test-Connection -ComputerName $ip -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+                Write-Host " OK" -ForegroundColor Green
+                $pingOk = $true; break
+            }
+        } catch { }
+        Write-Host " no response" -ForegroundColor Yellow
+    }
+    if (-not $pingOk) {
+        Write-Warning "No response from $ip after 4 pings -- skipping."
+        continue
+    }
 
     # Auto-detect router type
     $script:DetectedRouterType = $RouterType
