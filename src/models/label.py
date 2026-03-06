@@ -41,6 +41,7 @@ class Label:
         self.validate_port_number()
         self.validate_port_type()
         self.validate_label_text()
+        self.validate_color()
 
     def validate_port_number(self) -> None:
         """Validate that port number is within valid range (1-120).
@@ -98,6 +99,23 @@ class Label:
                     f"'{value[:20]}...'"
                 )
 
+    def validate_color(self) -> None:
+        """Validate that color values are within valid range (1-9).
+
+        Raises:
+            TypeError: If color is not an int (or None for new_color)
+            ValueError: If color is not between 1 and 9
+        """
+        if not isinstance(self.current_color, int):
+            raise TypeError(f"current_color must be an integer, got {type(self.current_color)}")
+        if not 1 <= self.current_color <= 9:
+            raise ValueError(f"current_color must be between 1 and 9, got {self.current_color}")
+        if self.new_color is not None:
+            if not isinstance(self.new_color, int):
+                raise TypeError(f"new_color must be an integer or None, got {type(self.new_color)}")
+            if not 1 <= self.new_color <= 9:
+                raise ValueError(f"new_color must be between 1 and 9, got {self.new_color}")
+
     def has_changes(self) -> bool:
         """Check if there are pending changes to apply.
 
@@ -117,6 +135,12 @@ class Label:
         if self.new_label_line2 is not None:
             self.current_label_line2 = self.new_label_line2
             self.new_label_line2 = None
+        if self.new_color is not None:
+            self.current_color = self.new_color
+            self.new_color = None
+
+    def apply_color_change(self) -> None:
+        """Apply only the color change, leaving text changes untouched."""
         if self.new_color is not None:
             self.current_color = self.new_color
             self.new_color = None
@@ -174,6 +198,8 @@ class Label:
             parts.append(f"L1: {self.current_label} -> {self.new_label}")
         if self.new_label_line2 is not None and self.new_label_line2 != self.current_label_line2:
             parts.append(f"L2: {self.current_label_line2} -> {self.new_label_line2}")
+        if self.new_color is not None and self.new_color != self.current_color:
+            parts.append(f"Color: {self.current_color} -> {self.new_color}")
         change_indicator = " | ".join(parts)
         if change_indicator:
             change_indicator = " [" + change_indicator + "]"

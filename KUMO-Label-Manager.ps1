@@ -2718,22 +2718,26 @@ $dataGrid.Add_CellPainting({
 
             $dotX = $e.CellBounds.X + 8
             $dotY = $e.CellBounds.Y + ($e.CellBounds.Height - 8) / 2
-            $dotBrush = New-Object System.Drawing.SolidBrush($clrChanged)
-            $g.FillEllipse($dotBrush, $dotX, $dotY, 8, 8)
-            $dotBrush.Dispose()
+            $dotBrush = $null; $txtBrush = $null; $fmt = $null
+            try {
+                $dotBrush = New-Object System.Drawing.SolidBrush($clrChanged)
+                $g.FillEllipse($dotBrush, $dotX, $dotY, 8, 8)
 
-            $txtBrush = New-Object System.Drawing.SolidBrush($clrChanged)
-            $textRect = New-Object System.Drawing.RectangleF(
-                ($e.CellBounds.X + 20),
-                $e.CellBounds.Y,
-                ($e.CellBounds.Width - 22),
-                $e.CellBounds.Height
-            )
-            $fmt = New-Object System.Drawing.StringFormat
-            $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-            $g.DrawString($val, $e.CellStyle.Font, $txtBrush, $textRect, $fmt)
-            $txtBrush.Dispose()
-            $fmt.Dispose()
+                $txtBrush = New-Object System.Drawing.SolidBrush($clrChanged)
+                $textRect = New-Object System.Drawing.RectangleF(
+                    ($e.CellBounds.X + 20),
+                    $e.CellBounds.Y,
+                    ($e.CellBounds.Width - 22),
+                    $e.CellBounds.Height
+                )
+                $fmt = New-Object System.Drawing.StringFormat
+                $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+                $g.DrawString($val, $e.CellStyle.Font, $txtBrush, $textRect, $fmt)
+            } finally {
+                if ($dotBrush) { $dotBrush.Dispose() }
+                if ($txtBrush) { $txtBrush.Dispose() }
+                if ($fmt)      { $fmt.Dispose() }
+            }
         }
 
         $e.Handled = $true
@@ -3113,8 +3117,12 @@ function Sync-GridToData {
                 # Sync color if changed via ComboBox
                 if ($colorVal -and $colorVal -match '^(\d+)-') {
                     $newColorId = [int]$matches[1]
-                    if ($newColorId -ne $lbl.Color) {
-                        $lbl.New_Color = $newColorId
+                    if ($newColorId -ge 1 -and $newColorId -le 9) {
+                        if ($newColorId -ne $lbl.Color) {
+                            $lbl.New_Color = $newColorId
+                        } else {
+                            $lbl.New_Color = $null
+                        }
                     }
                 }
                 break

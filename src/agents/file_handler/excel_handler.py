@@ -16,7 +16,7 @@ class ExcelHandler:
     """Handler for Excel file operations."""
 
     WORKSHEET_NAME = "KUMO_Labels"
-    HEADERS = ["Port", "Type", "Current_Label", "Current_Label_Line2", "New_Label", "New_Label_Line2", "Notes"]
+    HEADERS = ["Port", "Type", "Current_Label", "Current_Label_Line2", "New_Label", "New_Label_Line2", "Current_Color", "New_Color", "Notes"]
 
     def __init__(self):
         """Initialize the Excel handler."""
@@ -61,6 +61,7 @@ class ExcelHandler:
                 col_map[str(cell.value).strip()] = idx
 
         has_line2 = "Current_Label_Line2" in col_map
+        has_color = "Current_Color" in col_map
 
         # Start from row 2 (skip header)
         for row_idx in range(2, worksheet.max_row + 1):
@@ -81,13 +82,40 @@ class ExcelHandler:
                     current_label_line2 = str(row[3].value).strip() if len(row) > 3 and row[3].value else ""
                     new_label = str(row[4].value).strip() if len(row) > 4 and row[4].value else None
                     new_label_line2 = str(row[5].value).strip() if len(row) > 5 and row[5].value else None
-                    notes = str(row[6].value).strip() if len(row) > 6 and row[6].value else ""
+                    if has_color:
+                        color_col = col_map["Current_Color"]
+                        new_color_col = col_map.get("New_Color", color_col + 1)
+                        notes_col = col_map.get("Notes", new_color_col + 1)
+                    else:
+                        notes_col = 6
+                    notes = str(row[notes_col].value).strip() if len(row) > notes_col and row[notes_col].value else ""
                 else:
                     # Legacy 5-column format: Port, Type, Current_Label, New_Label, Notes
                     current_label_line2 = ""
                     new_label = str(row[3].value).strip() if row[3].value else None
                     new_label_line2 = None
                     notes = str(row[4].value).strip() if len(row) > 4 and row[4].value else ""
+
+                # Parse color columns
+                current_color = 4
+                new_color = None
+                if has_color:
+                    color_col = col_map["Current_Color"]
+                    try:
+                        raw_cc = row[color_col].value
+                        if raw_cc is not None and str(raw_cc).strip():
+                            current_color = int(raw_cc)
+                    except (ValueError, TypeError):
+                        current_color = 4
+
+                    new_color_col = col_map.get("New_Color")
+                    if new_color_col is not None:
+                        try:
+                            raw_nc = row[new_color_col].value
+                            if raw_nc is not None and str(raw_nc).strip():
+                                new_color = int(raw_nc)
+                        except (ValueError, TypeError):
+                            new_color = None
 
                 port_data = PortData(
                     port=int(port_value),
@@ -96,6 +124,8 @@ class ExcelHandler:
                     new_label=new_label,
                     current_label_line2=current_label_line2,
                     new_label_line2=new_label_line2,
+                    current_color=current_color,
+                    new_color=new_color,
                     notes=notes,
                 )
                 ports.append(port_data)
@@ -152,6 +182,8 @@ class ExcelHandler:
                     port_data.current_label_line2,
                     port_data.new_label or "",
                     port_data.new_label_line2 or "",
+                    port_data.current_color,
+                    port_data.new_color,
                     port_data.notes,
                 )
 
@@ -197,6 +229,8 @@ class ExcelHandler:
         current_label_line2: str = "",
         new_label: str = "",
         new_label_line2: str = "",
+        current_color: int = 4,
+        new_color: Optional[int] = None,
         notes: str = "",
     ) -> None:
         """Write a single row to the worksheet."""
@@ -206,11 +240,15 @@ class ExcelHandler:
         worksheet.cell(row=row_idx, column=4, value=current_label_line2)
         worksheet.cell(row=row_idx, column=5, value=new_label)
         worksheet.cell(row=row_idx, column=6, value=new_label_line2)
-        worksheet.cell(row=row_idx, column=7, value=notes)
+        worksheet.cell(row=row_idx, column=7, value=current_color)
+        worksheet.cell(row=row_idx, column=8, value=new_color if new_color is not None else "")
+        worksheet.cell(row=row_idx, column=9, value=notes)
 
-        # Center align port and type columns
+        # Center align port, type, and color columns
         worksheet.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center")
         worksheet.cell(row=row_idx, column=2).alignment = Alignment(horizontal="center")
+        worksheet.cell(row=row_idx, column=7).alignment = Alignment(horizontal="center")
+        worksheet.cell(row=row_idx, column=8).alignment = Alignment(horizontal="center")
 
     def _autofit_columns(self, worksheet) -> None:
         """Auto-fit column widths based on content."""
