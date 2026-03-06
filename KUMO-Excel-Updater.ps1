@@ -56,6 +56,18 @@ function Parse-IPList {
 # SHARED UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
+function Get-ButtonSettingsIndex {
+    param([int]$Port, [string]$PortType)
+    # KUMO interleaves sources and destinations in blocks of 16:
+    #   Src 1-16 -> 1-16,  Dst 1-16 -> 17-32,
+    #   Src 17-32 -> 33-48, Dst 17-32 -> 49-64, etc.
+    $block = [math]::Floor(($Port - 1) / 16)
+    $offset = ($Port - 1) % 16
+    $idx = $block * 32 + $offset + 1
+    if ($PortType.ToUpper() -eq "OUTPUT") { $idx += 16 }
+    return $idx
+}
+
 # Add dropdown data validation to the New_Color column in an Excel file
 function Add-ColorDropdown {
     param(
@@ -675,13 +687,14 @@ function Get-KumoCurrentLabels {
         }
 
         for ($i = 1; $i -le $inputCount; $i++) {
-            $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument("${baseUri}eParamID_Button_Settings_$i")
+            $cBtnIdx = Get-ButtonSettingsIndex -Port $i -PortType "INPUT"
+            $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument("${baseUri}eParamID_Button_Settings_$cBtnIdx")
             $ps.RunspacePool = $colorPool
             $colorJobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $i; Type = "INPUT" }) | Out-Null
         }
         for ($i = 1; $i -le $outputCount; $i++) {
-            $btnIdx = $i + 64
-            $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument("${baseUri}eParamID_Button_Settings_$btnIdx")
+            $cBtnIdx = Get-ButtonSettingsIndex -Port $i -PortType "OUTPUT"
+            $ps = [PowerShell]::Create().AddScript($colorFetchScript).AddArgument("${baseUri}eParamID_Button_Settings_$cBtnIdx")
             $ps.RunspacePool = $colorPool
             $colorJobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Port = $i; Type = "OUTPUT" }) | Out-Null
         }
@@ -1325,8 +1338,8 @@ function Update-KumoLabelsREST {
             $curColorId = if ($item.PSObject.Properties.Name -contains "Current_Color" -and $item.Current_Color) { [int]$item.Current_Color } else { 4 }
             if ($newColorId -ne $curColorId -and $newColorId -ge 1 -and $newColorId -le 9) {
                 try {
-                    $btnIdx = if ($item.Type.ToUpper() -eq "INPUT") { $item.Port } else { [int]$item.Port + 64 }
-                    $colorJson = "{`"classes`":`"color_$newColorId`"}"
+                    $btnIdx = Get-ButtonSettingsIndex -Port ([int]$item.Port) -PortType $item.Type
+                    $colorJson = "{\`"classes\`":\`"color_$newColorId\`"}"
                     $encodedColor = [System.Uri]::EscapeDataString($colorJson)
                     $colorUri = "http://$IP/config?action=set&configid=0&paramid=eParamID_Button_Settings_$btnIdx&value=$encodedColor"
 

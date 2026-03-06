@@ -96,25 +96,25 @@ class TestParseButtonColor:
 class TestEncodeButtonColor:
     def test_encode_valid_color(self):
         result = ResponseParser.encode_button_color(1)
-        assert '"classes"' in result
-        assert '"color_1"' in result
+        assert '\\"classes\\"' in result
+        assert '\\"color_1\\"' in result
 
     def test_encode_all_valid_colors(self):
         for i in range(1, 10):
             result = ResponseParser.encode_button_color(i)
-            assert f'"color_{i}"' in result
+            assert f'\\"color_{i}\\"' in result
 
     def test_encode_out_of_range_clamps_to_default(self):
         result = ResponseParser.encode_button_color(0)
-        assert f'"color_{KUMO_DEFAULT_COLOR}"' in result
+        assert f'\\"color_{KUMO_DEFAULT_COLOR}\\"' in result
 
     def test_encode_negative_clamps_to_default(self):
         result = ResponseParser.encode_button_color(-1)
-        assert f'"color_{KUMO_DEFAULT_COLOR}"' in result
+        assert f'\\"color_{KUMO_DEFAULT_COLOR}\\"' in result
 
     def test_encode_too_high_clamps_to_default(self):
         result = ResponseParser.encode_button_color(10)
-        assert f'"color_{KUMO_DEFAULT_COLOR}"' in result
+        assert f'\\"color_{KUMO_DEFAULT_COLOR}\\"' in result
 
 
 # ===========================================================================
@@ -126,17 +126,47 @@ class TestButtonColorParamID:
     def test_input_port_1(self):
         assert KumoParamID.button_color(1, "INPUT") == "eParamID_Button_Settings_1"
 
+    def test_input_port_16(self):
+        assert KumoParamID.button_color(16, "INPUT") == "eParamID_Button_Settings_16"
+
+    def test_input_port_17(self):
+        # Source 17 maps to block 1 -> 1*32 + 0 + 1 = 33
+        assert KumoParamID.button_color(17, "INPUT") == "eParamID_Button_Settings_33"
+
+    def test_input_port_32(self):
+        # Source 32 maps to block 1 -> 1*32 + 15 + 1 = 48
+        assert KumoParamID.button_color(32, "INPUT") == "eParamID_Button_Settings_48"
+
+    def test_input_port_33(self):
+        # Source 33 maps to block 2 -> 2*32 + 0 + 1 = 65
+        assert KumoParamID.button_color(33, "INPUT") == "eParamID_Button_Settings_65"
+
     def test_input_port_64(self):
-        assert KumoParamID.button_color(64, "INPUT") == "eParamID_Button_Settings_64"
+        # Source 64 maps to block 3 -> 3*32 + 15 + 1 = 112
+        assert KumoParamID.button_color(64, "INPUT") == "eParamID_Button_Settings_112"
 
     def test_output_port_1(self):
-        assert KumoParamID.button_color(1, "OUTPUT") == "eParamID_Button_Settings_65"
+        # Dest 1 maps to block 0 -> 0*32 + 0 + 1 + 16 = 17
+        assert KumoParamID.button_color(1, "OUTPUT") == "eParamID_Button_Settings_17"
+
+    def test_output_port_16(self):
+        # Dest 16 maps to block 0 -> 0*32 + 15 + 1 + 16 = 32
+        assert KumoParamID.button_color(16, "OUTPUT") == "eParamID_Button_Settings_32"
+
+    def test_output_port_17(self):
+        # Dest 17 maps to block 1 -> 1*32 + 0 + 1 + 16 = 49
+        assert KumoParamID.button_color(17, "OUTPUT") == "eParamID_Button_Settings_49"
+
+    def test_output_port_32(self):
+        # Dest 32 maps to block 1 -> 1*32 + 15 + 1 + 16 = 64
+        assert KumoParamID.button_color(32, "OUTPUT") == "eParamID_Button_Settings_64"
 
     def test_output_port_64(self):
+        # Dest 64 maps to block 3 -> 3*32 + 15 + 1 + 16 = 128
         assert KumoParamID.button_color(64, "OUTPUT") == "eParamID_Button_Settings_128"
 
     def test_case_insensitive_output(self):
-        assert KumoParamID.button_color(1, "output") == "eParamID_Button_Settings_65"
+        assert KumoParamID.button_color(1, "output") == "eParamID_Button_Settings_17"
 
     def test_case_insensitive_input(self):
         assert KumoParamID.button_color(5, "input") == "eParamID_Button_Settings_5"
@@ -152,6 +182,10 @@ class TestButtonColorEndpoints:
         url = APIEndpoint.get_button_color(1, "INPUT")
         assert "eParamID_Button_Settings_1" in url
         assert "action=get" in url
+
+    def test_get_button_color_output_uses_correct_id(self):
+        url = APIEndpoint.get_button_color(1, "OUTPUT")
+        assert "eParamID_Button_Settings_17" in url
 
     def test_set_button_color_contains_value(self):
         url = APIEndpoint.set_button_color(1, "INPUT", 3)

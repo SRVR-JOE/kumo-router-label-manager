@@ -93,15 +93,22 @@ class KumoParamID:
     def button_color(port: int, port_type: str) -> str:
         """Get eParamID for button color setting.
 
-        Button settings use indices 1-128: inputs 1-64, outputs 65-128.
+        Button settings use interleaved blocks of 16:
+          Sources 1-16  -> 1-16,   Destinations 1-16  -> 17-32,
+          Sources 17-32 -> 33-48,  Destinations 17-32 -> 49-64,
+          Sources 33-48 -> 65-80,  Sources 49-64      -> 81-96,
+          Destinations 33-48 -> 97-112, Destinations 49-64 -> 113-128.
 
         Args:
             port: Port number (1-64)
             port_type: 'input' or 'output' (case-insensitive)
         """
+        block = (port - 1) // 16          # 0, 1, 2, 3
+        offset_in_block = (port - 1) % 16  # 0..15
+        base = block * 32 + offset_in_block + 1
         if port_type.upper() == "OUTPUT":
-            return f"eParamID_Button_Settings_{port + 64}"
-        return f"eParamID_Button_Settings_{port}"
+            base += 16
+        return f"eParamID_Button_Settings_{base}"
 
 
 class APIEndpoint:
@@ -291,17 +298,21 @@ class ResponseParser:
 
     @staticmethod
     def encode_button_color(color_id: int) -> str:
-        """Encode a color ID into the JSON value for the SET API.
+        r"""Encode a color ID into the JSON value for the SET API.
+
+        The KUMO web UI sends values with escaped inner quotes so that the
+        stored string is valid JSON-within-JSON.  The returned string looks
+        like: {\"classes\":\"color_N\"}
 
         Args:
             color_id: Color ID (1-9)
 
         Returns:
-            JSON string like {"classes":"color_N"}
+            Escaped JSON string like {\"classes\":\"color_N\"}
         """
         if not 1 <= color_id <= 9:
             color_id = KUMO_DEFAULT_COLOR
-        return json.dumps({"classes": f"color_{color_id}"})
+        return '{{\\"classes\\":\\"color_{0}\\"}}'.format(color_id)
 
 
 class DefaultLabelGenerator:

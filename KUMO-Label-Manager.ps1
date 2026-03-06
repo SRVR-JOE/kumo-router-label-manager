@@ -785,6 +785,18 @@ function Get-KumoParam {
     }
 }
 
+function Get-ButtonSettingsIndex {
+    param([int]$Port, [string]$PortType)
+    # KUMO interleaves sources and destinations in blocks of 16:
+    #   Src 1-16 -> 1-16,  Dst 1-16 -> 17-32,
+    #   Src 17-32 -> 33-48, Dst 17-32 -> 49-64, etc.
+    $block = [math]::Floor(($Port - 1) / 16)   # 0, 1, 2, 3
+    $offset = ($Port - 1) % 16                   # 0..15
+    $idx = $block * 32 + $offset + 1
+    if ($PortType.ToUpper() -eq "OUTPUT") { $idx += 16 }
+    return $idx
+}
+
 function Set-KumoParam {
     param([string]$IP, [string]$ParamId, [string]$Value)
     $encoded = [System.Uri]::EscapeDataString($Value)
@@ -1642,7 +1654,8 @@ function Download-RouterLabels {
                 for ($ci = 1; $ci -le $inCount; $ci++) {
                     $colorId = 4
                     try {
-                        $cParamId = "eParamID_Button_Settings_$ci"
+                        $cBtnIdx = Get-ButtonSettingsIndex -Port $ci -PortType "INPUT"
+                        $cParamId = "eParamID_Button_Settings_$cBtnIdx"
                         $cUri = "${colorBaseUri}${cParamId}"
                         $cResp = Invoke-WebRequest -Uri $cUri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
                         $cRaw = $cResp.Content
@@ -1665,8 +1678,8 @@ function Download-RouterLabels {
                 for ($ci = 1; $ci -le $outCount; $ci++) {
                     $colorId = 4
                     try {
-                        $cIdx = $ci + 64
-                        $cParamId = "eParamID_Button_Settings_$cIdx"
+                        $cBtnIdx = Get-ButtonSettingsIndex -Port $ci -PortType "OUTPUT"
+                        $cParamId = "eParamID_Button_Settings_$cBtnIdx"
                         $cUri = "${colorBaseUri}${cParamId}"
                         $cResp = Invoke-WebRequest -Uri $cUri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
                         $cRaw = $cResp.Content
@@ -4567,9 +4580,9 @@ $btnUpload.Add_Click({
                         Set-StatusMessage "Uploading $($colorChanges.Count) color changes to $rip..." "Dim"
                         $form.Refresh()
                         foreach ($citem in $colorChanges) {
-                            $cParamIdx = if ($citem.Type -eq "INPUT") { $citem.Port } else { $citem.Port + 64 }
+                            $cParamIdx = Get-ButtonSettingsIndex -Port $citem.Port -PortType $citem.Type
                             $cParamId = "eParamID_Button_Settings_$cParamIdx"
-                            $cValue = "{`"classes`":`"color_$($citem.New_Color)`"}"
+                            $cValue = "{\`"classes\`":\`"color_$($citem.New_Color)\`"}"
                             try {
                                 $cOk = Set-KumoParam -IP $rip -ParamId $cParamId -Value $cValue
                                 if ($cOk) {
