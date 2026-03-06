@@ -1630,6 +1630,7 @@ function Download-RouterLabels {
             }
 
             # --- Download button colors (KUMO only, parallel) ---
+            $baseUri = "http://$IP/config?action=get&configid=0&paramid="
             try {
                 $colorRequests = [System.Collections.ArrayList]::new()
                 $inCount = $global:routerInputCount
@@ -4392,6 +4393,55 @@ $dataGrid.Add_CellEndEdit({
         }
 
         Update-ChangeCount
+    } elseif ($endEditColName -eq "Color") {
+        # Color ComboBox edit — sync to data model immediately
+        $port   = $sender.Rows[$e.RowIndex].Cells["Port"].Value
+        $type   = $sender.Rows[$e.RowIndex].Cells["Type"].Value
+        $router = $sender.Rows[$e.RowIndex].Cells["Router"].Value
+        $colorVal = $sender.Rows[$e.RowIndex].Cells["Color"].Value
+        if ($colorVal -and $colorVal -match '^(\d+)-') {
+            $newColorId = [int]$matches[1]
+            if ($newColorId -ge 1 -and $newColorId -le 9) {
+                foreach ($lbl in $global:allLabels) {
+                    if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                        if ($newColorId -ne $lbl.Color) {
+                            Push-UndoCommand @{
+                                Port     = $port
+                                Type     = $type
+                                Router   = $router
+                                Field    = "New_Color"
+                                OldValue = $lbl.New_Color
+                                NewValue = $newColorId
+                            }
+                            $lbl.New_Color = $newColorId
+                            $sender.Rows[$e.RowIndex].Cells["Status"].Value = "Changed"
+                        } else {
+                            $lbl.New_Color = $null
+                            # Re-check if there are other pending changes for this row
+                            $nl1 = $sender.Rows[$e.RowIndex].Cells["New_Label"].Value
+                            $cl1 = $sender.Rows[$e.RowIndex].Cells["Current_Label"].Value
+                            $nl1s = if ($nl1) { $nl1.ToString().Trim() } else { "" }
+                            $hasOther = ($nl1s -ne "" -and $nl1s -ne $cl1)
+                            if (-not $hasOther) {
+                                $sender.Rows[$e.RowIndex].Cells["Status"].Value = ""
+                            }
+                        }
+                        break
+                    }
+                }
+            }
+        }
+        Update-ChangeCount
+    }
+})
+
+# ComboBox columns require explicit commit on selection change
+$dataGrid.Add_CurrentCellDirtyStateChanged({
+    param($sender, $e)
+    if ($sender.CurrentCell -and $sender.Columns[$sender.CurrentCell.ColumnIndex].Name -eq "Color") {
+        if ($sender.IsCurrentCellDirty) {
+            $sender.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit)
+        }
     }
 })
 
