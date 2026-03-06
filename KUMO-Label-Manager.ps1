@@ -1645,11 +1645,22 @@ function Download-RouterLabels {
                     param([string]$BaseUri, [string]$ParamId)
                     try {
                         $r = Invoke-WebRequest -Uri "$BaseUri$ParamId" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-                        $json = $r.Content | ConvertFrom-Json
-                        $val = if ($json.value_name -and $json.value_name -ne "") { $json.value_name } elseif ($json.value -and $json.value -ne "") { $json.value } else { $null }
-                        if ($val) {
-                            $parsed = $val | ConvertFrom-Json -ErrorAction SilentlyContinue
-                            if ($parsed -and $parsed.classes -and $parsed.classes -match 'color_(\d+)') { return [int]$matches[1] }
+                        $raw = $r.Content
+                        # Router returns malformed JSON (unescaped inner braces), so try
+                        # JSON parse first, then fall back to raw regex on the full response
+                        $json = $null
+                        try { $json = $raw | ConvertFrom-Json } catch { }
+                        if ($json) {
+                            $val = if ($json.value_name -and $json.value_name -ne "") { $json.value_name } elseif ($json.value -and $json.value -ne "") { $json.value } else { $null }
+                            if ($val) {
+                                $parsed = $val | ConvertFrom-Json -ErrorAction SilentlyContinue
+                                if ($parsed -and $parsed.classes -and $parsed.classes -match 'color_(\d+)') { return [int]$matches[1] }
+                            }
+                        }
+                        # Fallback: search raw response text for color_N pattern
+                        if ($raw -match 'color_(\d+)') {
+                            $cid = [int]$matches[1]
+                            if ($cid -ge 1 -and $cid -le 9) { return $cid }
                         }
                     } catch { }
                     return 4

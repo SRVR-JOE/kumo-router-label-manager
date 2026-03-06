@@ -654,10 +654,21 @@ function Get-KumoCurrentLabels {
             param([string]$Uri)
             try {
                 $r = Invoke-WebRequest -Uri $Uri -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-                $j = $r.Content | ConvertFrom-Json
-                $val = if ($j.value) { $j.value } else { "" }
-                if ($val -match '"classes"\s*:\s*"color_(\d+)"') {
-                    return [int]$matches[1]
+                $raw = $r.Content
+                # Router returns malformed JSON (unescaped inner braces), so try
+                # JSON parse first, then fall back to raw regex on the full response
+                $j = $null
+                try { $j = $raw | ConvertFrom-Json } catch { }
+                if ($j) {
+                    $val = if ($j.value) { $j.value } else { "" }
+                    if ($val -match '"classes"\s*:\s*"color_(\d+)"') {
+                        return [int]$matches[1]
+                    }
+                }
+                # Fallback: search raw response text for color_N pattern
+                if ($raw -match 'color_(\d+)') {
+                    $cid = [int]$matches[1]
+                    if ($cid -ge 1 -and $cid -le 9) { return $cid }
                 }
                 return 4
             } catch { return 4 }
