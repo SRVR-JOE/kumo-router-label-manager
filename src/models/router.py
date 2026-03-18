@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 
+from src.utils.validation import validate_ip_address as _validate_ip, validate_port_number, PORT_NUMBER_MAX
+
 
 class ConnectionStatus(Enum):
     """Enumeration of router connection states."""
@@ -55,18 +57,7 @@ class Router:
         if not self.ip_address:
             raise ValueError("IP address cannot be empty")
 
-        # Basic IP address validation
-        parts = self.ip_address.split(".")
-        if len(parts) != 4:
-            raise ValueError(f"Invalid IP address format: {self.ip_address}")
-
-        try:
-            for part in parts:
-                num = int(part)
-                if not 0 <= num <= 255:
-                    raise ValueError(f"Invalid IP address octet: {part}")
-        except ValueError as e:
-            raise ValueError(f"Invalid IP address format: {self.ip_address}") from e
+        _validate_ip(self.ip_address)
 
     def validate_connection_status(self) -> None:
         """Validate connection status is a valid enum value.
@@ -127,8 +118,7 @@ class Router:
         Raises:
             ValueError: If port number is invalid
         """
-        if not 1 <= port_number <= 120:
-            raise ValueError(f"Port number must be between 1 and 120, got {port_number}")
+        validate_port_number(port_number, PORT_NUMBER_MAX)
 
         self.port_info[port_number] = info
 

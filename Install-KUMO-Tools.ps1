@@ -99,7 +99,7 @@ Write-Host "`nInstalling Router Label Manager Tools..." -ForegroundColor Yellow
 $batchContent = @"
 @echo off
 cd /d "$InstallPath"
-powershell -ExecutionPolicy Bypass -File "KUMO-Label-Manager.ps1"
+powershell -ExecutionPolicy RemoteSigned -File "KUMO-Label-Manager.ps1"
 pause
 "@
 
@@ -161,7 +161,7 @@ if ($CreateDesktopShortcuts) {
         # GUI shortcut
         $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\KUMO Label Manager.lnk")
         $Shortcut.TargetPath = "powershell.exe"
-        $Shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$InstallPath\KUMO-Label-Manager.ps1`""
+        $Shortcut.Arguments = "-ExecutionPolicy RemoteSigned -File `"$InstallPath\KUMO-Label-Manager.ps1`""
         $Shortcut.WorkingDirectory = $InstallPath
         $Shortcut.Description = "Router Label Manager - GUI (KUMO / Videohub)"
         $Shortcut.Save()

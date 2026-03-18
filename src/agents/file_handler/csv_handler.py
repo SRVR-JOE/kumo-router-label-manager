@@ -1,10 +1,13 @@
 """
 CSV file handler using pandas.
 """
+import logging
 from pathlib import Path
 import pandas as pd
 
 from .schema import FileData, PortData
+
+logger = logging.getLogger(__name__)
 
 
 class CSVHandler:
@@ -53,12 +56,14 @@ class CSVHandler:
                 dtype=dtype_map,
                 keep_default_na=False,  # Don't convert empty strings to NaN
             )
-        except Exception as e:
+        except (pd.errors.ParserError, UnicodeDecodeError, OSError) as e:
+            logger.error("Failed to read CSV file '%s': %s", file_path, e)
             raise ValueError(f"Failed to read CSV file: {e}")
 
         # Validate required columns (Line 2 columns are optional for backward compat)
         if not all(col in df.columns for col in self.REQUIRED_COLUMNS):
             missing = set(self.REQUIRED_COLUMNS) - set(df.columns)
+            logger.warning("CSV '%s' missing required columns: %s", file_path, missing)
             raise ValueError(
                 f"CSV missing required columns: {missing}. "
                 f"Expected: {self.REQUIRED_COLUMNS}"
@@ -84,10 +89,12 @@ class CSVHandler:
                 try:
                     current_color = int(raw_cur_color) if str(raw_cur_color).strip() else 4
                 except (ValueError, TypeError):
+                    logger.warning("Invalid Current_Color value '%s' in row %d, defaulting to 4", raw_cur_color, idx + 2)
                     current_color = 4
                 try:
                     new_color_val = int(raw_new_color) if str(raw_new_color).strip() else None
                 except (ValueError, TypeError):
+                    logger.warning("Invalid New_Color value '%s' in row %d, ignoring", raw_new_color, idx + 2)
                     new_color_val = None
 
                 port_data = PortData(
@@ -103,8 +110,10 @@ class CSVHandler:
                 )
                 ports.append(port_data)
             except (ValueError, TypeError) as e:
+                logger.error("Invalid data in row %d of '%s': %s", idx + 2, file_path, e)
                 raise ValueError(f"Invalid data in row {idx + 2}: {e}")
 
+        logger.info("Read %d records from CSV '%s'", len(ports), file_path)
         return FileData(ports=ports)
 
     def write_csv(self, file_path: Path, data: FileData) -> None:
@@ -144,7 +153,9 @@ class CSVHandler:
                 quoting=1,  # QUOTE_ALL - escape all fields
                 lineterminator="\n",
             )
-        except Exception as e:
+            logger.info("Wrote %d records to CSV '%s'", len(data.ports), file_path)
+        except OSError as e:
+            logger.error("Failed to write CSV file '%s': %s", file_path, e)
             raise ValueError(f"Failed to write CSV file: {e}")
 
     def create_template_csv(self, file_path: Path) -> None:
@@ -194,5 +205,7 @@ class CSVHandler:
                 quoting=1,
                 lineterminator="\n",
             )
-        except Exception as e:
+            logger.info("Created template CSV '%s'", file_path)
+        except OSError as e:
+            logger.error("Failed to create template CSV '%s': %s", file_path, e)
             raise ValueError(f"Failed to create template CSV: {e}")

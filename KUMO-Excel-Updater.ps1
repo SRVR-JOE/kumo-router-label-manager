@@ -9,6 +9,8 @@
 # Update from Excel:        .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
 # Test only:                .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
 # Videohub explicit:        .\KUMO-Excel-Updater.ps1 -RouterType Videohub -KumoIP "192.168.1.101" -DownloadLabels -DownloadPath "labels.csv"
+# Lock output port 5:       .\KUMO-Excel-Updater.ps1 -LockOutput -OutputPort 5 -KumoIP "192.168.100.72" -RouterType Videohub
+# Unlock output port 5:     .\KUMO-Excel-Updater.ps1 -UnlockOutput -OutputPort 5 -KumoIP "192.168.100.72" -RouterType Videohub
 
 param(
     [Parameter(Mandatory=$false)]
@@ -30,7 +32,13 @@ param(
     [switch]$ForceHTTP,
 
     [ValidateSet("Auto", "KUMO", "Videohub")]
-    [string]$RouterType = "Auto"
+    [string]$RouterType = "Auto",
+
+    [switch]$LockOutput,
+
+    [switch]$UnlockOutput,
+
+    [int]$OutputPort = 0
 )
 
 # Resolved router type — set during auto-detection
@@ -298,6 +306,7 @@ function Get-VideohubState {
             OutputCount  = 0
             InputLabels  = @()
             OutputLabels = @()
+            OutputLocks  = @()
         }
 
         $currentBlock = ""
@@ -306,8 +315,8 @@ function Get-VideohubState {
         while ((Get-Date) -lt $deadline) {
             if (-not $stream.DataAvailable) {
                 Start-Sleep -Milliseconds 50
-                # Once we have filled both label blocks, stop waiting
-                if ($state.InputLabels.Count -gt 0 -and $state.OutputLabels.Count -gt 0) { break }
+                # Once we have filled both label blocks and output locks, stop waiting
+                if ($state.InputLabels.Count -gt 0 -and $state.OutputLabels.Count -gt 0 -and $state.OutputLocks.Count -gt 0) { break }
                 continue
             }
 
@@ -351,6 +360,15 @@ function Get-VideohubState {
                         $lbl = $matches[2].Trim()
                         while ($state.OutputLabels.Count -le $idx) { $state.OutputLabels += "" }
                         $state.OutputLabels[$idx] = $lbl
+                    }
+                }
+                "VIDEO OUTPUT LOCKS" {
+                    # Format: "0 U" or "0 O" or "0 L"
+                    if ($trimmed -match "^(\d+)\s+([UOL])$") {
+                        $idx = [int]$matches[1]
+                        $lockVal = $matches[2]
+                        while ($state.OutputLocks.Count -le $idx) { $state.OutputLocks += "U" }
+                        $state.OutputLocks[$idx] = $lockVal
                     }
                 }
             }
@@ -397,6 +415,7 @@ function Get-VideohubCurrentLabels {
             New_Label     = ""
             Current_Color = 4
             New_Color     = $null
+            Lock_Status   = ""
             Notes         = "From $($state.DeviceName) TCP 9990"
         }
         Write-Host "  Input $port`: $label" -ForegroundColor White
@@ -411,6 +430,7 @@ function Get-VideohubCurrentLabels {
         } else {
             "Output $port"
         }
+        $lockState = if ($z -lt $state.OutputLocks.Count) { $state.OutputLocks[$z] } else { "U" }
         $allLabels += [PSCustomObject]@{
             Port          = $port
             Type          = "OUTPUT"
@@ -418,9 +438,11 @@ function Get-VideohubCurrentLabels {
             New_Label     = ""
             Current_Color = 4
             New_Color     = $null
+            Lock_Status   = $lockState
             Notes         = "From $($state.DeviceName) TCP 9990"
         }
-        Write-Host "  Output $port`: $label" -ForegroundColor White
+        $lockDisp = switch ($lockState) { "O" { " [LOCKED]" } "L" { " [LOCKED-OTHER]" } default { "" } }
+        Write-Host "  Output $port`: $label$lockDisp" -ForegroundColor White
     }
 
     if ($allLabels.Count -eq 0) {
@@ -559,6 +581,70 @@ function Update-VideohubLabels {
     } finally {
         try { if ($writer)    { $writer.Close() }    } catch { }
         try { if ($reader)    { $reader.Close() }    } catch { }
+        try { if ($tcpClient) { $tcpClient.Close() } } catch { }
+    }
+}
+
+# Sets or clears a Videohub output port lock over TCP 9990
+function Set-VideohubOutputLock {
+    param(
+        [string]$IP,
+        [int]$Port1Based,  # 1-based port number
+        [ValidateSet("O","U")][string]$LockState
+    )
+
+    $port0 = $Port1Based - 1
+    $tcpClient = $null
+    $stream    = $null
+    $writer    = $null
+    $reader    = $null
+
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $tcpClient.Connect($IP, 9990)
+        $tcpClient.ReceiveTimeout = 5000
+        $stream = $tcpClient.GetStream()
+        $writer = New-Object System.IO.StreamWriter($stream, [System.Text.Encoding]::ASCII)
+        $writer.AutoFlush = $true
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::ASCII)
+
+        # Drain initial state dump
+        $drain = (Get-Date).AddSeconds(3)
+        while ((Get-Date) -lt $drain) {
+            if ($stream.DataAvailable) { $reader.ReadLine() | Out-Null; $drain = (Get-Date).AddSeconds(0.5) }
+            else { Start-Sleep -Milliseconds 50 }
+        }
+
+        $command = "VIDEO OUTPUT LOCKS:`n$port0 $LockState`n`n"
+        $writer.Write($command)
+
+        # Wait for ACK
+        $ackDeadline = (Get-Date).AddSeconds(5)
+        $ackReceived = $false
+        $response    = ""
+        while ((Get-Date) -lt $ackDeadline) {
+            if ($stream.DataAvailable) {
+                $line = $reader.ReadLine()
+                $response += $line + "`n"
+                if ($response.Trim() -eq "ACK") { $ackReceived = $true; break }
+            } else {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+
+        $action = if ($LockState -eq "O") { "locked" } else { "unlocked" }
+        if ($ackReceived) {
+            Write-Host "  OK  Output $Port1Based $action successfully" -ForegroundColor Green
+        } else {
+            Write-Host "  Output $Port1Based $action (no ACK received: $($response.Trim()))" -ForegroundColor Yellow
+        }
+
+    } catch {
+        Write-Error "Videohub lock command failed: $($_.Exception.Message)"
+    } finally {
+        try { if ($writer)    { $writer.Close() }    } catch { }
+        try { if ($reader)    { $reader.Close() }    } catch { }
+        try { if ($stream)    { $stream.Close() }    } catch { }
         try { if ($tcpClient) { $tcpClient.Close() } } catch { }
     }
 }
@@ -1388,6 +1474,17 @@ function Update-KumoLabelsTelnet {
         $successCount = 0
         foreach ($item in $LabelData) {
             try {
+                # Validate Telnet command parameters
+                $validTypes = @("INPUT", "OUTPUT")
+                if ($item.Type.ToUpper() -notin $validTypes) {
+                    Write-ErrorLog "WARN" "Invalid port type '$($item.Type)' for port $($item.Port) — skipping"
+                    continue
+                }
+                if ($item.Port -lt 1 -or $item.Port -gt 256) {
+                    Write-ErrorLog "WARN" "Invalid port number '$($item.Port)' — skipping"
+                    continue
+                }
+
                 $command = "LABEL $($item.Type) $($item.Port) `"$($item.New_Label)`""
                 Write-Host "Sending: $command" -ForegroundColor Magenta
 
@@ -1428,6 +1525,48 @@ Write-Host "Router Label Updater" -ForegroundColor Magenta
 Write-Host "====================" -ForegroundColor Magenta
 Write-Host "AJA KUMO (REST/Telnet) and Blackmagic Videohub (TCP 9990)" -ForegroundColor Gray
 Write-Host ""
+
+# Handle lock/unlock output port (Videohub only)
+if ($LockOutput -or $UnlockOutput) {
+    if ($LockOutput -and $UnlockOutput) {
+        Write-Error "Cannot specify both -LockOutput and -UnlockOutput at the same time."
+        exit 1
+    }
+    if ($OutputPort -lt 1) {
+        Write-Error "You must specify -OutputPort (1-based port number) for lock operations."
+        exit 1
+    }
+    $ipList = Parse-IPList -IPString $KumoIP
+    if ($ipList.Count -eq 0) {
+        Write-Error "No valid IP addresses provided."
+        exit 1
+    }
+    $ip = $ipList[0]
+
+    # Auto-detect router type
+    $script:DetectedRouterType = $RouterType
+    if ($RouterType -eq "Auto") {
+        Write-Host "Auto-detecting router type at $ip..." -ForegroundColor Yellow
+        $detected = Resolve-RouterType -IP $ip
+        if (-not $detected) {
+            Write-Error "Could not detect router type at $ip"
+            exit 1
+        }
+        $script:DetectedRouterType = $detected
+    }
+
+    if ($script:DetectedRouterType -ne "Videohub") {
+        Write-Error "Output lock commands are only supported on Blackmagic Videohub routers."
+        exit 1
+    }
+
+    $lockState = if ($LockOutput) { "O" } else { "U" }
+    $action    = if ($LockOutput) { "Locking" } else { "Unlocking" }
+    Write-Host "$action output port $OutputPort on Videohub at $ip..." -ForegroundColor Yellow
+
+    Set-VideohubOutputLock -IP $ip -Port1Based $OutputPort -LockState $lockState
+    exit 0
+}
 
 # Handle download labels
 if ($DownloadLabels) {

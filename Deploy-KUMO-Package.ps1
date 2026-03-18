@@ -105,11 +105,11 @@ echo.
 set /p choice="Enter choice (1-3): "
 
 if "%choice%"=="1" (
-    powershell -ExecutionPolicy Bypass -File "KUMO-Label-Manager.ps1"
+    powershell -ExecutionPolicy RemoteSigned -File "KUMO-Label-Manager.ps1"
 ) else if "%choice%"=="2" (
     call "KUMO-Menu.bat"
 ) else if "%choice%"=="3" (
-    powershell -ExecutionPolicy Bypass -File "kumo.ps1" -NoExit
+    powershell -ExecutionPolicy RemoteSigned -File "kumo.ps1" -NoExit
 ) else (
     echo Invalid choice
     pause

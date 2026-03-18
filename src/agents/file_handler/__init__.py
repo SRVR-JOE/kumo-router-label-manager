@@ -264,8 +264,7 @@ class FileHandlerAgent:
                         loop = asyncio.get_running_loop()
                         loop.create_task(self.event_bus.publish(event))
                     except RuntimeError:
-                        # No running event loop - skip async publish
-                        pass
+                        logger.warning("No running event loop - skipping async publish for '%s'", event_name)
             except Exception as e:
                 logger.warning("Failed to emit event '%s': %s", event_name, e)
 

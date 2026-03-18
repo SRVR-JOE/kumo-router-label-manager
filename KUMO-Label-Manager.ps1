@@ -364,6 +364,7 @@ public class CrosspointMatrixPanel : Panel
     private string[] _inputLabels = new string[0];
     private string[] _outputLabels = new string[0];
     private int[] _crosspoints = new int[0]; // index=output, value=routed input (-1=none)
+    private string[] _lockStates = new string[0]; // index=output, value="U"/"O"/"L"
 
     // Hover state
     private int _hoverRow = -1;
@@ -384,6 +385,8 @@ public class CrosspointMatrixPanel : Panel
     private static readonly Color AccentColor   = Color.FromArgb(103, 58, 183);
     private static readonly Color HoverRowCol   = Color.FromArgb(20, 255, 255, 255);
     private static readonly Color ActiveDot     = Color.White;
+    private static readonly Color LockOwnedColor  = Color.FromArgb(255, 193, 7);   // yellow - owned by us
+    private static readonly Color LockOtherColor  = Color.FromArgb(244, 67, 54);   // red - locked by another
 
     // Events
     public event EventHandler<CrosspointClickEventArgs> CrosspointClicked;
@@ -404,6 +407,12 @@ public class CrosspointMatrixPanel : Panel
     {
         get { return _crosspoints; }
         set { _crosspoints = value ?? new int[0]; Invalidate(); }
+    }
+
+    public string[] LockStates
+    {
+        get { return _lockStates; }
+        set { _lockStates = value ?? new string[0]; Invalidate(); }
     }
 
     public CrosspointMatrixPanel()
@@ -585,6 +594,30 @@ public class CrosspointMatrixPanel : Panel
                 using (SolidBrush lb = new SolidBrush(drawColor))
                     g.DrawString(_outputLabels[c], drawFont, lb, 0, 0);
                 g.Restore(state);
+            }
+
+            // Draw lock indicators on output columns (below column headers, above grid)
+            if (_lockStates.Length > 0)
+            {
+                int lockSize = Math.Max(10, _cellSize / 3);
+                for (int c = 0; c < outputs && c < _lockStates.Length; c++)
+                {
+                    string lockState = _lockStates[c];
+                    if (lockState == "O" || lockState == "L")
+                    {
+                        Color lockColor = (lockState == "O") ? LockOwnedColor : LockOtherColor;
+                        int lx = ox + c * _cellSize + (_cellSize - lockSize) / 2;
+                        int ly = oy - lockSize - 3;
+                        using (SolidBrush lb = new SolidBrush(lockColor))
+                        using (Pen lp = new Pen(lockColor, 1.5f))
+                        {
+                            // Draw a lock icon: rectangle body + arc shackle
+                            Rectangle body = new Rectangle(lx, ly + lockSize / 3, lockSize, lockSize * 2 / 3);
+                            g.FillRectangle(lb, body);
+                            g.DrawArc(lp, lx + lockSize / 4, ly, lockSize / 2, lockSize / 2, 180, 180);
+                        }
+                    }
+                }
             }
 
             // Corner label
@@ -818,6 +851,38 @@ function Get-DocumentsPath {
 }
 
 # --- Global State ------------------------------------------------------------
+# NOTE: v5.2.0 migration in progress — global vars are being consolidated into
+# $script:AppState. Existing $global: references throughout the file still work;
+# they will be migrated to use $script:AppState in a future release.
+$script:AppState = @{
+    RouterConnected  = $false
+    AllLabels        = [System.Collections.ArrayList]::new()
+    BackupLabels     = $null
+    CurrentFilter    = "ALL"
+    RouterName       = ""
+    RouterModel      = ""
+    RouterFirmware   = ""
+    RouterInputCount = 32
+    RouterOutputCount= 32
+    UndoStack        = [System.Collections.Generic.Stack[hashtable]]::new()
+    RedoStack        = [System.Collections.Generic.Stack[hashtable]]::new()
+    CellEditOldValue = ""
+    CellEditColumn   = "New_Label"
+    Routers          = @{}
+    RouterType       = ""
+    MaxLabelLength   = 50
+    VideohubTcp      = $null
+    VideohubWriter   = $null
+    VideohubReader   = $null
+    LightwareTcp     = $null
+    LightwareWriter  = $null
+    LightwareReader  = $null
+    LightwareSendId  = 0
+    Crosspoints      = @()
+    MatrixViewActive = $false
+    VideohubLocks    = @{}
+    VideohubTakeMode = $false
+}
 
 $global:routerConnected     = $false
 $global:allLabels         = [System.Collections.ArrayList]::new()
@@ -850,6 +915,10 @@ $global:lightwareSendId   = 0
 $global:crosspoints       = @()      # int array: index=output, value=routed input (0-based, -1=none)
 $global:matrixViewActive  = $false    # true when Matrix tab is active
 
+# Videohub lock and take-mode state
+$global:videohubLocks     = @{}      # hashtable: key=0-based output index, value="U"/"O"/"L"
+$global:videohubTakeMode  = $false   # true when Videohub Take Mode is enabled
+
 # --- Multi-Router State Helpers -----------------------------------------------
 
 function Set-ActiveRouter {
@@ -873,6 +942,8 @@ function Set-ActiveRouter {
     $global:lightwareReader   = $r.LightwareReader
     $global:lightwareSendId   = $r.LightwareSendId
     $global:crosspoints       = $r.Crosspoints
+    $global:videohubLocks     = if ($r.VideohubLocks)    { $r.VideohubLocks }    else { @{} }
+    $global:videohubTakeMode  = if ($r.VideohubTakeMode) { $r.VideohubTakeMode } else { $false }
 }
 
 function Save-ActiveRouter {
@@ -897,6 +968,8 @@ function Save-ActiveRouter {
     $r.LightwareReader   = $global:lightwareReader
     $r.LightwareSendId   = $global:lightwareSendId
     $r.Crosspoints       = $global:crosspoints
+    $r.VideohubLocks     = $global:videohubLocks
+    $r.VideohubTakeMode  = $global:videohubTakeMode
 }
 
 # --- Router Adapter Functions -------------------------------------------------
@@ -1395,6 +1468,8 @@ function Connect-VideohubRouter {
     $inputLabels  = @{}
     $outputLabels = @{}
     $routingMap   = @{}
+    $locksMap     = @{}
+    $configInfo   = @{}
     $protocolVersion = "Unknown"
 
     $currentBlock = ""
@@ -1434,6 +1509,16 @@ function Connect-VideohubRouter {
                     $routingMap[[int]$matches[1]] = [int]$matches[2]
                 }
             }
+            "VIDEO OUTPUT LOCKS" {
+                if ($line -match '^(\d+)\s+([UOL])') {
+                    $locksMap[[int]$matches[1]] = $matches[2]
+                }
+            }
+            "CONFIGURATION" {
+                if ($line -match '^([^:]+):\s*(.+)$') {
+                    $configInfo[$matches[1].Trim()] = $matches[2].Trim()
+                }
+            }
         }
     }
 
@@ -1447,6 +1532,14 @@ function Connect-VideohubRouter {
     $global:videohubWriter = $writer
     $global:videohubReader = $reader
 
+    # Parse Take Mode from configuration
+    $takeMode = $false
+    if ($configInfo["Take Mode"] -eq "true") { $takeMode = $true }
+
+    # Store lock and take-mode state in globals
+    $global:videohubLocks    = $locksMap
+    $global:videohubTakeMode = $takeMode
+
     return @{
         RouterType    = "Videohub"
         RouterName    = $friendlyName
@@ -1457,6 +1550,8 @@ function Connect-VideohubRouter {
         InputLabels   = $inputLabels
         OutputLabels  = $outputLabels
         Routing       = $routingMap
+        Locks         = $locksMap
+        TakeMode      = $takeMode
     }
 }
 
@@ -1999,6 +2094,122 @@ function Switch-VideohubCrosspoint {
         return $false
     } catch {
         Write-ErrorLog "VH-XP" "Switch failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Get-VideohubLocks {
+    param([int]$OutputCount)
+    # Queries Videohub for current VIDEO OUTPUT LOCKS state.
+    $locks = @{}
+    if ($global:videohubTcp -eq $null -or -not $global:videohubTcp.Connected) { return $locks }
+    $stream = $global:videohubTcp.GetStream()
+    $writer = $global:videohubWriter
+    $reader = $global:videohubReader
+
+    # Send request for lock state
+    $writer.WriteLine("VIDEO OUTPUT LOCKS:")
+    $writer.WriteLine("")
+    $writer.Flush()
+
+    $deadline = [DateTime]::Now.AddSeconds(3)
+    $inBlock  = $false
+    while ([DateTime]::Now -lt $deadline) {
+        if ($stream.DataAvailable) {
+            $line = $reader.ReadLine()
+            if ($line -eq $null) { break }
+            if ($line -eq "VIDEO OUTPUT LOCKS:") { $inBlock = $true; continue }
+            if ($inBlock -and $line.Trim() -eq "") { break }
+            if ($inBlock -and $line -match '^(\d+)\s+([UOL])') {
+                $locks[[int]$matches[1]] = $matches[2]
+            }
+        } else {
+            Start-Sleep -Milliseconds 20
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+    }
+    return $locks
+}
+
+function Set-VideohubLock {
+    param(
+        [int]$OutputPort0,  # 0-based output port index
+        [ValidateSet("O","U")][string]$LockState
+    )
+    # Locks (O) or unlocks (U) a Videohub output port. Returns $true on success.
+    if ($global:videohubWriter -eq $null -or $global:videohubTcp -eq $null) { return $false }
+    try {
+        $writer = $global:videohubWriter
+        $reader = $global:videohubReader
+        $stream = $global:videohubTcp.GetStream()
+
+        $writer.WriteLine("VIDEO OUTPUT LOCKS:")
+        $writer.WriteLine("$OutputPort0 $LockState")
+        $writer.WriteLine("")
+        $writer.Flush()
+
+        # Wait for ACK/NAK
+        $deadline = [DateTime]::Now.AddSeconds(3)
+        while ([DateTime]::Now -lt $deadline) {
+            if ($stream.DataAvailable) {
+                $line = $reader.ReadLine()
+                if ($line -eq "ACK") { return $true }
+                if ($line -eq "NAK") { return $false }
+                # Also accept the echoed lock state as confirmation
+                if ($line -eq "VIDEO OUTPUT LOCKS:") {
+                    # Read the echoed lock line and blank line
+                    $echoLine = $reader.ReadLine()
+                    $blankLine = $reader.ReadLine()
+                    return $true
+                }
+            } else {
+                Start-Sleep -Milliseconds 20
+            }
+        }
+        Write-ErrorLog "VH-LOCK" "Lock command timed out waiting for ACK" "WARN"
+        return $false
+    } catch {
+        Write-ErrorLog "VH-LOCK" "Lock command failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Set-VideohubTakeMode {
+    param([bool]$Enabled)
+    # Enables or disables Videohub Take Mode. Returns $true on success.
+    if ($global:videohubWriter -eq $null -or $global:videohubTcp -eq $null) { return $false }
+    try {
+        $writer = $global:videohubWriter
+        $reader = $global:videohubReader
+        $stream = $global:videohubTcp.GetStream()
+
+        $val = if ($Enabled) { "true" } else { "false" }
+        $writer.WriteLine("CONFIGURATION:")
+        $writer.WriteLine("Take Mode: $val")
+        $writer.WriteLine("")
+        $writer.Flush()
+
+        # Wait for ACK/NAK or echoed CONFIGURATION block
+        $deadline = [DateTime]::Now.AddSeconds(3)
+        while ([DateTime]::Now -lt $deadline) {
+            if ($stream.DataAvailable) {
+                $line = $reader.ReadLine()
+                if ($line -eq "ACK") { return $true }
+                if ($line -eq "NAK") { return $false }
+                if ($line -eq "CONFIGURATION:") {
+                    # Read echoed config line and blank line
+                    $echoLine = $reader.ReadLine()
+                    $blankLine = $reader.ReadLine()
+                    return $true
+                }
+            } else {
+                Start-Sleep -Milliseconds 20
+            }
+        }
+        Write-ErrorLog "VH-TAKEMODE" "Take Mode command timed out waiting for ACK" "WARN"
+        return $false
+    } catch {
+        Write-ErrorLog "VH-TAKEMODE" "Take Mode command failed: $($_.Exception.Message)"
         return $false
     }
 }
@@ -2962,6 +3173,126 @@ $matrixPanel = New-Object CrosspointMatrixPanel
 $matrixPanel.Dock = "Fill"
 $matrixPanel.Visible = $false
 
+# --- Matrix Context Menu (Lock/Unlock outputs) ----------------------------------
+
+$matrixContextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+$matrixContextMenu.BackColor = $clrPanel
+$matrixContextMenu.ForeColor = $clrText
+$matrixContextMenu.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+$ctxLockOutput   = $matrixContextMenu.Items.Add("Lock Output (own)")
+$ctxUnlockOutput = $matrixContextMenu.Items.Add("Unlock Output")
+
+# Track which output column was right-clicked
+$script:matrixRightClickCol = -1
+
+$matrixPanel.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+        $mx = $e.X - $matrixPanel.AutoScrollPosition.X
+        $my = $e.Y - $matrixPanel.AutoScrollPosition.Y
+        # Determine the output column (same logic as the C# hit-test)
+        $headerWidth = 120
+        $cellSize = 32
+        # Access internal layout via the panel's properties -- approximate from output count
+        $outputs = $matrixPanel.OutputLabels.Length
+        if ($outputs -gt 0) {
+            $availW = $matrixPanel.ClientSize.Width - $headerWidth - 20
+            $cw = [Math]::Max(24, [int]($availW / $outputs))
+            $cw = [Math]::Min($cw, 48)
+            $cw = [Math]::Max($cw, 24)
+            $col = [int](($mx - $headerWidth) / $cw)
+            if ($col -ge 0 -and $col -lt $outputs) {
+                $script:matrixRightClickCol = $col
+                # Enable/disable items based on current lock state
+                $lockState = "U"
+                if ($global:videohubLocks.ContainsKey($col)) { $lockState = $global:videohubLocks[$col] }
+                $ctxLockOutput.Enabled   = ($lockState -eq "U")
+                $ctxUnlockOutput.Enabled = ($lockState -eq "O")  # can only unlock our own lock
+                $ctxLockOutput.Visible   = ($global:routerType -eq "Videohub")
+                $ctxUnlockOutput.Visible = ($global:routerType -eq "Videohub")
+                if ($global:routerType -eq "Videohub") {
+                    $matrixContextMenu.Show($matrixPanel, $e.Location)
+                }
+            }
+        }
+    }
+})
+
+$ctxLockOutput.Add_Click({
+    $col = $script:matrixRightClickCol
+    if ($col -lt 0) { return }
+    Set-StatusMessage "Locking output $($col + 1)..." "Changed"
+    [System.Windows.Forms.Application]::DoEvents()
+    $result = Set-VideohubLock -OutputPort0 $col -LockState "O"
+    if ($result) {
+        $global:videohubLocks[$col] = "O"
+        # Update panel lock display
+        $lockArr = @()
+        for ($li = 0; $li -lt $global:routerOutputCount; $li++) {
+            if ($global:videohubLocks.ContainsKey($li)) { $lockArr += $global:videohubLocks[$li] }
+            else { $lockArr += "U" }
+        }
+        $matrixPanel.LockStates = [string[]]$lockArr
+        Set-StatusMessage "Output $($col + 1) locked" "Success"
+    } else {
+        Set-StatusMessage "Failed to lock output $($col + 1)" "Danger"
+    }
+})
+
+$ctxUnlockOutput.Add_Click({
+    $col = $script:matrixRightClickCol
+    if ($col -lt 0) { return }
+    Set-StatusMessage "Unlocking output $($col + 1)..." "Changed"
+    [System.Windows.Forms.Application]::DoEvents()
+    $result = Set-VideohubLock -OutputPort0 $col -LockState "U"
+    if ($result) {
+        $global:videohubLocks[$col] = "U"
+        # Update panel lock display
+        $lockArr = @()
+        for ($li = 0; $li -lt $global:routerOutputCount; $li++) {
+            if ($global:videohubLocks.ContainsKey($li)) { $lockArr += $global:videohubLocks[$li] }
+            else { $lockArr += "U" }
+        }
+        $matrixPanel.LockStates = [string[]]$lockArr
+        Set-StatusMessage "Output $($col + 1) unlocked" "Success"
+    } else {
+        Set-StatusMessage "Failed to unlock output $($col + 1)" "Danger"
+    }
+})
+
+# --- Take Mode Checkbox (visible only for Videohub routers) ---------------------
+
+$script:chkTakeMode = New-Object System.Windows.Forms.CheckBox
+$script:chkTakeMode.Text = "Take Mode"
+$script:chkTakeMode.Location = New-Object System.Drawing.Point(440, 9)
+$script:chkTakeMode.Size = New-Object System.Drawing.Size(100, 24)
+$script:chkTakeMode.ForeColor = $clrText
+$script:chkTakeMode.BackColor = $clrPanel
+$script:chkTakeMode.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$script:chkTakeMode.FlatStyle = "Flat"
+$script:chkTakeMode.Visible = $false
+$script:chkTakeMode.Cursor = [System.Windows.Forms.Cursors]::Hand
+$filterRail.Controls.Add($script:chkTakeMode)
+
+$script:chkTakeMode.Add_CheckedChanged({
+    if (-not $global:routerConnected -or $global:routerType -ne "Videohub") { return }
+    $enabled = $script:chkTakeMode.Checked
+    $label = if ($enabled) { "Enabling" } else { "Disabling" }
+    Set-StatusMessage "$label Take Mode..." "Changed"
+    [System.Windows.Forms.Application]::DoEvents()
+    $result = Set-VideohubTakeMode -Enabled $enabled
+    if ($result) {
+        $global:videohubTakeMode = $enabled
+        $state = if ($enabled) { "enabled" } else { "disabled" }
+        Set-StatusMessage "Take Mode $state" "Success"
+    } else {
+        # Revert checkbox
+        $script:chkTakeMode.Checked = -not $enabled
+        Set-StatusMessage "Failed to change Take Mode" "Danger"
+    }
+})
+
 # --- Assemble Content Panel (reverse dock order: Bottom first, then Fill, then Top) --
 
 $contentPanel.Controls.Add($matrixPanel)     # Dock=Fill (hidden by default)
@@ -3193,6 +3524,10 @@ function Set-ActiveTab {
         $btnTemplate.Visible = $false
         $btnClearNew.Visible = $false
         $searchBox.Visible = $false
+        # Show Take Mode checkbox for Videohub routers
+        if ($script:chkTakeMode -ne $null) {
+            $script:chkTakeMode.Visible = ($global:routerType -eq "Videohub")
+        }
         # Refresh matrix data
         Update-MatrixPanel
     } else {
@@ -3204,6 +3539,8 @@ function Set-ActiveTab {
         $btnTemplate.Visible = $true
         $btnClearNew.Visible = $true
         $searchBox.Visible = $true
+        # Hide Take Mode checkbox outside Matrix view
+        if ($script:chkTakeMode -ne $null) { $script:chkTakeMode.Visible = $false }
         Sync-GridToData
         Populate-Grid
     }
@@ -3243,6 +3580,32 @@ function Update-MatrixPanel {
         $global:crosspoints = Get-RouterCrosspoints
         $matrixPanel.Crosspoints = [int[]]$global:crosspoints
 
+        # Query lock state for Videohub routers
+        if ($global:routerType -eq "Videohub") {
+            try {
+                $locks = Get-VideohubLocks -OutputCount $outCount
+                if ($locks.Count -gt 0) { $global:videohubLocks = $locks }
+            } catch {
+                Write-ErrorLog "MATRIX" "Failed to query lock state: $($_.Exception.Message)" "WARN"
+            }
+            # Build lock state array for the panel
+            $lockArr = @()
+            for ($li = 0; $li -lt $outCount; $li++) {
+                if ($global:videohubLocks.ContainsKey($li)) { $lockArr += $global:videohubLocks[$li] }
+                else { $lockArr += "U" }
+            }
+            $matrixPanel.LockStates = [string[]]$lockArr
+
+            # Update Take Mode checkbox state
+            if ($script:chkTakeMode -ne $null) {
+                $script:chkTakeMode.Checked = $global:videohubTakeMode
+                $script:chkTakeMode.Visible = $true
+            }
+        } else {
+            $matrixPanel.LockStates = [string[]]@()
+            if ($script:chkTakeMode -ne $null) { $script:chkTakeMode.Visible = $false }
+        }
+
         $activeRoutes = ($global:crosspoints | Where-Object { $_ -ge 0 }).Count
         Set-StatusMessage "$activeRoutes active routes loaded" "Success"
     } catch {
@@ -3265,6 +3628,15 @@ $matrixPanel.Add_CrosspointClicked({
     # Get display names for status message
     $inName  = if ($matrixPanel.InputLabels.Length -gt $inIdx) { $matrixPanel.InputLabels[$inIdx] } else { "Input $inPort" }
     $outName = if ($matrixPanel.OutputLabels.Length -gt $outIdx) { $matrixPanel.OutputLabels[$outIdx] } else { "Output $outPort" }
+
+    # Block switching if output is locked by another client
+    if ($global:routerType -eq "Videohub" -and $global:videohubLocks.ContainsKey($outIdx)) {
+        $lockState = $global:videohubLocks[$outIdx]
+        if ($lockState -eq "L") {
+            Set-StatusMessage "Output $outPort is locked by another client" "Danger"
+            return
+        }
+    }
 
     Set-StatusMessage "Switching: $inName -> $outName ..." "Changed"
     [System.Windows.Forms.Application]::DoEvents()

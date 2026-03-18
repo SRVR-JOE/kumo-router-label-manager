@@ -1,5 +1,5 @@
 """
-Command-line interface for Router Label Manager v5.0.
+Command-line interface for Router Label Manager v5.3.0.
 
 Beautiful, fast, and functional CLI powered by Rich.
 Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
@@ -11,7 +11,7 @@ import re
 import socket
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -28,6 +28,22 @@ from .coordinator.event_bus import EventBus
 from .agents.api_agent import APIAgent
 from .agents.api_agent.rest_client import RestClient
 from .agents.api_agent.router_protocols import KUMO_COLORS, KUMO_DEFAULT_COLOR
+from .agents.api_agent.videohub_protocol import (
+    VIDEOHUB_PORT,
+    VIDEOHUB_TIMEOUT,
+    VIDEOHUB_MAX_LABEL_LENGTH,
+    VideohubInfo,
+    connect_videohub,
+    upload_videohub_labels,
+)
+from .agents.api_agent.lightware_protocol import (
+    LIGHTWARE_PORT,
+    LIGHTWARE_TIMEOUT,
+    LIGHTWARE_MAX_LABEL_LENGTH,
+    LightwareInfo,
+    connect_lightware,
+    upload_lightware_label,
+)
 from .agents.file_handler import FileHandlerAgent, FileData, PortData
 from .models import Label, PortType
 
@@ -35,21 +51,12 @@ from .models import Label, PortType
 console = Console()
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "5.0.0"
-
-# Videohub TCP port
-VIDEOHUB_PORT = 9990
-VIDEOHUB_TIMEOUT = 2.0
-VIDEOHUB_MAX_LABEL_LENGTH = 255
-
-# Lightware LW3 TCP port
-LIGHTWARE_PORT = 6107
-LIGHTWARE_TIMEOUT = 2.0
-LIGHTWARE_MAX_LABEL_LENGTH = 255
+APP_VERSION = "5.3.0"
 
 
 # ---------------------------------------------------------------------------
 # Internal label representation — no port-number cap, works for both routers
+# TODO: Migrate to use src.models.label.Label directly
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -78,302 +85,6 @@ class RouterLabel:
     def __str__(self) -> str:
         change = f" -> {self.new_label}" if self.new_label is not None and self.new_label != self.current_label else ""
         return f"Port {self.port_number} ({self.port_type}): {self.current_label}{change}"
-
-
-# ---------------------------------------------------------------------------
-# Videohub protocol
-# ---------------------------------------------------------------------------
-
-@dataclass
-class VideohubInfo:
-    """Information returned by a Videohub device on connect."""
-
-    model_name: str = "Blackmagic Videohub"
-    friendly_name: str = ""
-    protocol_version: str = "Unknown"
-    video_inputs: int = 0
-    video_outputs: int = 0
-    input_labels: List[str] = field(default_factory=list)
-    output_labels: List[str] = field(default_factory=list)
-
-
-@dataclass
-class LightwareInfo:
-    """Information returned by a Lightware MX2 device on connect."""
-
-    product_name: str = "Lightware MX2"
-    input_count: int = 0
-    output_count: int = 0
-    input_labels: Dict[int, str] = field(default_factory=dict)
-    output_labels: Dict[int, str] = field(default_factory=dict)
-
-
-def _recv_until_blank(sock: socket.socket, buf_size: int = 4096, timeout: float = 5.0) -> str:
-    """Read from socket until 300ms of silence (end of initial dump).
-
-    The Videohub protocol sends multiple blocks separated by blank lines.
-    We accumulate all data until the device goes quiet for 300ms, which
-    signals the end of the full initial state dump.
-    """
-    sock.settimeout(timeout)
-    data = b""
-    try:
-        # Read initial data
-        data = sock.recv(buf_size)
-    except socket.timeout:
-        logger.debug("Videohub recv timed out waiting for initial data (%.1fs)", timeout)
-        return data.decode("utf-8", errors="replace")
-
-    # Keep reading until 300ms of silence
-    while True:
-        sock.settimeout(0.3)
-        try:
-            chunk = sock.recv(buf_size)
-            if not chunk:
-                break
-            data += chunk
-        except (socket.timeout, BlockingIOError):
-            break  # 300ms of silence = dump is complete
-
-    return data.decode("utf-8", errors="replace")
-
-
-def _parse_videohub_dump(raw: str) -> VideohubInfo:
-    """Parse the Videohub initial state dump into a VideohubInfo object.
-
-    The protocol uses named blocks:
-        BLOCK NAME:
-        key value
-        key value
-
-        NEXT BLOCK:
-        ...
-
-    Each block ends with a blank line.
-    """
-    info = VideohubInfo()
-
-    # Split into blocks on blank lines
-    blocks: Dict[str, List[str]] = {}
-    current_block: Optional[str] = None
-    current_lines: List[str] = []
-
-    for line in raw.splitlines():
-        stripped = line.rstrip()
-        if stripped.endswith(":") and not stripped.startswith(" ") and not stripped[0].isdigit():
-            # New block header
-            if current_block is not None:
-                blocks[current_block] = current_lines
-            current_block = stripped[:-1]  # strip trailing colon
-            current_lines = []
-        elif stripped == "":
-            # Blank line — end of current block
-            if current_block is not None:
-                blocks[current_block] = current_lines
-                current_block = None
-                current_lines = []
-        else:
-            if current_block is not None:
-                current_lines.append(stripped)
-
-    # Flush any trailing block
-    if current_block is not None:
-        blocks[current_block] = current_lines
-
-    # --- PROTOCOL PREAMBLE ---
-    if "PROTOCOL PREAMBLE" in blocks:
-        for entry in blocks["PROTOCOL PREAMBLE"]:
-            if entry.startswith("Version:"):
-                info.protocol_version = entry.split(":", 1)[1].strip()
-
-    # --- VIDEOHUB DEVICE ---
-    if "VIDEOHUB DEVICE" in blocks:
-        for entry in blocks["VIDEOHUB DEVICE"]:
-            if entry.startswith("Model name:"):
-                info.model_name = entry.split(":", 1)[1].strip()
-            elif entry.startswith("Friendly name:"):
-                info.friendly_name = entry.split(":", 1)[1].strip()
-            elif entry.startswith("Video inputs:"):
-                try:
-                    info.video_inputs = int(entry.split(":", 1)[1].strip())
-                except ValueError:
-                    logger.warning("Could not parse video input count: %s", entry)
-            elif entry.startswith("Video outputs:"):
-                try:
-                    info.video_outputs = int(entry.split(":", 1)[1].strip())
-                except ValueError:
-                    logger.warning("Could not parse video output count: %s", entry)
-
-    # --- INPUT LABELS ---
-    # Initialise with defaults first, then overwrite with what the device sent.
-    if info.video_inputs > 0:
-        info.input_labels = [f"Input {i+1}" for i in range(info.video_inputs)]
-    if "INPUT LABELS" in blocks:
-        for entry in blocks["INPUT LABELS"]:
-            parts = entry.split(" ", 1)
-            idx_str = parts[0]
-            label_text = parts[1] if len(parts) == 2 else ""
-            try:
-                idx = int(idx_str)  # 0-based from device
-                # Extend list if needed (device may report more than declared)
-                while len(info.input_labels) <= idx:
-                    info.input_labels.append(f"Input {len(info.input_labels)+1}")
-                info.input_labels[idx] = label_text
-            except (ValueError, IndexError):
-                continue
-
-    # --- OUTPUT LABELS ---
-    if info.video_outputs > 0:
-        info.output_labels = [f"Output {i+1}" for i in range(info.video_outputs)]
-    if "OUTPUT LABELS" in blocks:
-        for entry in blocks["OUTPUT LABELS"]:
-            parts = entry.split(" ", 1)
-            idx_str = parts[0]
-            label_text = parts[1] if len(parts) == 2 else ""
-            try:
-                idx = int(idx_str)
-                while len(info.output_labels) <= idx:
-                    info.output_labels.append(f"Output {len(info.output_labels)+1}")
-                info.output_labels[idx] = label_text
-            except (ValueError, IndexError):
-                continue
-
-    return info
-
-
-def connect_videohub(ip: str) -> Tuple[bool, Optional[VideohubInfo], Optional[str]]:
-    """Open a TCP connection to a Videohub, read and parse the initial dump.
-
-    Args:
-        ip: IP address of the Videohub device.
-
-    Returns:
-        Tuple of (success, VideohubInfo | None, error_message | None).
-    """
-    try:
-        sock = socket.create_connection((ip, VIDEOHUB_PORT), timeout=VIDEOHUB_TIMEOUT)
-    except (ConnectionRefusedError, OSError) as exc:
-        return False, None, f"Cannot connect to {ip}:{VIDEOHUB_PORT} — {exc}"
-    except socket.timeout:
-        return False, None, f"Connection to {ip}:{VIDEOHUB_PORT} timed out after {VIDEOHUB_TIMEOUT}s"
-
-    try:
-        raw = _recv_until_blank(sock)
-    finally:
-        sock.close()
-
-    if not raw.strip():
-        return False, None, "Connected but received no data from device"
-
-    info = _parse_videohub_dump(raw)
-    return True, info, None
-
-
-def upload_videohub_labels(
-    ip: str,
-    labels: List[RouterLabel],
-) -> Tuple[int, int, List[str]]:
-    """Upload changed labels to a Videohub device over TCP port 9990.
-
-    Sends one block per label type (INPUT LABELS / OUTPUT LABELS) containing
-    all changed labels of that type.  Waits for an ACK after each block.
-
-    Args:
-        ip: IP address of the Videohub device.
-        labels: All labels (only those with has_changes() == True are sent).
-
-    Returns:
-        Tuple of (success_count, error_count, error_messages).
-    """
-    changes = [l for l in labels if l.has_changes()]
-    if not changes:
-        return 0, 0, []
-
-    inputs_to_send = [l for l in changes if l.port_type == "INPUT"]
-    outputs_to_send = [l for l in changes if l.port_type == "OUTPUT"]
-
-    success_count = 0
-    error_count = 0
-    error_messages: List[str] = []
-
-    try:
-        sock = socket.create_connection((ip, VIDEOHUB_PORT), timeout=VIDEOHUB_TIMEOUT)
-    except (ConnectionRefusedError, OSError, socket.timeout) as exc:
-        msg = f"Cannot connect to {ip}:{VIDEOHUB_PORT} — {exc}"
-        return 0, len(changes), [msg]
-
-    try:
-        # Drain the initial state dump so we start clean
-        sock.settimeout(VIDEOHUB_TIMEOUT)
-        try:
-            _recv_until_blank(sock)
-        except (socket.timeout, BlockingIOError):
-            pass  # No initial data or already silent — safe to proceed
-        except OSError:
-            sock.close()
-            return 0, len(changes), ["Socket error draining initial state dump"]
-
-        def send_block(block_name: str, port_labels: List[RouterLabel]) -> Tuple[int, int, List[str]]:
-            """Send a single labelled block and wait for ACK."""
-            lines = [f"{block_name}:"]
-            for lbl in port_labels:
-                # Protocol is 0-based
-                zero_idx = lbl.port_number - 1
-                lines.append(f"{zero_idx} {lbl.new_label}")
-            lines.append("")  # blank line terminates block
-            payload = "\n".join(lines) + "\n"
-
-            try:
-                sock.sendall(payload.encode("utf-8"))
-            except OSError as exc:
-                msgs = [f"Send error for {block_name}: {exc}"]
-                return 0, len(port_labels), msgs
-
-            # Wait for ACK — the device replies with "ACK\n\n" on success
-            sock.settimeout(5.0)
-            ack_buf = b""
-            try:
-                while b"\n\n" not in ack_buf:
-                    chunk = sock.recv(1024)
-                    if not chunk:
-                        break
-                    ack_buf += chunk
-            except socket.timeout:
-                pass
-            except OSError as exc:
-                msgs = [f"{block_name}: connection lost waiting for ACK: {exc}"]
-                return 0, len(port_labels), msgs
-
-            ack_text = ack_buf.decode("utf-8", errors="replace").strip().upper()
-            if "ACK" in ack_text:
-                return len(port_labels), 0, []
-            elif "NAK" in ack_text:
-                msgs = [f"{block_name}: device returned NAK (not acknowledged)"]
-                return 0, len(port_labels), msgs
-            elif not ack_text.strip():
-                msgs = [f"{block_name}: no response from device (timeout)"]
-                return 0, len(port_labels), msgs
-            else:
-                logger.warning("Ambiguous response for %s: %r", block_name, ack_text)
-                msgs = [f"{block_name}: ambiguous response from device: {ack_text!r}"]
-                return 0, len(port_labels), msgs
-
-        if inputs_to_send:
-            ok, fail, msgs = send_block("INPUT LABELS", inputs_to_send)
-            success_count += ok
-            error_count += fail
-            error_messages.extend(msgs)
-
-        if outputs_to_send:
-            ok, fail, msgs = send_block("OUTPUT LABELS", outputs_to_send)
-            success_count += ok
-            error_count += fail
-            error_messages.extend(msgs)
-
-    finally:
-        sock.close()
-
-    return success_count, error_count, error_messages
 
 
 def detect_router_type(ip: str) -> str:
@@ -443,248 +154,6 @@ def detect_router_type(ip: str) -> str:
             try: sock.close()
             except OSError: pass
     return "kumo"
-
-
-# ---------------------------------------------------------------------------
-# Lightware LW3 protocol
-# ---------------------------------------------------------------------------
-
-def _lw3_send_command(
-    sock: socket.socket,
-    command: str,
-    send_id: List[int],
-) -> List[str]:
-    """Frame and send an LW3 command, then read the multiline response block.
-
-    The LW3 protocol wraps every response in a ``{NNNN ... }`` block where
-    NNNN matches the 4-digit zero-padded request ID sent with the command.
-    Response lines may be prefixed with ``pw``, ``pr``, ``mO``, ``pE``, or ``nE``.
-
-    Args:
-        sock:     Connected socket to the Lightware device.
-        command:  The bare LW3 command string (e.g. ``GET /.ProductName``).
-        send_id:  Mutable single-element list used as a counter so callers
-                  share and advance the same ID sequence.
-
-    Returns:
-        List of response lines (prefix and braces stripped).
-    """
-    req_id = send_id[0]
-    send_id[0] += 1
-
-    framed = f"{req_id:04d}#{command}\r\n"
-    try:
-        sock.sendall(framed.encode("ascii"))
-    except OSError as exc:
-        logger.debug("LW3 send error for %r: %s", command, exc)
-        return []
-
-    # Read until the closing brace line for this request ID.
-    expected_open = f"{{{req_id:04d}"
-    expected_close = "}"
-    lines: List[str] = []
-    in_block = False
-    sock.settimeout(3.0)
-    buf = b""
-
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        try:
-            chunk = sock.recv(4096)
-        except socket.timeout:
-            break
-        except OSError:
-            break
-        if not chunk:
-            break
-        buf += chunk
-
-        # Process any complete lines in the buffer.
-        while b"\n" in buf:
-            raw_line, buf = buf.split(b"\n", 1)
-            text = raw_line.decode("ascii", errors="replace").rstrip("\r")
-
-            if not in_block:
-                if text.startswith(expected_open):
-                    in_block = True
-                continue
-
-            # Inside the block — check for closing brace.
-            if text.strip() == expected_close:
-                return lines
-
-            # Keep the full line (including any pw/pr/pE/nE prefix) so
-            # callers can detect error prefixes.  Callers use substring
-            # matching (re.search / "=" in line) which works with prefixes.
-            lines.append(text)
-
-    return lines
-
-
-def connect_lightware(
-    ip: str,
-    port: int = LIGHTWARE_PORT,
-) -> Tuple[bool, Optional[LightwareInfo], Optional[str]]:
-    """Open a TCP connection to a Lightware MX2 and read device information.
-
-    Queries ProductName, SourcePortCount, DestinationPortCount, and all
-    labels under ``/MEDIA/NAMES/VIDEO.*`` in a single persistent connection.
-
-    Args:
-        ip:   IP address of the Lightware device.
-        port: TCP port (default 6107).
-
-    Returns:
-        Tuple of (success, LightwareInfo | None, error_message | None).
-    """
-    try:
-        sock = socket.create_connection((ip, port), timeout=LIGHTWARE_TIMEOUT)
-    except (ConnectionRefusedError, OSError) as exc:
-        return False, None, f"Cannot connect to {ip}:{port} — {exc}"
-    except socket.timeout:
-        return False, None, f"Connection to {ip}:{port} timed out after {LIGHTWARE_TIMEOUT}s"
-
-    info = LightwareInfo()
-    send_id = [1]
-
-    try:
-        # --- Product name ---
-        pn_lines = _lw3_send_command(sock, "GET /.ProductName", send_id)
-        for line in pn_lines:
-            # Line looks like: "/.ProductName=Lightware MX2-16x16-HDMI20-L"
-            if "=" in line:
-                info.product_name = line.split("=", 1)[1].strip()
-                break
-
-        # --- Port counts ---
-        src_lines = _lw3_send_command(sock, "GET /MEDIA/XP/VIDEO.SourcePortCount", send_id)
-        for line in src_lines:
-            if "=" in line:
-                try:
-                    info.input_count = int(line.split("=", 1)[1].strip())
-                except ValueError:
-                    logger.warning("Could not parse SourcePortCount: %s", line)
-                break
-
-        dst_lines = _lw3_send_command(sock, "GET /MEDIA/XP/VIDEO.DestinationPortCount", send_id)
-        for line in dst_lines:
-            if "=" in line:
-                try:
-                    info.output_count = int(line.split("=", 1)[1].strip())
-                except ValueError:
-                    logger.warning("Could not parse DestinationPortCount: %s", line)
-                break
-
-        # --- Labels (wildcard GET returns all at once) ---
-        label_lines = _lw3_send_command(sock, "GET /MEDIA/NAMES/VIDEO.*", send_id)
-        # Each line looks like:
-        #   pw /MEDIA/NAMES/VIDEO.I1=1;Label Text
-        #   pw /MEDIA/NAMES/VIDEO.O3=3;Dest Label
-        input_re = re.compile(r"/MEDIA/NAMES/VIDEO\.I(\d+)=\d+;(.*)")
-        output_re = re.compile(r"/MEDIA/NAMES/VIDEO\.O(\d+)=\d+;(.*)")
-
-        for line in label_lines:
-            m = input_re.search(line)
-            if m:
-                port_num = int(m.group(1))
-                info.input_labels[port_num] = m.group(2)
-                continue
-            m = output_re.search(line)
-            if m:
-                port_num = int(m.group(1))
-                info.output_labels[port_num] = m.group(2)
-
-        # Seed missing labels with defaults when counts are known.
-        for i in range(1, info.input_count + 1):
-            info.input_labels.setdefault(i, f"Input {i}")
-        for i in range(1, info.output_count + 1):
-            info.output_labels.setdefault(i, f"Output {i}")
-
-    except Exception as exc:
-        logger.exception("Error querying Lightware device at %s:%d", ip, port)
-        return False, None, f"Error querying device: {exc}"
-    finally:
-        try:
-            sock.close()
-        except OSError:
-            pass
-
-    return True, info, None
-
-
-def lightware_info_to_router_labels(info: LightwareInfo) -> List[RouterLabel]:
-    """Convert a parsed LightwareInfo into a flat RouterLabel list (1-based ports)."""
-    router_labels: List[RouterLabel] = []
-    for port_num in sorted(info.input_labels):
-        router_labels.append(RouterLabel(
-            port_number=port_num,
-            port_type="INPUT",
-            current_label=info.input_labels[port_num],
-        ))
-    for port_num in sorted(info.output_labels):
-        router_labels.append(RouterLabel(
-            port_number=port_num,
-            port_type="OUTPUT",
-            current_label=info.output_labels[port_num],
-        ))
-    return router_labels
-
-
-def upload_lightware_label(
-    ip: str,
-    port_type: str,
-    port_num: int,
-    label: str,
-    port: int = LIGHTWARE_PORT,
-) -> bool:
-    """Upload a single label to a Lightware MX2 device.
-
-    Opens a fresh TCP connection, sends a SET command for the appropriate
-    port path, and closes the connection.
-
-    Args:
-        ip:        IP address of the Lightware device.
-        port_type: "INPUT" or "OUTPUT".
-        port_num:  1-based port number.
-        label:     New label text (truncated to LIGHTWARE_MAX_LABEL_LENGTH).
-        port:      TCP port (default 6107).
-
-    Returns:
-        True if the SET was acknowledged, False otherwise.
-    """
-    type_char = "I" if port_type == "INPUT" else "O"
-    # LW3 label path format: /MEDIA/NAMES/VIDEO.I1=1;Label Text
-    label_text = label[:LIGHTWARE_MAX_LABEL_LENGTH]
-    path = f"/MEDIA/NAMES/VIDEO.{type_char}{port_num}={port_num};{label_text}"
-    command = f"SET {path}"
-
-    try:
-        sock = socket.create_connection((ip, port), timeout=LIGHTWARE_TIMEOUT)
-    except (ConnectionRefusedError, OSError, socket.timeout) as exc:
-        logger.warning("LW3 connect failed for SET on port %s%d: %s", type_char, port_num, exc)
-        return False
-
-    send_id = [1]
-    try:
-        response_lines = _lw3_send_command(sock, command, send_id)
-    except Exception as exc:
-        logger.warning("LW3 SET command failed for %s%d: %s", type_char, port_num, exc)
-        return False
-    finally:
-        try:
-            sock.close()
-        except OSError:
-            pass
-
-    # A successful SET echoes back a "pw" line containing the path.  An error
-    # response starts with "pE" (parameter error) or "nE" (node error).
-    for line in response_lines:
-        if line.startswith("pE") or line.startswith("nE") or line.startswith("-E"):
-            logger.warning("LW3 SET error response for %s%d: %r", type_char, port_num, line)
-            return False
-
-    # If we got any response lines back, treat it as success.
-    return bool(response_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +357,24 @@ def videohub_info_to_router_labels(info: VideohubInfo) -> List[RouterLabel]:
         router_labels.append(RouterLabel(port_number=i, port_type="INPUT", current_label=text))
     for i, text in enumerate(info.output_labels, start=1):
         router_labels.append(RouterLabel(port_number=i, port_type="OUTPUT", current_label=text))
+    return router_labels
+
+
+def lightware_info_to_router_labels(info: LightwareInfo) -> List[RouterLabel]:
+    """Convert a parsed LightwareInfo into a flat RouterLabel list (1-based ports)."""
+    router_labels: List[RouterLabel] = []
+    for port_num in sorted(info.input_labels):
+        router_labels.append(RouterLabel(
+            port_number=port_num,
+            port_type="INPUT",
+            current_label=info.input_labels[port_num],
+        ))
+    for port_num in sorted(info.output_labels):
+        router_labels.append(RouterLabel(
+            port_number=port_num,
+            port_type="OUTPUT",
+            current_label=info.output_labels[port_num],
+        ))
     return router_labels
 
 

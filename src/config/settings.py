@@ -5,10 +5,12 @@ allowing configuration from environment variables and config files.
 """
 
 from typing import List, Optional
-from pydantic import Field, validator
+from pydantic import Field, field_validator, ConfigDict
 from pydantic_settings import BaseSettings
 from pathlib import Path
 import logging
+
+from src.utils.validation import validate_ip_address as _validate_ip
 
 
 class Settings(BaseSettings):
@@ -112,6 +114,62 @@ class Settings(BaseSettings):
         description="Log date format"
     )
 
+    # REST Client Settings
+    rest_max_concurrent_requests: int = Field(
+        default=32, ge=1, le=128,
+        description="Max concurrent REST API requests"
+    )
+    rest_request_timeout: float = Field(
+        default=4.0, ge=1.0, le=30.0,
+        description="REST request timeout in seconds"
+    )
+    rest_connect_timeout: float = Field(
+        default=3.0, ge=1.0, le=30.0,
+        description="REST connection timeout in seconds"
+    )
+    rest_keepalive_timeout: int = Field(
+        default=30, ge=5, le=300,
+        description="TCP keepalive timeout in seconds"
+    )
+
+    # Telnet Client Settings
+    telnet_connect_timeout: float = Field(
+        default=3.0, ge=1.0, le=30.0,
+        description="Telnet connection timeout in seconds"
+    )
+    telnet_command_timeout: float = Field(
+        default=2.0, ge=0.5, le=10.0,
+        description="Telnet per-command timeout in seconds"
+    )
+    telnet_command_delay: float = Field(
+        default=0.1, ge=0.01, le=1.0,
+        description="Delay between Telnet commands in seconds"
+    )
+
+    # Retry Settings
+    retry_max_attempts: int = Field(
+        default=2, ge=1, le=10,
+        description="Max retry attempts for failed requests"
+    )
+    retry_backoff_base: float = Field(
+        default=0.3, ge=0.1, le=5.0,
+        description="Initial retry backoff in seconds"
+    )
+    retry_backoff_multiplier: float = Field(
+        default=2.0, ge=1.0, le=5.0,
+        description="Retry backoff multiplier"
+    )
+
+    # Protocol Port Settings
+    videohub_port: int = Field(
+        default=9990, ge=1, le=65535,
+        description="Blackmagic Videohub TCP port"
+    )
+    lightware_port: int = Field(
+        default=6107, ge=1, le=65535,
+        description="Lightware MX2 LW3 protocol port"
+    )
+
     # Event Bus Settings
     event_queue_max_size: int = Field(
         default=1000,
@@ -126,7 +184,7 @@ class Settings(BaseSettings):
         description="Application name"
     )
     app_version: str = Field(
-        default="5.0.0",
+        default="5.5.0",
         description="Application version"
     )
     debug_mode: bool = Field(
@@ -137,29 +195,22 @@ class Settings(BaseSettings):
     @staticmethod
     def _validate_single_ip(v: str) -> str:
         """Validate a single IP address format."""
-        parts = v.split(".")
-        if len(parts) != 4:
-            raise ValueError(f"Invalid IP address format: {v}")
-        try:
-            for part in parts:
-                num = int(part)
-                if not 0 <= num <= 255:
-                    raise ValueError(f"Invalid IP address octet: {part}")
-        except ValueError as e:
-            raise ValueError(f"Invalid IP address format: {v}") from e
-        return v
+        return _validate_ip(v)
 
-    @validator("router_ip")
+    @field_validator("router_ip")
+    @classmethod
     def validate_ip_address(cls, v: str) -> str:
         """Validate IP address format."""
         return cls._validate_single_ip(v)
 
-    @validator("router_ips", each_item=True)
-    def validate_router_ips_items(cls, v: str) -> str:
+    @field_validator("router_ips")
+    @classmethod
+    def validate_router_ips_items(cls, v: List[str]) -> List[str]:
         """Validate each IP in the router_ips list."""
-        return cls._validate_single_ip(v)
+        return [cls._validate_single_ip(ip) for ip in v]
 
-    @validator("log_level")
+    @field_validator("log_level")
+    @classmethod
     def validate_log_level(cls, v: str) -> str:
         """Validate log level.
 
@@ -180,13 +231,14 @@ class Settings(BaseSettings):
             )
         return v_upper
 
-    @validator("max_port_number")
-    def validate_port_range(cls, v: int, values: dict) -> int:
+    @field_validator("max_port_number")
+    @classmethod
+    def validate_port_range(cls, v: int, info) -> int:
         """Validate that max_port_number is greater than min_port_number.
 
         Args:
             v: Maximum port number
-            values: Dictionary of previously validated values
+            info: Pydantic validation info
 
         Returns:
             Validated maximum port number
@@ -194,7 +246,7 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If max is not greater than min
         """
-        min_port = values.get("min_port_number", 1)
+        min_port = info.data.get("min_port_number", 1)
         if v < min_port:
             raise ValueError(
                 f"max_port_number ({v}) must be >= min_port_number ({min_port})"
@@ -227,13 +279,12 @@ class Settings(BaseSettings):
         """
         return Path(self.labels_file_path)
 
-    class Config:
-        """Pydantic configuration."""
-
-        env_prefix = "KUMO_"
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_prefix="KUMO_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
 
 # Global settings instance

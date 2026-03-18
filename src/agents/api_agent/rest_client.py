@@ -6,6 +6,7 @@ Uses the real AJA KUMO REST API:
 """
 
 import asyncio
+import json
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -24,12 +25,12 @@ from .router_protocols import (
     RETRY_BACKOFF_MULTIPLIER,
 )
 
-
-logger = logging.getLogger(__name__)
-
 # Concurrency limit for parallel requests to avoid overwhelming the router.
 # 32 works well for KUMO 6464-12G on a LAN; 16 is safer for smaller models.
 MAX_CONCURRENT_REQUESTS = 32
+
+
+logger = logging.getLogger(__name__)
 
 
 class RestClientError(Exception):
@@ -47,11 +48,28 @@ class RestTimeoutError(RestClientError):
 class RestClient:
     """Async REST API client for KUMO routers using the real AJA API."""
 
-    def __init__(self, router_ip: str):
+    def __init__(
+        self,
+        router_ip: str,
+        max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS,
+        request_timeout: float = TIMEOUT_REST_REQUEST,
+        connect_timeout: float = 3.0,
+        keepalive_timeout: int = 30,
+        max_retries: int = MAX_RETRIES,
+        retry_backoff_base: float = RETRY_BACKOFF_BASE,
+        retry_backoff_multiplier: float = RETRY_BACKOFF_MULTIPLIER,
+    ):
         self.router_ip = router_ip
         self.base_url = f"http://{router_ip}"
         self._session: Optional[aiohttp.ClientSession] = None
         self._port_count: int = 32
+        self._max_concurrent_requests = max_concurrent_requests
+        self._request_timeout = request_timeout
+        self._connect_timeout = connect_timeout
+        self._keepalive_timeout = keepalive_timeout
+        self._max_retries = max_retries
+        self._retry_backoff_base = retry_backoff_base
+        self._retry_backoff_multiplier = retry_backoff_multiplier
 
     async def __aenter__(self):
         await self.connect()
@@ -61,42 +79,44 @@ class RestClient:
         await self.disconnect()
 
     async def connect(self) -> None:
-        if self._session is None:
-            connector = aiohttp.TCPConnector(
-                limit=MAX_CONCURRENT_REQUESTS,
-                keepalive_timeout=30,
-                enable_cleanup_closed=True,
-            )
-            timeout = aiohttp.ClientTimeout(
-                total=TIMEOUT_REST_REQUEST,
-                connect=3,
-                sock_read=TIMEOUT_REST_REQUEST,
-            )
-            self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                connector=connector,
-            )
+        if self._session and not self._session.closed:
+            return  # Already connected
+        connector = aiohttp.TCPConnector(
+            limit=self._max_concurrent_requests,
+            keepalive_timeout=self._keepalive_timeout,
+            enable_cleanup_closed=True,
+        )
+        timeout = aiohttp.ClientTimeout(
+            total=self._request_timeout,
+            connect=self._connect_timeout,
+            sock_read=self._request_timeout,
+        )
+        self._session = aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector,
+        )
 
     async def disconnect(self) -> None:
-        if self._session is not None:
+        if self._session and not self._session.closed:
             await self._session.close()
-            self._session = None
+        self._session = None
 
-    async def _get(self, endpoint: str, timeout: float = TIMEOUT_REST_REQUEST) -> Optional[Dict]:
+    async def _get(self, endpoint: str, timeout: Optional[float] = None) -> Optional[Dict]:
         """Make a GET request and return parsed JSON."""
         if self._session is None:
             await self.connect()
 
         url = f"{self.base_url}{endpoint}"
+        effective_timeout = timeout if timeout is not None else self._request_timeout
 
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(self._max_retries):
             try:
-                req_timeout = aiohttp.ClientTimeout(total=timeout)
+                req_timeout = aiohttp.ClientTimeout(total=effective_timeout)
                 async with self._session.get(url, timeout=req_timeout) as response:
                     if response.status == 200:
                         try:
                             return await response.json(content_type=None)
-                        except Exception:
+                        except (json.JSONDecodeError, ValueError):
                             text = await response.text()
                             return {"value": text.strip()} if text.strip() else None
                     else:
@@ -108,8 +128,8 @@ class RestClient:
             except Exception as e:
                 logger.error(f"Unexpected error: {e}")
 
-            if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(RETRY_BACKOFF_BASE * (RETRY_BACKOFF_MULTIPLIER ** attempt))
+            if attempt < self._max_retries - 1:
+                await asyncio.sleep(self._retry_backoff_base * (self._retry_backoff_multiplier ** attempt))
 
         return None
 
@@ -211,7 +231,7 @@ class RestClient:
             'inputs' and 'outputs' lists of label strings
         """
         port_count = self._port_count
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(self._max_concurrent_requests)
 
         # Build all fetch tasks for inputs and outputs (Line 1 and Line 2)
         tasks = []
@@ -311,7 +331,7 @@ class RestClient:
         self, labels: List[Dict[str, Any]], progress_callback=None
     ) -> Tuple[int, int, List[str]]:
         """Upload multiple labels with parallel execution."""
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(self._max_concurrent_requests)
 
         tasks = [self._upload_single(ld, semaphore) for ld in labels]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -382,7 +402,7 @@ class RestClient:
             Dict with 'input_colors' and 'output_colors' lists (1-indexed values)
         """
         pc = port_count or self._port_count
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(self._max_concurrent_requests)
 
         tasks = []
         for port in range(1, pc + 1):

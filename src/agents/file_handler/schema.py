@@ -2,29 +2,32 @@
 Pydantic models for file data validation.
 """
 from typing import Optional, Literal, List
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from src.utils.validation import PORT_NUMBER_MAX, COLOR_ID_MIN, COLOR_ID_MAX
 
 
 class PortData(BaseModel):
     """Model for a single port row."""
 
-    port: int = Field(..., ge=1, le=120, description="Port number (1-120)")
+    port: int = Field(..., ge=1, le=PORT_NUMBER_MAX, description="Port number (1-120)")
     type: Literal["INPUT", "OUTPUT"] = Field(..., description="Port type")
     current_label: str = Field(default="", max_length=255, description="Current label (Line 1)")
     new_label: Optional[str] = Field(default=None, max_length=255, description="New label to apply (Line 1)")
     current_label_line2: str = Field(default="", max_length=255, description="Current label (Line 2)")
     new_label_line2: Optional[str] = Field(default=None, max_length=255, description="New label to apply (Line 2)")
-    current_color: int = Field(default=4, ge=1, le=9, description="Current button color (1-9)")
-    new_color: Optional[int] = Field(default=None, ge=1, le=9, description="New button color to apply (1-9)")
+    current_color: int = Field(default=4, ge=COLOR_ID_MIN, le=COLOR_ID_MAX, description="Current button color (1-9)")
+    new_color: Optional[int] = Field(default=None, ge=COLOR_ID_MIN, le=COLOR_ID_MAX, description="New button color to apply (1-9)")
     notes: str = Field(default="", max_length=500, description="Additional notes")
 
-    @field_validator("type")
+    @field_validator("type", mode="before")
     @classmethod
     def validate_type(cls, v: str) -> str:
         """Validate and normalize port type."""
-        v = v.upper().strip()
-        if v not in ["INPUT", "OUTPUT"]:
-            raise ValueError(f"Type must be INPUT or OUTPUT, got {v}")
+        if isinstance(v, str):
+            v = v.upper().strip()
+        if v not in ("INPUT", "OUTPUT"):
+            raise ValueError(f"Port type must be INPUT or OUTPUT, got '{v}'")
         return v
 
     @field_validator("current_label", "new_label", "current_label_line2", "new_label_line2", "notes")
@@ -35,10 +38,10 @@ class PortData(BaseModel):
             return v
         return v.strip()
 
-    class Config:
-        """Pydantic configuration."""
-        str_strip_whitespace = True
-        validate_assignment = True
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
 
 
 class FileData(BaseModel):
@@ -83,6 +86,6 @@ class FileData(BaseModel):
                     return port
         return None
 
-    class Config:
-        """Pydantic configuration."""
-        validate_assignment = True
+    model_config = ConfigDict(
+        validate_assignment=True,
+    )

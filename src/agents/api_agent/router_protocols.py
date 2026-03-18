@@ -336,16 +336,17 @@ class DefaultLabelGenerator:
         return f"Dest {port}"
 
 
-# Timeout constants (seconds) - tuned for LAN connectivity
+# Timeout constants (seconds) - tuned for LAN connectivity.
+# These serve as fallback defaults; override via Settings (KUMO_ env vars).
 TIMEOUT_REST_REQUEST = 4
 TIMEOUT_TELNET_CONNECT = 3
 TIMEOUT_TELNET_COMMAND = 2
 
-# Delay constants (seconds)
+# Delay constants (seconds) - override via Settings.
 DELAY_TELNET_INITIAL = 0.5
 DELAY_TELNET_COMMAND = 0.1
 
-# Retry constants
+# Retry constants - override via Settings.
 MAX_RETRIES = 2
 RETRY_BACKOFF_BASE = 0.3
 RETRY_BACKOFF_MULTIPLIER = 2

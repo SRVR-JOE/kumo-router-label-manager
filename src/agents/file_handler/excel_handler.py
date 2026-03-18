@@ -1,6 +1,7 @@
 """
 Excel file handler using openpyxl.
 """
+import logging
 from pathlib import Path
 from typing import Optional
 import openpyxl
@@ -10,6 +11,8 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 
 from .schema import FileData, PortData
+
+logger = logging.getLogger(__name__)
 
 
 class ExcelHandler:
@@ -41,7 +44,8 @@ class ExcelHandler:
 
         try:
             workbook = openpyxl.load_workbook(file_path, data_only=True)
-        except Exception as e:
+        except (OSError, openpyxl.utils.exceptions.InvalidFileException) as e:
+            logger.error("Failed to load Excel file '%s': %s", file_path, e)
             raise ValueError(f"Failed to load Excel file: {e}")
 
         if self.WORKSHEET_NAME not in workbook.sheetnames:
@@ -106,6 +110,7 @@ class ExcelHandler:
                         if raw_cc is not None and str(raw_cc).strip():
                             current_color = int(raw_cc)
                     except (ValueError, TypeError):
+                        logger.warning("Invalid Current_Color value '%s' in row %d, defaulting to 4", row[color_col].value, row_idx)
                         current_color = 4
 
                     new_color_col = col_map.get("New_Color")
@@ -115,6 +120,7 @@ class ExcelHandler:
                             if raw_nc is not None and str(raw_nc).strip():
                                 new_color = int(raw_nc)
                         except (ValueError, TypeError):
+                            logger.warning("Invalid New_Color value '%s' in row %d, ignoring", row[new_color_col].value, row_idx)
                             new_color = None
 
                 port_data = PortData(
@@ -130,9 +136,11 @@ class ExcelHandler:
                 )
                 ports.append(port_data)
             except (ValueError, TypeError) as e:
+                logger.error("Invalid data in row %d of '%s': %s", row_idx, file_path, e)
                 raise ValueError(f"Invalid data in row {row_idx}: {e}")
 
         workbook.close()
+        logger.info("Read %d records from Excel '%s'", len(ports), file_path)
         return FileData(ports=ports)
 
     def write_excel(
@@ -214,7 +222,9 @@ class ExcelHandler:
         # Save workbook
         try:
             workbook.save(file_path)
-        except Exception as e:
+            logger.info("Wrote Excel file '%s'", file_path)
+        except OSError as e:
+            logger.error("Failed to save Excel file '%s': %s", file_path, e)
             raise ValueError(f"Failed to save Excel file: {e}")
         finally:
             workbook.close()

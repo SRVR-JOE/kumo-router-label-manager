@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from src.utils.validation import validate_port_number, validate_color_id, PORT_NUMBER_MAX
+
 
 class PortType(Enum):
     """Enumeration of port types."""
@@ -51,11 +53,7 @@ class Label:
         Raises:
             ValueError: If port number is not between 1 and 120
         """
-        if not isinstance(self.port_number, int):
-            raise TypeError(f"Port number must be an integer, got {type(self.port_number)}")
-
-        if not 1 <= self.port_number <= 120:
-            raise ValueError(f"Port number must be between 1 and 120, got {self.port_number}")
+        validate_port_number(self.port_number, PORT_NUMBER_MAX)
 
     def validate_port_type(self) -> None:
         """Validate that port type is a valid PortType enum.
@@ -106,15 +104,9 @@ class Label:
             TypeError: If color is not an int (or None for new_color)
             ValueError: If color is not between 1 and 9
         """
-        if not isinstance(self.current_color, int):
-            raise TypeError(f"current_color must be an integer, got {type(self.current_color)}")
-        if not 1 <= self.current_color <= 9:
-            raise ValueError(f"current_color must be between 1 and 9, got {self.current_color}")
+        validate_color_id(self.current_color)
         if self.new_color is not None:
-            if not isinstance(self.new_color, int):
-                raise TypeError(f"new_color must be an integer or None, got {type(self.new_color)}")
-            if not 1 <= self.new_color <= 9:
-                raise ValueError(f"new_color must be between 1 and 9, got {self.new_color}")
+            validate_color_id(self.new_color)
 
     def has_changes(self) -> bool:
         """Check if there are pending changes to apply.

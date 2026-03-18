@@ -47,13 +47,26 @@ class TelnetClient:
     Implements proper connection handling and command execution with timeouts.
     """
 
-    def __init__(self, router_ip: str, port: int = 23, port_count: int = 32):
+    def __init__(
+        self,
+        router_ip: str,
+        port: int = 23,
+        port_count: int = 32,
+        connect_timeout: float = TIMEOUT_TELNET_CONNECT,
+        command_timeout: float = TIMEOUT_TELNET_COMMAND,
+        command_delay: float = DELAY_TELNET_COMMAND,
+        initial_delay: float = DELAY_TELNET_INITIAL,
+    ):
         """Initialize Telnet client.
 
         Args:
             router_ip: IP address of the KUMO router
             port: Telnet port (default: 23)
             port_count: Number of input/output ports (16, 32, or 64)
+            connect_timeout: Connection timeout in seconds
+            command_timeout: Per-command timeout in seconds
+            command_delay: Delay between commands in seconds
+            initial_delay: Delay after connect for initial prompt
         """
         self.router_ip = router_ip
         self.port = port
@@ -61,6 +74,10 @@ class TelnetClient:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
+        self._connect_timeout = connect_timeout
+        self._command_timeout = command_timeout
+        self._command_delay = command_delay
+        self._initial_delay = initial_delay
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -87,14 +104,14 @@ class TelnetClient:
             # Open connection with timeout
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self.router_ip, self.port),
-                timeout=TIMEOUT_TELNET_CONNECT,
+                timeout=self._connect_timeout,
             )
 
             self._connected = True
 
             # Wait for initial prompt
-            logger.debug(f"Waiting {DELAY_TELNET_INITIAL}s for initial prompt")
-            await asyncio.sleep(DELAY_TELNET_INITIAL)
+            logger.debug(f"Waiting {self._initial_delay}s for initial prompt")
+            await asyncio.sleep(self._initial_delay)
 
             # Clear any welcome message
             try:
@@ -107,18 +124,30 @@ class TelnetClient:
             logger.info(f"Telnet connection established to {self.router_ip}")
 
         except asyncio.TimeoutError:
+            if self._writer:
+                self._writer.close()
+            self._writer = None
+            self._reader = None
             self._connected = False
             raise TelnetConnectionError(
                 f"Connection timeout to {self.router_ip}:{self.port}"
             )
 
         except OSError as e:
+            if self._writer:
+                self._writer.close()
+            self._writer = None
+            self._reader = None
             self._connected = False
             raise TelnetConnectionError(
                 f"Connection failed to {self.router_ip}:{self.port}: {e}"
             )
 
         except Exception as e:
+            if self._writer:
+                self._writer.close()
+            self._writer = None
+            self._reader = None
             self._connected = False
             raise TelnetConnectionError(
                 f"Unexpected error connecting to {self.router_ip}:{self.port}: {e}"
@@ -161,7 +190,7 @@ class TelnetClient:
 
             # Read response with timeout
             response_bytes = await asyncio.wait_for(
-                self._reader.readline(), timeout=TIMEOUT_TELNET_COMMAND
+                self._reader.readline(), timeout=self._command_timeout
             )
 
             response = response_bytes.decode("utf-8", errors="ignore").strip()
@@ -212,7 +241,7 @@ class TelnetClient:
             labels["inputs_line2"].append("")
 
             # Delay between commands
-            await asyncio.sleep(DELAY_TELNET_COMMAND)
+            await asyncio.sleep(self._command_delay)
 
         # Query all outputs (Line 1 only)
         for port in range(1, port_count + 1):
@@ -233,7 +262,7 @@ class TelnetClient:
             labels["outputs_line2"].append("")
 
             # Delay between commands
-            await asyncio.sleep(DELAY_TELNET_COMMAND)
+            await asyncio.sleep(self._command_delay)
 
         total_ports = port_count * 2
         if success_count > 0:
@@ -329,7 +358,7 @@ class TelnetClient:
                     error_messages.append(error_msg)
 
             # Delay between commands
-            await asyncio.sleep(DELAY_TELNET_COMMAND)
+            await asyncio.sleep(self._command_delay)
 
         logger.info(
             f"Telnet upload complete - {success_count} succeeded, {error_count} failed"
