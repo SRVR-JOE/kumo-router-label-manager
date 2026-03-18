@@ -41,11 +41,30 @@ input.cell-edit {
   font-family: inherit;
 }
 
+/* Cell content wrapper - fills the td so highlight covers the whole cell */
+.cell-content {
+  margin: -4px -8px;
+  padding: 4px 8px;
+}
+
 /* Selected cell highlight for drag-select */
 .cell-selected {
   background: rgba(123, 47, 190, 0.25);
   outline: 1px solid rgba(123, 47, 190, 0.6);
+  outline-offset: -1px;
   border-radius: 2px;
+}
+
+/* Prevent text selection during drag in the table area */
+.label-table-container {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* But allow text selection inside edit inputs */
+.label-table-container input.cell-edit {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Color cell badge */

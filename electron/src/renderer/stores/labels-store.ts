@@ -36,7 +36,7 @@ interface LabelsState {
   copyCurrentToNew: () => void
   applyPrefix: (prefix: string, field: 'newLabel' | 'newLabelLine2') => void
   applySuffix: (suffix: string, field: 'newLabel' | 'newLabelLine2') => void
-  autoNumber: (startPort: number, endPort: number, portType: 'INPUT' | 'OUTPUT' | 'ALL', prefix: string, startNum: number, padding: number) => void
+  autoNumber: (startPort: number, endPort: number, portType: 'INPUT' | 'OUTPUT' | 'ALL', prefix: string, startNum: number, padding: number, field?: 'newLabel' | 'newLabelLine2' | 'both', prefixLine2?: string) => void
   bulkUpdateLabels: (ids: string[], field: keyof LabelRow, value: string | number | null) => void
   findReplace: (find: string, replace: string, field: 'newLabel' | 'newLabelLine2', caseSensitive: boolean) => number
   markUploaded: (ids: string[]) => void
@@ -161,7 +161,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     })
   },
 
-  autoNumber: (startPort, endPort, portType, prefix, startNum, padding) => {
+  autoNumber: (startPort, endPort, portType, prefix, startNum, padding, field = 'newLabel', prefixLine2) => {
     const state = get()
     const prev = [...state.labels]
     let counter = startNum
@@ -170,7 +170,14 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
       if (portType !== 'ALL' && l.portType !== portType) return l
       const numStr = String(counter).padStart(padding, '0')
       counter++
-      const updated = { ...l, newLabel: `${prefix}${numStr}` }
+      let updated = { ...l }
+      if (field === 'newLabel' || field === 'both') {
+        updated.newLabel = `${prefix}${numStr}`
+      }
+      if (field === 'newLabelLine2' || field === 'both') {
+        const p2 = prefixLine2 !== undefined ? prefixLine2 : prefix
+        updated.newLabelLine2 = `${p2}${numStr}`
+      }
       updated.status = computeStatus(updated)
       return updated
     })

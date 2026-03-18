@@ -58,7 +58,7 @@ function EditableCell({ value, onChange, className = '', isSelected, onCellMouse
   }
   return (
     <div
-      className={`cursor-text truncate px-1 min-h-[22px] ${className} ${isSelected ? 'cell-selected' : ''}`}
+      className={`cell-content cursor-text truncate px-1 min-h-[22px] ${className} ${isSelected ? 'cell-selected' : ''}`}
       onDoubleClick={() => setEditing(true)}
       onMouseDown={onCellMouseDown}
       onMouseEnter={onCellMouseEnter}
@@ -89,7 +89,7 @@ function ColorDropdown({ value, onChange, isSelected, onCellMouseDown, onCellMou
 }) {
   return (
     <div
-      className={isSelected ? 'cell-selected' : ''}
+      className={`cell-content ${isSelected ? 'cell-selected' : ''}`}
       onMouseDown={onCellMouseDown}
       onMouseEnter={onCellMouseEnter}
     >
@@ -98,7 +98,7 @@ function ColorDropdown({ value, onChange, isSelected, onCellMouseDown, onCellMou
         value={value ?? ''}
         onChange={e => onChange(e.target.value ? parseInt(e.target.value, 10) : null)}
       >
-        <option value="">—</option>
+        <option value="">---</option>
         {Object.entries(KUMO_COLORS).map(([id, c]) => (
           <option key={id} value={id}>{c.name}</option>
         ))}
@@ -107,32 +107,54 @@ function ColorDropdown({ value, onChange, isSelected, onCellMouseDown, onCellMou
   )
 }
 
-function BulkEditPopup({ selection, rowIds, field, onApply, onCancel, anchorRect }: {
+function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
   selection: SelectionRange
-  rowIds: string[]
   field: string
   onApply: (value: string) => void
   onCancel: () => void
-  anchorRect: { top: number; left: number } | null
+  anchorRect: { top: number; left: number }
 }) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const popupRef = useRef<HTMLDivElement>(null)
   const isColor = field === 'newColor'
 
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Clamp popup position so it stays on-screen
+  const [adjustedPos, setAdjustedPos] = useState(anchorRect)
+  useEffect(() => {
+    const el = popupRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    let top = anchorRect.top
+    let left = anchorRect.left
+    // Keep within viewport
+    if (top + rect.height > window.innerHeight - 10) {
+      top = window.innerHeight - rect.height - 10
+    }
+    if (left + rect.width > window.innerWidth - 10) {
+      left = window.innerWidth - rect.width - 10
+    }
+    if (top < 10) top = 10
+    if (left < 10) left = 10
+    setAdjustedPos({ top, left })
+  }, [anchorRect])
 
   const count = Math.abs(selection.endRowIdx - selection.startRowIdx) + 1
 
   return (
     <div
+      ref={popupRef}
       className="fixed z-50 bg-helix-surface border border-helix-accent rounded shadow-lg p-3 flex flex-col gap-2"
       style={{
-        top: anchorRect ? anchorRect.top : '50%',
-        left: anchorRect ? anchorRect.left + 10 : '50%',
+        top: adjustedPos.top,
+        left: adjustedPos.left,
       }}
+      onMouseDown={e => e.stopPropagation()}
     >
       <div className="text-xs text-helix-text-muted">
-        Bulk edit {count} cells in <span className="text-helix-accent font-medium">{field}</span>
+        Bulk edit {count} cell{count > 1 ? 's' : ''} in <span className="text-helix-accent font-medium">{field}</span>
       </div>
       {isColor ? (
         <select
@@ -145,7 +167,7 @@ function BulkEditPopup({ selection, rowIds, field, onApply, onCancel, anchorRect
             if (e.key === 'Escape') onCancel()
           }}
         >
-          <option value="">— Clear —</option>
+          <option value="">--- Clear ---</option>
           {Object.entries(KUMO_COLORS).map(([id, c]) => (
             <option key={id} value={id}>{c.name}</option>
           ))}
@@ -187,10 +209,21 @@ export default function LabelTable() {
 
   // Selection state
   const [selection, setSelection] = useState<SelectionRange | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
   const [showBulkEdit, setShowBulkEdit] = useState(false)
-  const [bulkEditAnchor, setBulkEditAnchor] = useState<{ top: number; left: number } | null>(null)
+  const [bulkEditAnchor, setBulkEditAnchor] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const tableRef = useRef<HTMLDivElement>(null)
+
+  // Use refs for drag state so event handlers always see current values
+  const isDraggingRef = useRef(false)
+  const selectionRef = useRef<SelectionRange | null>(null)
+  const mousePositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  // Track if mouse actually moved to distinguish click from drag
+  const didDragRef = useRef(false)
+
+  // Keep selectionRef in sync with state
+  useEffect(() => {
+    selectionRef.current = selection
+  }, [selection])
 
   const filteredLabels = useMemo(() => getFilteredLabels(), [labels, filter, searchText])
 
@@ -212,45 +245,99 @@ export default function LabelTable() {
   // Mouse handlers for drag selection
   const handleCellMouseDown = useCallback((rowIdx: number, colId: string, e: React.MouseEvent) => {
     if (!(colId in EDITABLE_FIELDS)) return
-    // Don't start drag if clicking on an input/select
-    if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'SELECT') return
+    // Don't start drag if clicking on an input/select (let native behavior handle it)
+    const tag = (e.target as HTMLElement).tagName
+    if (tag === 'INPUT' || tag === 'SELECT') return
 
+    // Only respond to left mouse button
+    if (e.button !== 0) return
+
+    // Prevent text selection during drag, but don't block click events
     e.preventDefault()
+
     setShowBulkEdit(false)
-    setSelection({ colId, startRowIdx: rowIdx, endRowIdx: rowIdx })
-    setIsDragging(true)
+    const newSelection = { colId, startRowIdx: rowIdx, endRowIdx: rowIdx }
+    setSelection(newSelection)
+    selectionRef.current = newSelection
+    isDraggingRef.current = true
+    didDragRef.current = false
+    mousePositionRef.current = { x: e.clientX, y: e.clientY }
   }, [])
 
   const handleCellMouseEnter = useCallback((rowIdx: number, colId: string) => {
-    if (!isDragging || !selection) return
-    if (colId !== selection.colId) return
-    setSelection(prev => prev ? { ...prev, endRowIdx: rowIdx } : null)
-  }, [isDragging, selection])
+    // Use ref instead of state to avoid stale closures
+    if (!isDraggingRef.current || !selectionRef.current) return
+    if (colId !== selectionRef.current.colId) return
+    didDragRef.current = true
+    setSelection(prev => {
+      if (!prev) return null
+      const updated = { ...prev, endRowIdx: rowIdx }
+      selectionRef.current = updated
+      return updated
+    })
+  }, [])
+
+  // Track mouse position during drag for popup positioning
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDraggingRef.current) {
+        mousePositionRef.current = { x: e.clientX, y: e.clientY }
+      }
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [])
 
   // Global mouseup to end dragging
   useEffect(() => {
-    const handleMouseUp = () => {
-      if (isDragging && selection) {
-        setIsDragging(false)
-        const { min, max } = getSelectionRows(selection)
-        if (min !== max || true) {
-          // Show bulk edit popup - position near last mouse position
-          setBulkEditAnchor({ top: Math.min(window.innerHeight - 150, max * 28 + 100), left: 300 })
-          setShowBulkEdit(true)
-        }
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return
+      isDraggingRef.current = false
+
+      const sel = selectionRef.current
+      if (!sel) return
+
+      const { min, max } = getSelectionRows(sel)
+      const cellCount = max - min + 1
+
+      // Only show bulk edit if user actually dragged across multiple cells,
+      // or if they explicitly selected at least one cell (single click = 1 cell selected, show popup)
+      if (cellCount >= 1 && didDragRef.current) {
+        // Position popup near where the mouse ended
+        setBulkEditAnchor({
+          top: e.clientY + 8,
+          left: e.clientX + 8,
+        })
+        setShowBulkEdit(true)
+      } else if (cellCount === 1 && !didDragRef.current) {
+        // Single click without drag - clear selection, let double-click handle editing
+        setSelection(null)
+        selectionRef.current = null
       }
     }
     window.addEventListener('mouseup', handleMouseUp)
     return () => window.removeEventListener('mouseup', handleMouseUp)
-  }, [isDragging, selection, getSelectionRows])
+  }, [getSelectionRows])
+
+  // Click outside to dismiss selection and popup
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      // If clicking outside the table/popup, clear selection
+      if (showBulkEdit) return // Let the popup's own cancel handle dismissal
+      // If a drag is starting, handleCellMouseDown will manage selection
+    }
+    window.addEventListener('mousedown', handleMouseDown)
+    return () => window.removeEventListener('mousedown', handleMouseDown)
+  }, [showBulkEdit])
 
   // Escape to cancel selection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSelection(null)
+        selectionRef.current = null
         setShowBulkEdit(false)
-        setIsDragging(false)
+        isDraggingRef.current = false
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -258,9 +345,10 @@ export default function LabelTable() {
   }, [])
 
   const handleBulkApply = useCallback((value: string) => {
-    if (!selection) return
-    const { min, max } = getSelectionRows(selection)
-    const field = EDITABLE_FIELDS[selection.colId]
+    const sel = selectionRef.current
+    if (!sel) return
+    const { min, max } = getSelectionRows(sel)
+    const field = EDITABLE_FIELDS[sel.colId]
     if (!field) return
 
     const selectedIds = filteredLabels.slice(min, max + 1).map(l => l.id)
@@ -272,11 +360,13 @@ export default function LabelTable() {
     }
 
     setSelection(null)
+    selectionRef.current = null
     setShowBulkEdit(false)
-  }, [selection, filteredLabels, bulkUpdateLabels, getSelectionRows])
+  }, [filteredLabels, bulkUpdateLabels, getSelectionRows])
 
   const handleBulkCancel = useCallback(() => {
     setSelection(null)
+    selectionRef.current = null
     setShowBulkEdit(false)
   }, [])
 
@@ -315,7 +405,7 @@ export default function LabelTable() {
           className={info.getValue() && info.getValue() !== info.row.original.currentLabel ? 'text-helix-accent font-medium' : ''}
           isSelected={isCellSelected(info.row.index, 'newLabel')}
           onCellMouseDown={e => handleCellMouseDown(info.row.index, 'newLabel', e)}
-          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'newLabel')}
+          onCellMouseEnter={() => handleCellMouseEnter(info.row.index, 'newLabel')}
         />
       ),
     }),
@@ -328,7 +418,7 @@ export default function LabelTable() {
           onChange={v => updateLabel(info.row.original.id, 'newLabelLine2', v)}
           isSelected={isCellSelected(info.row.index, 'newLabelLine2')}
           onCellMouseDown={e => handleCellMouseDown(info.row.index, 'newLabelLine2', e)}
-          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'newLabelLine2')}
+          onCellMouseEnter={() => handleCellMouseEnter(info.row.index, 'newLabelLine2')}
         />
       ),
     }),
@@ -346,7 +436,7 @@ export default function LabelTable() {
           onChange={v => updateLabel(info.row.original.id, 'newColor', v)}
           isSelected={isCellSelected(info.row.index, 'newColor')}
           onCellMouseDown={e => handleCellMouseDown(info.row.index, 'newColor', e)}
-          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'newColor')}
+          onCellMouseEnter={() => handleCellMouseEnter(info.row.index, 'newColor')}
         />
       ),
     }),
@@ -359,7 +449,7 @@ export default function LabelTable() {
           onChange={v => updateLabel(info.row.original.id, 'notes', v)}
           isSelected={isCellSelected(info.row.index, 'notes')}
           onCellMouseDown={e => handleCellMouseDown(info.row.index, 'notes', e)}
-          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'notes')}
+          onCellMouseEnter={() => handleCellMouseEnter(info.row.index, 'notes')}
         />
       ),
     }),
@@ -369,7 +459,7 @@ export default function LabelTable() {
       cell: info => {
         const s = info.getValue()
         const colors = { unchanged: 'text-helix-text-dim', modified: 'text-yellow-400', uploaded: 'text-green-400', error: 'text-red-400' }
-        const icons = { unchanged: '—', modified: '*', uploaded: '\u2713', error: '\u2717' }
+        const icons = { unchanged: '---', modified: '*', uploaded: '\u2713', error: '\u2717' }
         return <span className={`text-xs ${colors[s]}`}>{icons[s]}</span>
       },
     }),
@@ -416,7 +506,7 @@ export default function LabelTable() {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto select-none">
+      <div className="flex-1 overflow-auto label-table-container">
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 z-10 bg-helix-surface">
             {table.getHeaderGroups().map(hg => (
@@ -467,7 +557,6 @@ export default function LabelTable() {
       {showBulkEdit && selection && (
         <BulkEditPopup
           selection={selection}
-          rowIds={[]}
           field={selection.colId}
           onApply={handleBulkApply}
           onCancel={handleBulkCancel}
