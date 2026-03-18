@@ -37,6 +37,7 @@ interface LabelsState {
   applyPrefix: (prefix: string, field: 'newLabel' | 'newLabelLine2') => void
   applySuffix: (suffix: string, field: 'newLabel' | 'newLabelLine2') => void
   autoNumber: (startPort: number, endPort: number, portType: 'INPUT' | 'OUTPUT' | 'ALL', prefix: string, startNum: number, padding: number) => void
+  bulkUpdateLabels: (ids: string[], field: keyof LabelRow, value: string | number | null) => void
   findReplace: (find: string, replace: string, field: 'newLabel' | 'newLabelLine2', caseSensitive: boolean) => number
   markUploaded: (ids: string[]) => void
   undo: () => void
@@ -170,6 +171,24 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
       const numStr = String(counter).padStart(padding, '0')
       counter++
       const updated = { ...l, newLabel: `${prefix}${numStr}` }
+      updated.status = computeStatus(updated)
+      return updated
+    })
+    set({
+      labels,
+      isDirty: true,
+      undoStack: [...state.undoStack, { labels: prev }],
+      redoStack: [],
+    })
+  },
+
+  bulkUpdateLabels: (ids, field, value) => {
+    const state = get()
+    const prev = [...state.labels]
+    const idSet = new Set(ids)
+    const labels = state.labels.map(l => {
+      if (!idSet.has(l.id)) return l
+      const updated = { ...l, [field]: value }
       updated.status = computeStatus(updated)
       return updated
     })

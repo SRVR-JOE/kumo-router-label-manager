@@ -41,6 +41,13 @@ input.cell-edit {
   font-family: inherit;
 }
 
+/* Selected cell highlight for drag-select */
+.cell-selected {
+  background: rgba(123, 47, 190, 0.25);
+  outline: 1px solid rgba(123, 47, 190, 0.6);
+  border-radius: 2px;
+}
+
 /* Color cell badge */
 .color-badge {
   display: inline-block;

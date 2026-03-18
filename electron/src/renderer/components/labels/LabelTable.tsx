@@ -12,7 +12,28 @@ import { KUMO_COLORS } from '../../theme/colors'
 
 const columnHelper = createColumnHelper<LabelRow>()
 
-function EditableCell({ value, onChange, className = '' }: { value: string; onChange: (v: string) => void; className?: string }) {
+// Columns that support drag-select bulk editing
+const EDITABLE_FIELDS: Record<string, keyof LabelRow> = {
+  newLabel: 'newLabel',
+  newLabelLine2: 'newLabelLine2',
+  newColor: 'newColor',
+  notes: 'notes',
+}
+
+interface SelectionRange {
+  colId: string
+  startRowIdx: number
+  endRowIdx: number
+}
+
+function EditableCell({ value, onChange, className = '', isSelected, onCellMouseDown, onCellMouseEnter }: {
+  value: string
+  onChange: (v: string) => void
+  className?: string
+  isSelected?: boolean
+  onCellMouseDown?: (e: React.MouseEvent) => void
+  onCellMouseEnter?: (e: React.MouseEvent) => void
+}) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -37,8 +58,10 @@ function EditableCell({ value, onChange, className = '' }: { value: string; onCh
   }
   return (
     <div
-      className={`cursor-text truncate px-1 min-h-[22px] ${className}`}
+      className={`cursor-text truncate px-1 min-h-[22px] ${className} ${isSelected ? 'cell-selected' : ''}`}
       onDoubleClick={() => setEditing(true)}
+      onMouseDown={onCellMouseDown}
+      onMouseEnter={onCellMouseEnter}
       title={value}
     >
       {value || '\u00A0'}
@@ -57,26 +80,205 @@ function ColorCell({ color, isActive }: { color: number; isActive?: boolean }) {
   )
 }
 
-function ColorDropdown({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+function ColorDropdown({ value, onChange, isSelected, onCellMouseDown, onCellMouseEnter }: {
+  value: number | null
+  onChange: (v: number | null) => void
+  isSelected?: boolean
+  onCellMouseDown?: (e: React.MouseEvent) => void
+  onCellMouseEnter?: (e: React.MouseEvent) => void
+}) {
   return (
-    <select
-      className="bg-transparent border border-helix-border rounded text-xs px-1 py-0.5 text-helix-text w-full"
-      value={value ?? ''}
-      onChange={e => onChange(e.target.value ? parseInt(e.target.value, 10) : null)}
+    <div
+      className={isSelected ? 'cell-selected' : ''}
+      onMouseDown={onCellMouseDown}
+      onMouseEnter={onCellMouseEnter}
     >
-      <option value="">—</option>
-      {Object.entries(KUMO_COLORS).map(([id, c]) => (
-        <option key={id} value={id}>{c.name}</option>
-      ))}
-    </select>
+      <select
+        className="bg-transparent border border-helix-border rounded text-xs px-1 py-0.5 text-helix-text w-full"
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value ? parseInt(e.target.value, 10) : null)}
+      >
+        <option value="">—</option>
+        {Object.entries(KUMO_COLORS).map(([id, c]) => (
+          <option key={id} value={id}>{c.name}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function BulkEditPopup({ selection, rowIds, field, onApply, onCancel, anchorRect }: {
+  selection: SelectionRange
+  rowIds: string[]
+  field: string
+  onApply: (value: string) => void
+  onCancel: () => void
+  anchorRect: { top: number; left: number } | null
+}) {
+  const [value, setValue] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const isColor = field === 'newColor'
+
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  const count = Math.abs(selection.endRowIdx - selection.startRowIdx) + 1
+
+  return (
+    <div
+      className="fixed z-50 bg-helix-surface border border-helix-accent rounded shadow-lg p-3 flex flex-col gap-2"
+      style={{
+        top: anchorRect ? anchorRect.top : '50%',
+        left: anchorRect ? anchorRect.left + 10 : '50%',
+      }}
+    >
+      <div className="text-xs text-helix-text-muted">
+        Bulk edit {count} cells in <span className="text-helix-accent font-medium">{field}</span>
+      </div>
+      {isColor ? (
+        <select
+          ref={inputRef as unknown as React.Ref<HTMLSelectElement>}
+          className="bg-helix-bg border border-helix-border rounded text-xs px-2 py-1 text-helix-text"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') onApply(value)
+            if (e.key === 'Escape') onCancel()
+          }}
+        >
+          <option value="">— Clear —</option>
+          {Object.entries(KUMO_COLORS).map(([id, c]) => (
+            <option key={id} value={id}>{c.name}</option>
+          ))}
+        </select>
+      ) : (
+        <input
+          ref={inputRef}
+          className="bg-helix-bg border border-helix-border rounded text-xs px-2 py-1 text-helix-text w-48"
+          placeholder="Enter value for all selected cells..."
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') onApply(value)
+            if (e.key === 'Escape') onCancel()
+          }}
+        />
+      )}
+      <div className="flex gap-2">
+        <button
+          className="px-3 py-1 text-xs bg-helix-accent text-white rounded hover:bg-helix-accent-hover"
+          onClick={() => onApply(value)}
+        >
+          Apply
+        </button>
+        <button
+          className="px-3 py-1 text-xs bg-helix-bg text-helix-text-muted border border-helix-border rounded hover:text-helix-text"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   )
 }
 
 export default function LabelTable() {
-  const { labels, filter, searchText, setFilter, setSearchText, updateLabel, getFilteredLabels } = useLabelsStore()
+  const { labels, filter, searchText, setFilter, setSearchText, updateLabel, bulkUpdateLabels, getFilteredLabels } = useLabelsStore()
   const [sorting, setSorting] = useState<SortingState>([])
 
+  // Selection state
+  const [selection, setSelection] = useState<SelectionRange | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [showBulkEdit, setShowBulkEdit] = useState(false)
+  const [bulkEditAnchor, setBulkEditAnchor] = useState<{ top: number; left: number } | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
+
   const filteredLabels = useMemo(() => getFilteredLabels(), [labels, filter, searchText])
+
+  // Get selected row indices (normalized min/max)
+  const getSelectionRows = useCallback((sel: SelectionRange) => {
+    const min = Math.min(sel.startRowIdx, sel.endRowIdx)
+    const max = Math.max(sel.startRowIdx, sel.endRowIdx)
+    return { min, max }
+  }, [])
+
+  // Check if a cell is in the current selection
+  const isCellSelected = useCallback((rowIdx: number, colId: string): boolean => {
+    if (!selection) return false
+    if (selection.colId !== colId) return false
+    const { min, max } = getSelectionRows(selection)
+    return rowIdx >= min && rowIdx <= max
+  }, [selection, getSelectionRows])
+
+  // Mouse handlers for drag selection
+  const handleCellMouseDown = useCallback((rowIdx: number, colId: string, e: React.MouseEvent) => {
+    if (!(colId in EDITABLE_FIELDS)) return
+    // Don't start drag if clicking on an input/select
+    if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'SELECT') return
+
+    e.preventDefault()
+    setShowBulkEdit(false)
+    setSelection({ colId, startRowIdx: rowIdx, endRowIdx: rowIdx })
+    setIsDragging(true)
+  }, [])
+
+  const handleCellMouseEnter = useCallback((rowIdx: number, colId: string) => {
+    if (!isDragging || !selection) return
+    if (colId !== selection.colId) return
+    setSelection(prev => prev ? { ...prev, endRowIdx: rowIdx } : null)
+  }, [isDragging, selection])
+
+  // Global mouseup to end dragging
+  useEffect(() => {
+    const handleMouseUp = () => {
+      if (isDragging && selection) {
+        setIsDragging(false)
+        const { min, max } = getSelectionRows(selection)
+        if (min !== max || true) {
+          // Show bulk edit popup - position near last mouse position
+          setBulkEditAnchor({ top: Math.min(window.innerHeight - 150, max * 28 + 100), left: 300 })
+          setShowBulkEdit(true)
+        }
+      }
+    }
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => window.removeEventListener('mouseup', handleMouseUp)
+  }, [isDragging, selection, getSelectionRows])
+
+  // Escape to cancel selection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelection(null)
+        setShowBulkEdit(false)
+        setIsDragging(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  const handleBulkApply = useCallback((value: string) => {
+    if (!selection) return
+    const { min, max } = getSelectionRows(selection)
+    const field = EDITABLE_FIELDS[selection.colId]
+    if (!field) return
+
+    const selectedIds = filteredLabels.slice(min, max + 1).map(l => l.id)
+
+    if (field === 'newColor') {
+      bulkUpdateLabels(selectedIds, field, value ? parseInt(value, 10) : null)
+    } else {
+      bulkUpdateLabels(selectedIds, field, value)
+    }
+
+    setSelection(null)
+    setShowBulkEdit(false)
+  }, [selection, filteredLabels, bulkUpdateLabels, getSelectionRows])
+
+  const handleBulkCancel = useCallback(() => {
+    setSelection(null)
+    setShowBulkEdit(false)
+  }, [])
 
   const columns = useMemo(() => [
     columnHelper.accessor('portNumber', {
@@ -111,6 +313,9 @@ export default function LabelTable() {
           value={info.getValue()}
           onChange={v => updateLabel(info.row.original.id, 'newLabel', v)}
           className={info.getValue() && info.getValue() !== info.row.original.currentLabel ? 'text-helix-accent font-medium' : ''}
+          isSelected={isCellSelected(info.row.index, 'newLabel')}
+          onCellMouseDown={e => handleCellMouseDown(info.row.index, 'newLabel', e)}
+          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'newLabel')}
         />
       ),
     }),
@@ -121,6 +326,9 @@ export default function LabelTable() {
         <EditableCell
           value={info.getValue()}
           onChange={v => updateLabel(info.row.original.id, 'newLabelLine2', v)}
+          isSelected={isCellSelected(info.row.index, 'newLabelLine2')}
+          onCellMouseDown={e => handleCellMouseDown(info.row.index, 'newLabelLine2', e)}
+          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'newLabelLine2')}
         />
       ),
     }),
@@ -136,6 +344,9 @@ export default function LabelTable() {
         <ColorDropdown
           value={info.getValue()}
           onChange={v => updateLabel(info.row.original.id, 'newColor', v)}
+          isSelected={isCellSelected(info.row.index, 'newColor')}
+          onCellMouseDown={e => handleCellMouseDown(info.row.index, 'newColor', e)}
+          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'newColor')}
         />
       ),
     }),
@@ -146,6 +357,9 @@ export default function LabelTable() {
         <EditableCell
           value={info.getValue()}
           onChange={v => updateLabel(info.row.original.id, 'notes', v)}
+          isSelected={isCellSelected(info.row.index, 'notes')}
+          onCellMouseDown={e => handleCellMouseDown(info.row.index, 'notes', e)}
+          onCellMouseEnter={e => handleCellMouseEnter(info.row.index, 'notes')}
         />
       ),
     }),
@@ -159,7 +373,7 @@ export default function LabelTable() {
         return <span className={`text-xs ${colors[s]}`}>{icons[s]}</span>
       },
     }),
-  ], [updateLabel])
+  ], [updateLabel, isCellSelected, handleCellMouseDown, handleCellMouseEnter])
 
   const table = useReactTable({
     data: filteredLabels,
@@ -171,7 +385,7 @@ export default function LabelTable() {
   })
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="flex flex-col flex-1 overflow-hidden" ref={tableRef}>
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 bg-helix-surface border-b border-helix-border">
         {/* Filter tabs */}
@@ -185,6 +399,11 @@ export default function LabelTable() {
           </button>
         ))}
         <div className="flex-1" />
+        {selection && (
+          <span className="text-xs text-helix-accent">
+            {Math.abs(selection.endRowIdx - selection.startRowIdx) + 1} cells selected
+          </span>
+        )}
         {/* Search */}
         <input
           type="text"
@@ -197,7 +416,7 @@ export default function LabelTable() {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto select-none">
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 z-10 bg-helix-surface">
             {table.getHeaderGroups().map(hg => (
@@ -243,6 +462,18 @@ export default function LabelTable() {
           </tbody>
         </table>
       </div>
+
+      {/* Bulk edit popup */}
+      {showBulkEdit && selection && (
+        <BulkEditPopup
+          selection={selection}
+          rowIds={[]}
+          field={selection.colId}
+          onApply={handleBulkApply}
+          onCancel={handleBulkCancel}
+          anchorRect={bulkEditAnchor}
+        />
+      )}
     </div>
   )
 }
