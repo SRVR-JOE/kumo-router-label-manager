@@ -1,10 +1,10 @@
 @echo off
-title Router Label Manager - Solotech Production Tools
+title Helix - Solotech Production Tools
 
 echo.
 echo  ╔═══════════════════════════════════════════════════════════════════════════════╗
-echo  ║                       Router Label Manager v5.5                              ║
-echo  ║                  AJA KUMO ^& Blackmagic Videohub                             ║
+echo  ║                            Helix v5.5                                        ║
+echo  ║            AJA KUMO ^& Blackmagic Videohub ^& Lightware MX2                  ║
 echo  ╚═══════════════════════════════════════════════════════════════════════════════╝
 echo.
 
@@ -37,16 +37,16 @@ goto menu
 :gui
 echo.
 echo Launching GUI Application...
-powershell -ExecutionPolicy RemoteSigned -File "KUMO-Label-Manager.ps1"
+powershell -ExecutionPolicy RemoteSigned -File "Helix-Label-Manager.ps1"
 goto menu
 
 :download
 echo.
-set /p kumo_ip="Enter router IP address (e.g., 192.168.1.100): "
+set /p router_ip="Enter router IP address (e.g., 192.168.1.100): "
 set /p output_file="Enter output file path (e.g., C:\temp\labels.xlsx): "
 echo.
-echo Downloading current labels from %kumo_ip% (router type auto-detected)...
-powershell -ExecutionPolicy RemoteSigned -File "KUMO-Excel-Updater.ps1" -DownloadLabels -KumoIP "%kumo_ip%" -DownloadPath "%output_file%"
+echo Downloading current labels from %router_ip% (router type auto-detected)...
+powershell -ExecutionPolicy RemoteSigned -File "Helix-Excel-Updater.ps1" -DownloadLabels -KumoIP "%router_ip%" -DownloadPath "%output_file%"
 pause
 goto menu
 
@@ -55,27 +55,27 @@ echo.
 set /p template_file="Enter output file path (e.g., C:\temp\template.xlsx): "
 echo.
 echo Creating template file...
-powershell -ExecutionPolicy RemoteSigned -File "KUMO-Excel-Updater.ps1" -CreateTemplate -DownloadPath "%template_file%"
+powershell -ExecutionPolicy RemoteSigned -File "Helix-Excel-Updater.ps1" -CreateTemplate -DownloadPath "%template_file%"
 pause
 goto menu
 
 :update
 echo.
-set /p kumo_ip="Enter router IP address (e.g., 192.168.1.100): "
+set /p router_ip="Enter router IP address (e.g., 192.168.1.100): "
 set /p excel_file="Enter label file path (e.g., C:\temp\labels.xlsx): "
 echo.
-echo Updating labels on %kumo_ip% from %excel_file% (router type auto-detected)...
-powershell -ExecutionPolicy RemoteSigned -File "KUMO-Excel-Updater.ps1" -KumoIP "%kumo_ip%" -ExcelFile "%excel_file%"
+echo Updating labels on %router_ip% from %excel_file% (router type auto-detected)...
+powershell -ExecutionPolicy RemoteSigned -File "Helix-Excel-Updater.ps1" -KumoIP "%router_ip%" -ExcelFile "%excel_file%"
 pause
 goto menu
 
 :test
 echo.
-set /p kumo_ip="Enter router IP address (e.g., 192.168.1.100): "
+set /p router_ip="Enter router IP address (e.g., 192.168.1.100): "
 set /p excel_file="Enter label file path (e.g., C:\temp\labels.xlsx): "
 echo.
 echo Testing connection and validating file...
-powershell -ExecutionPolicy RemoteSigned -File "KUMO-Excel-Updater.ps1" -KumoIP "%kumo_ip%" -ExcelFile "%excel_file%" -TestOnly
+powershell -ExecutionPolicy RemoteSigned -File "Helix-Excel-Updater.ps1" -KumoIP "%router_ip%" -ExcelFile "%excel_file%" -TestOnly
 pause
 goto menu
 
@@ -87,25 +87,25 @@ echo  ╚═══════════════════════�
 echo.
 echo  PowerShell Commands (router type auto-detected):
 echo.
-echo  Download labels from KUMO or Videohub:
-echo    .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "labels.xlsx"
+echo  Download labels from any supported router:
+echo    .\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "labels.xlsx"
 echo.
 echo  Download from Videohub (explicit):
-echo    .\KUMO-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "vh.csv"
+echo    .\Helix-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "vh.csv"
 echo.
 echo  Update from Excel/CSV file:
-echo    .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
+echo    .\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
 echo.
 echo  Test only (no changes):
-echo    .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
+echo    .\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
 echo.
 echo  Create template:
-echo    .\KUMO-Excel-Updater.ps1 -CreateTemplate
+echo    .\Helix-Excel-Updater.ps1 -CreateTemplate
 echo.
 echo  Batch multiple routers:
 echo    $routers = @("192.168.1.100", "192.168.1.101")
 echo    foreach ($ip in $routers) {
-echo        .\KUMO-Excel-Updater.ps1 -KumoIP $ip -ExcelFile "tour_labels.xlsx"
+echo        .\Helix-Excel-Updater.ps1 -KumoIP $ip -ExcelFile "tour_labels.xlsx"
 echo    }
 echo.
 pause
@@ -113,8 +113,8 @@ goto menu
 
 :exit
 echo.
-echo Thank you for using Router Label Manager!
-echo Supports AJA KUMO and Blackmagic Videohub routers.
+echo Thank you for using Helix!
+echo Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 routers.
 echo For support, check the README.md file.
 pause
 exit

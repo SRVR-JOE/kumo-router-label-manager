@@ -1,4 +1,4 @@
-"""Coordinator components for the KUMO Router Management System."""
+"""Coordinator components for the Helix Router Management System."""
 
 from .event_bus import EventBus
 

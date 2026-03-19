@@ -1,4 +1,4 @@
-# KUMO Router Label Manager Setup Guide
+# Helix Setup Guide
 # Professional AV Production Tool for Solotech
 
 ## Quick Start Guide
@@ -6,36 +6,36 @@
 ### Option 1: GUI Application (Recommended for first-time users)
 1. Run the GUI application:
    ```powershell
-   .\KUMO-Label-Manager.ps1
+   .\Helix-Label-Manager.ps1
    ```
-2. Enter your KUMO router IP address
+2. Enter your router IP address
 3. Click "Test Connection"
-4. **Download current labels**: Click "Download Current Labels" to pull existing labels from KUMO
+4. **Download current labels**: Click "Download from Router" to pull existing labels from the router
 5. **OR Create template**: Click "Create Excel Template" to generate a blank template
 6. Edit the Excel file with your label names (update the 'New_Label' column)
-7. Load the Excel file and click "Upload Labels to KUMO"
+7. Load the Excel file and click "Upload Labels to Router"
 
 ### Option 2: Command Line (Recommended for automation)
 
 #### Download Current Labels:
 ```powershell
-.\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "current_labels.xlsx"
+.\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "current_labels.xlsx"
 ```
 
 #### Create Blank Template:
 ```powershell
-.\KUMO-Excel-Updater.ps1 -CreateTemplate
+.\Helix-Excel-Updater.ps1 -CreateTemplate
 # Enter path: C:\Production\KUMO_Labels.xlsx
 ```
 
 #### Test Connection:
 ```powershell
-.\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "KUMO_Labels.xlsx" -TestOnly
+.\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "KUMO_Labels.xlsx" -TestOnly
 ```
 
 #### Update Labels:
 ```powershell
-.\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "KUMO_Labels.xlsx"
+.\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "KUMO_Labels.xlsx"
 ```
 
 ## Excel Template Structure
@@ -72,32 +72,32 @@ Your Excel file should have these columns:
 
 ## Network Requirements
 
-### KUMO Router Network Setup:
-- Ensure KUMO is on same network segment
+### AJA KUMO Network Setup:
+- Ensure AJA KUMO is on same network segment
 - Default KUMO IP: 192.168.0.100
 - Web interface: http://[KUMO_IP]
 - Telnet port: 23 (if enabled)
 
 ### Firewall Requirements:
-- Allow outbound HTTP (port 80) to KUMO
+- Allow outbound HTTP (port 80) to AJA KUMO
 - Allow outbound Telnet (port 23) if using telnet method
 
 ## Troubleshooting
 
 ### Connection Issues:
-1. **Can't connect to KUMO**:
+1. **Can't connect to AJA KUMO**:
    - Verify IP address
    - Check network cable
-   - Try pinging the KUMO: `ping 192.168.1.100`
+   - Try pinging the AJA KUMO: `ping 192.168.1.100`
    - Access web interface manually in browser
 
 2. **Telnet connection fails**:
-   - Telnet may be disabled on KUMO
+   - Telnet may be disabled on AJA KUMO
    - Use web interface to enable telnet service
    - Check Windows Telnet client: `dism /online /Enable-Feature /FeatureName:TelnetClient`
 
 3. **REST API fails**:
-   - KUMO firmware version may affect API endpoints
+   - AJA KUMO firmware version may affect API endpoints
    - Try different firmware versions
    - Fallback to telnet method
 
@@ -120,7 +120,7 @@ Your Excel file should have these columns:
 
 2. **Changes don't persist**:
    - SAVE command may have failed
-   - Check KUMO web interface to verify
+   - Check AJA KUMO web interface to verify
    - Try manual save via web interface
 
 ## Integration with Existing Workflows
@@ -145,10 +145,10 @@ Your Excel file should have these columns:
 
 ### Batch Processing Multiple Routers:
 ```powershell
-# Process multiple KUMO routers
+# Process multiple routers
 $routers = @("192.168.1.100", "192.168.1.101", "192.168.1.102")
 foreach ($router in $routers) {
-    .\KUMO-Excel-Updater.ps1 -KumoIP $router -ExcelFile "Tour_Labels.xlsx"
+    .\Helix-Excel-Updater.ps1 -KumoIP $router -ExcelFile "Tour_Labels.xlsx"
 }
 ```
 
@@ -168,7 +168,7 @@ $tourData = Import-Excel "PostMalone_Tour_2025.xlsx" -WorksheetName "VideoRoutin
 ## Security Notes
 
 - Use dedicated network segment for production equipment
-- Limit access to KUMO management interfaces
+- Limit access to router management interfaces
 - Document all label changes for show reports
 - Backup configurations before major updates
 
@@ -176,9 +176,9 @@ $tourData = Import-Excel "PostMalone_Tour_2025.xlsx" -WorksheetName "VideoRoutin
 
 For issues specific to this tool, check:
 1. PowerShell execution policy: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`
-2. Network connectivity to KUMO
+2. Network connectivity to AJA KUMO
 3. Excel file format and structure
-4. KUMO firmware version compatibility
+4. AJA KUMO firmware version compatibility
 
 For AJA KUMO support:
 - AJA Technical Support: support@aja.com

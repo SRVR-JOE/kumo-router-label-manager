@@ -1,16 +1,16 @@
 # Router Label Updater - Command Line Version
-# Bulk label management for AJA KUMO and Blackmagic Videohub routers
-# Auto-detects router type (KUMO REST/Telnet or Videohub TCP 9990)
+# Helix - Bulk label management for AJA KUMO, Blackmagic Videohub, and Lightware MX2 routers
+# Auto-detects router type (KUMO REST/Telnet, Videohub TCP 9990, or Lightware LW3)
 #
 # Usage Examples:
-# Download current labels: .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "current_labels.xlsx"
-# Create template (manual): .\KUMO-Excel-Updater.ps1 -CreateTemplate
-# Create template (auto):   .\KUMO-Excel-Updater.ps1 -CreateTemplate -KumoIP "192.168.1.100"
-# Update from Excel:        .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
-# Test only:                .\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
-# Videohub explicit:        .\KUMO-Excel-Updater.ps1 -RouterType Videohub -KumoIP "192.168.1.101" -DownloadLabels -DownloadPath "labels.csv"
-# Lock output port 5:       .\KUMO-Excel-Updater.ps1 -LockOutput -OutputPort 5 -KumoIP "192.168.100.72" -RouterType Videohub
-# Unlock output port 5:     .\KUMO-Excel-Updater.ps1 -UnlockOutput -OutputPort 5 -KumoIP "192.168.100.72" -RouterType Videohub
+# Download current labels: .\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "current_labels.xlsx"
+# Create template (manual): .\Helix-Excel-Updater.ps1 -CreateTemplate
+# Create template (auto):   .\Helix-Excel-Updater.ps1 -CreateTemplate -KumoIP "192.168.1.100"
+# Update from Excel:        .\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
+# Test only:                .\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx" -TestOnly
+# Videohub explicit:        .\Helix-Excel-Updater.ps1 -RouterType Videohub -KumoIP "192.168.1.101" -DownloadLabels -DownloadPath "labels.csv"
+# Lock output port 5:       .\Helix-Excel-Updater.ps1 -LockOutput -OutputPort 5 -KumoIP "192.168.100.72" -RouterType Videohub
+# Unlock output port 5:     .\Helix-Excel-Updater.ps1 -UnlockOutput -OutputPort 5 -KumoIP "192.168.100.72" -RouterType Videohub
 
 param(
     [Parameter(Mandatory=$false)]
@@ -478,7 +478,7 @@ function Get-VideohubCurrentLabels {
         Write-Host "  File: $OutputPath" -ForegroundColor White
         Write-Host "`nNext steps:" -ForegroundColor Yellow
         Write-Host "1. Open the file and edit the 'New_Label' column" -ForegroundColor White
-        Write-Host "2. Run update command: .\KUMO-Excel-Updater.ps1 -RouterType Videohub -KumoIP '$IP' -ExcelFile '$OutputPath'" -ForegroundColor White
+        Write-Host "2. Run update command: .\Helix-Excel-Updater.ps1 -RouterType Videohub -KumoIP '$IP' -ExcelFile '$OutputPath'" -ForegroundColor White
 
         return $allLabels
 
@@ -1017,7 +1017,7 @@ function Get-KumoCurrentLabels {
         Write-Host "  File: $OutputPath" -ForegroundColor White
         Write-Host "`nNext steps:" -ForegroundColor Yellow
         Write-Host "1. Open the file and edit the 'New_Label' column" -ForegroundColor White
-        Write-Host "2. Run update command: .\KUMO-Excel-Updater.ps1 -KumoIP '$IP' -ExcelFile '$OutputPath'" -ForegroundColor White
+        Write-Host "2. Run update command: .\Helix-Excel-Updater.ps1 -KumoIP '$IP' -ExcelFile '$OutputPath'" -ForegroundColor White
 
         return $allLabels
 
@@ -1271,7 +1271,7 @@ function New-RouterLabelTemplate {
         Write-Host "2. Fill in the 'New_Label' column with your desired names" -ForegroundColor White
         Write-Host "3. Leave New_Label blank for ports you don't want to change" -ForegroundColor White
         Write-Host "4. Save the file" -ForegroundColor White
-        Write-Host "5. Upload: .\KUMO-Excel-Updater.ps1 -KumoIP '<IP>' -ExcelFile '$FilePath'" -ForegroundColor White
+        Write-Host "5. Upload: .\Helix-Excel-Updater.ps1 -KumoIP '<IP>' -ExcelFile '$FilePath'" -ForegroundColor White
 
     } catch {
         Write-Error "Failed to create Excel template: $($_.Exception.Message)"
@@ -1700,10 +1700,10 @@ if (-not $DownloadLabels -and -not $CreateTemplate) {
     if (-not $ExcelFile) {
         Write-Error "ExcelFile parameter is required for update operations"
         Write-Host "Usage examples:" -ForegroundColor Yellow
-        Write-Host "  Download: .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP '192.168.100.51,192.168.100.52'" -ForegroundColor White
-        Write-Host "  Update:   .\KUMO-Excel-Updater.ps1 -KumoIP '192.168.100.51' -ExcelFile 'labels.xlsx'" -ForegroundColor White
-        Write-Host "  Multi:    .\KUMO-Excel-Updater.ps1 -KumoIP '192.168.100.51,192.168.100.52' -ExcelFile 'labels.xlsx'" -ForegroundColor White
-        Write-Host "  Template: .\KUMO-Excel-Updater.ps1 -CreateTemplate" -ForegroundColor White
+        Write-Host "  Download: .\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP '192.168.100.51,192.168.100.52'" -ForegroundColor White
+        Write-Host "  Update:   .\Helix-Excel-Updater.ps1 -KumoIP '192.168.100.51' -ExcelFile 'labels.xlsx'" -ForegroundColor White
+        Write-Host "  Multi:    .\Helix-Excel-Updater.ps1 -KumoIP '192.168.100.51,192.168.100.52' -ExcelFile 'labels.xlsx'" -ForegroundColor White
+        Write-Host "  Template: .\Helix-Excel-Updater.ps1 -CreateTemplate" -ForegroundColor White
         exit 1
     }
 }

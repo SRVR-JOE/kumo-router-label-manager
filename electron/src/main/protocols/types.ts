@@ -85,6 +85,13 @@ export interface FileData {
   fileType?: 'xlsx' | 'csv' | 'json'
 }
 
+// Saved router presets for quick connect
+export interface SavedRouter {
+  name: string
+  ip: string
+  routerType?: RouterType
+}
+
 // Settings
 export interface AppSettings {
   defaultIp: string
@@ -94,13 +101,15 @@ export interface AppSettings {
   recentFiles: string[]
   theme: 'dark' | 'light'
   windowBounds?: { x: number; y: number; width: number; height: number }
+  savedRouters: SavedRouter[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  defaultIp: '',
+  defaultIp: '192.168.100.52',
   defaultFilePath: '',
   autoConnect: false,
   maxLabelLength: 255,
   recentFiles: [],
   theme: 'dark',
+  savedRouters: [],
 }

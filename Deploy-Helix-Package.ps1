@@ -1,17 +1,17 @@
-# Router Label Tools Deployment Script
+# Helix Deployment Script
 # Copies all files to target directory and sets up complete package
-# Supports AJA KUMO and Blackmagic Videohub routers
+# Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 routers
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$TargetDirectory,
-    
+
     [switch]$CreateZip,
     [switch]$InstallAfterDeploy
 )
 
-Write-Host "Router Label Tools Deployment Script v5.0" -ForegroundColor Magenta
-Write-Host "AJA KUMO and Blackmagic Videohub support" -ForegroundColor Gray
+Write-Host "Helix Deployment Script v5.0" -ForegroundColor Magenta
+Write-Host "AJA KUMO, Blackmagic Videohub, and Lightware MX2 support" -ForegroundColor Gray
 Write-Host "Deploying complete package to: $TargetDirectory" -ForegroundColor Yellow
 
 # Create target directory
@@ -22,12 +22,12 @@ if (-not (Test-Path $TargetDirectory)) {
 
 # File list to deploy
 $files = @(
-    @{ Source = "KUMO-Label-Manager.ps1"; Desc = "GUI Application" },
-    @{ Source = "KUMO-Excel-Updater.ps1"; Desc = "Command Line Tool" },
-    @{ Source = "Install-KUMO-Tools.ps1"; Desc = "Installation Script" },
-    @{ Source = "KUMO-Setup-Guide.md"; Desc = "Setup Documentation" },
-    @{ Source = "KUMO_Labels_Template.csv"; Desc = "Sample Template" },
-    @{ Source = "KUMO-Menu.bat"; Desc = "Interactive Menu" },
+    @{ Source = "Helix-Label-Manager.ps1"; Desc = "GUI Application" },
+    @{ Source = "Helix-Excel-Updater.ps1"; Desc = "Command Line Tool" },
+    @{ Source = "Install-Helix-Tools.ps1"; Desc = "Installation Script" },
+    @{ Source = "Helix-Setup-Guide.md"; Desc = "Setup Documentation" },
+    @{ Source = "Helix_Labels_Template.csv"; Desc = "Sample Template" },
+    @{ Source = "Helix-Menu.bat"; Desc = "Interactive Menu" },
     @{ Source = "README.md"; Desc = "Main Documentation" },
     @{ Source = "VERSION.md"; Desc = "Version Information" }
 )
@@ -37,7 +37,7 @@ Write-Host "`nCopying files..." -ForegroundColor Yellow
 foreach ($file in $files) {
     $sourcePath = $file.Source
     $targetPath = Join-Path $TargetDirectory $file.Source
-    
+
     if (Test-Path $sourcePath) {
         Copy-Item $sourcePath $targetPath -Force
         Write-Host "✓ $($file.Source) - $($file.Desc)" -ForegroundColor Green
@@ -51,11 +51,11 @@ Write-Host "`nCreating launcher scripts..." -ForegroundColor Yellow
 
 # PowerShell launcher
 $psLauncher = @"
-# Router Label Manager PowerShell Launcher
-# AJA KUMO and Blackmagic Videohub support
+# Helix PowerShell Launcher
+# AJA KUMO, Blackmagic Videohub, and Lightware MX2 support
 Set-Location -Path "$TargetDirectory"
 
-Write-Host "Router Label Manager v5.0" -ForegroundColor Magenta
+Write-Host "Helix v5.0" -ForegroundColor Magenta
 Write-Host "AJA KUMO / Blackmagic Videohub / Lightware MX2" -ForegroundColor Gray
 Write-Host "Quick Commands:" -ForegroundColor Yellow
 Write-Host "  gui       - Launch GUI application"
@@ -65,36 +65,36 @@ Write-Host "  help      - Show detailed help"
 Write-Host ""
 
 function gui {
-    & ".\KUMO-Label-Manager.ps1"
+    & ".\Helix-Label-Manager.ps1"
 }
 
 function download {
     param(`$ip, `$file, `$type = "Auto")
     if (-not `$ip) { `$ip = Read-Host "Router IP Address" }
     if (-not `$file) { `$file = "downloaded_labels.xlsx" }
-    & ".\KUMO-Excel-Updater.ps1" -DownloadLabels -KumoIP `$ip -DownloadPath `$file -RouterType `$type
+    & ".\Helix-Excel-Updater.ps1" -DownloadLabels -KumoIP `$ip -DownloadPath `$file -RouterType `$type
 }
 
 function template {
-    & ".\KUMO-Excel-Updater.ps1" -CreateTemplate
+    & ".\Helix-Excel-Updater.ps1" -CreateTemplate
 }
 
 function help {
     Get-Content ".\README.md" | Select-Object -First 60
-    Write-Host "For complete documentation, see: README.md and KUMO-Setup-Guide.md"
+    Write-Host "For complete documentation, see: README.md and Helix-Setup-Guide.md"
 }
 
 Write-Host "Ready! Type 'gui' to start or 'help' for more options." -ForegroundColor Green
 "@
 
-$psLauncher | Out-File -FilePath (Join-Path $TargetDirectory "kumo.ps1") -Encoding UTF8
-Write-Host "✓ Created PowerShell launcher: kumo.ps1" -ForegroundColor Green
+$psLauncher | Out-File -FilePath (Join-Path $TargetDirectory "helix.ps1") -Encoding UTF8
+Write-Host "✓ Created PowerShell launcher: helix.ps1" -ForegroundColor Green
 
 # Create start script
 $startScript = @"
 @echo off
 cd /d "$TargetDirectory"
-echo Router Label Manager v5.0
+echo Helix v5.0
 echo AJA KUMO, Blackmagic Videohub, and Lightware MX2
 echo.
 echo Choose your interface:
@@ -105,43 +105,44 @@ echo.
 set /p choice="Enter choice (1-3): "
 
 if "%choice%"=="1" (
-    powershell -ExecutionPolicy RemoteSigned -File "KUMO-Label-Manager.ps1"
+    powershell -ExecutionPolicy RemoteSigned -File "Helix-Label-Manager.ps1"
 ) else if "%choice%"=="2" (
-    call "KUMO-Menu.bat"
+    call "Helix-Menu.bat"
 ) else if "%choice%"=="3" (
-    powershell -ExecutionPolicy RemoteSigned -File "kumo.ps1" -NoExit
+    powershell -ExecutionPolicy RemoteSigned -File "helix.ps1" -NoExit
 ) else (
     echo Invalid choice
     pause
 )
 "@
 
-$startScript | Out-File -FilePath (Join-Path $TargetDirectory "Start-KUMO-Tools.bat") -Encoding ASCII
-Write-Host "✓ Created batch launcher: Start-KUMO-Tools.bat" -ForegroundColor Green
+$startScript | Out-File -FilePath (Join-Path $TargetDirectory "Start-Helix.bat") -Encoding ASCII
+Write-Host "✓ Created batch launcher: Start-Helix.bat" -ForegroundColor Green
 
 # Create package information file
 $packageInfo = @{
-    Name = "Router Label Manager"
+    Name = "Helix"
     Version = "5.0.0"
     DeploymentDate = Get-Date
     TargetDirectory = $TargetDirectory
     Files = $files.Count
-    SupportedRouters = @("AJA KUMO 1604", "AJA KUMO 1616", "AJA KUMO 3232", "AJA KUMO 6464", "Blackmagic Videohub (all models)")
+    SupportedRouters = @("AJA KUMO 1604", "AJA KUMO 1616", "AJA KUMO 3232", "AJA KUMO 6464", "Blackmagic Videohub (all models)", "Lightware MX2 (all models)")
     Features = @(
-        "Download current labels from KUMO / Videohub routers",
+        "Download current labels from AJA KUMO / Videohub / Lightware MX2 routers",
         "Upload labels from Excel spreadsheet or CSV",
         "AJA KUMO: REST API and Telnet fallback",
         "Blackmagic Videohub: TCP 9990 protocol with block-based label sets",
+        "Lightware MX2: LW3 protocol on TCP 6107",
         "Auto-detects router type on connect",
         "Professional GUI and command-line interfaces",
         "Batch processing for multiple routers",
         "Complete documentation and examples"
     )
     QuickStart = @{
-        GUI = "Start-KUMO-Tools.bat or KUMO-Label-Manager.ps1"
-        CommandLine = "KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP 'IP' -DownloadPath 'file.xlsx'"
-        Menu = "KUMO-Menu.bat"
-        Installation = "Install-KUMO-Tools.ps1"
+        GUI = "Start-Helix.bat or Helix-Label-Manager.ps1"
+        CommandLine = "Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP 'IP' -DownloadPath 'file.xlsx'"
+        Menu = "Helix-Menu.bat"
+        Installation = "Install-Helix-Tools.ps1"
     }
 } | ConvertTo-Json -Depth 3
 
@@ -152,11 +153,11 @@ Write-Host "✓ Created package info: package-info.json" -ForegroundColor Green
 if ($CreateZip) {
     Write-Host "`nCreating ZIP archive..." -ForegroundColor Yellow
     $zipPath = "$TargetDirectory.zip"
-    
+
     if (Test-Path $zipPath) {
         Remove-Item $zipPath -Force
     }
-    
+
     try {
         # Use .NET compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -171,7 +172,7 @@ if ($CreateZip) {
 # Run installer if requested
 if ($InstallAfterDeploy) {
     Write-Host "`nRunning installation..." -ForegroundColor Yellow
-    $installerPath = Join-Path $TargetDirectory "Install-KUMO-Tools.ps1"
+    $installerPath = Join-Path $TargetDirectory "Install-Helix-Tools.ps1"
     if (Test-Path $installerPath) {
         & $installerPath -InstallPath $TargetDirectory -CreateDesktopShortcuts
     } else {
@@ -188,7 +189,7 @@ Write-Host @"
 
 Package Location: $TargetDirectory
 Files Deployed: $($files.Count + 4) (including launchers)
-Supported Routers: AJA KUMO and Blackmagic Videohub
+Supported Routers: AJA KUMO, Blackmagic Videohub, and Lightware MX2
 "@ -ForegroundColor Green
 
 if ($CreateZip) {
@@ -198,13 +199,13 @@ if ($CreateZip) {
 Write-Host @"
 
 Quick Start Options:
-• Double-click: Start-KUMO-Tools.bat
-• PowerShell: .\kumo.ps1
-• Direct GUI: .\KUMO-Label-Manager.ps1
-• Installation: .\Install-KUMO-Tools.ps1
+• Double-click: Start-Helix.bat
+• PowerShell: .\helix.ps1
+• Direct GUI: .\Helix-Label-Manager.ps1
+• Installation: .\Install-Helix-Tools.ps1
 
 Package Contents:
-• GUI Application with download functionality (KUMO + Videohub)
+• GUI Application with download functionality
 • Command-line tool with auto router-type detection
 • Complete documentation and examples
 • Professional installer and launchers
@@ -213,15 +214,16 @@ Package Contents:
 Router Support:
 • AJA KUMO 1604 / 1616 / 3232 / 6464 (REST API + Telnet)
 • Blackmagic Videohub all models (TCP 9990)
+• Lightware MX2 (LW3 protocol on TCP 6107)
 • Router type is auto-detected on connect
 
 Next Steps:
-1. Test the tools with your KUMO or Videohub router
+1. Test the tools with your router
 2. Create your first label template
 3. Download existing labels from your router
 4. Customize for your production needs
 
-For support: Check README.md and KUMO-Setup-Guide.md
+For support: Check README.md and Helix-Setup-Guide.md
 "@ -ForegroundColor White
 
-Write-Host "`nRouter Label Manager v5.0 - Ready for Professional Live Event Production!" -ForegroundColor Magenta
+Write-Host "`nHelix v5.0 - Ready for Professional Live Event Production!" -ForegroundColor Magenta

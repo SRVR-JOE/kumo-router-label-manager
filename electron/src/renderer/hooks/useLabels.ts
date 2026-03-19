@@ -76,5 +76,36 @@ export function useLabels() {
     ui.showToast('Template created', 'success')
   }
 
-  return { openFile, saveFile, saveFileAs, createTemplate }
+  const loadDefaultTemplate = async (filename: string) => {
+    const data = await window.helix.file.openDefaultTemplate(filename) as {
+      ports: Array<{
+        port: number; type: 'INPUT' | 'OUTPUT'
+        currentLabel: string; newLabel: string | null
+        currentLabelLine2: string; newLabelLine2: string | null
+        currentColor: number; newColor: number | null; notes: string
+      }>
+      filePath?: string
+    } | null
+
+    if (!data) return
+    const labels: LabelRow[] = data.ports.map(p => ({
+      id: `${p.type}-${p.port}`,
+      portNumber: p.port,
+      portType: p.type,
+      currentLabel: p.currentLabel,
+      newLabel: p.newLabel || '',
+      currentLabelLine2: p.currentLabelLine2 || '',
+      newLabelLine2: p.newLabelLine2 || '',
+      currentColor: p.currentColor,
+      newColor: p.newColor,
+      notes: p.notes || '',
+      status: 'unchanged' as const,
+    }))
+    store.setLabels(labels)
+    store.setFilePath(null) // Template is not a saved file yet
+    const size = labels.length / 2
+    ui.showToast(`Loaded ${size}x${size} template (${labels.length} ports)`, 'success')
+  }
+
+  return { openFile, saveFile, saveFileAs, createTemplate, loadDefaultTemplate }
 }

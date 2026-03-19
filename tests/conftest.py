@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the KUMO Router Label Manager test suite.
+"""Shared pytest fixtures for the Helix Router Label Manager test suite.
 
 This module provides common fixtures used across multiple test modules,
 including pre-built Label/FileData objects and a fresh EventBus instance.

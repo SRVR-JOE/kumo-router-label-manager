@@ -1,4 +1,4 @@
-"""Configuration module for the KUMO Router Management System."""
+"""Configuration module for the Helix Router Management System."""
 
 from .settings import Settings, get_settings
 

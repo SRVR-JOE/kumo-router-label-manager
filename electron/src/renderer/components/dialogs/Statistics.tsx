@@ -57,11 +57,11 @@ export default function Statistics() {
                 return (
                   <div key={colorId} className="flex items-center gap-2 text-xs">
                     <span className="color-badge" style={{ backgroundColor: c.active }} />
-                    <span className="w-20 text-helix-text">{c.name}</span>
+                    <span className="w-24 text-helix-text">{c.name}</span>
                     <div className="flex-1 h-3 bg-helix-bg rounded-full overflow-hidden">
                       <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: c.active }} />
                     </div>
-                    <span className="text-helix-text-muted w-8 text-right">{count}</span>
+                    <span className="text-helix-text-muted w-10 text-right">{count}</span>
                   </div>
                 )
               })}

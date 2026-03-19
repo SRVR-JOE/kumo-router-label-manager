@@ -8,6 +8,7 @@ import {
   SortingState,
 } from '@tanstack/react-table'
 import { useLabelsStore, LabelRow } from '../../stores/labels-store'
+import { useRouterStore } from '../../stores/router-store'
 import { KUMO_COLORS } from '../../theme/colors'
 
 const columnHelper = createColumnHelper<LabelRow>()
@@ -107,14 +108,40 @@ function ColorDropdown({ value, onChange, isSelected, onCellMouseDown, onCellMou
   )
 }
 
-function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
+type BulkMode = 'same' | 'numbers' | 'letters'
+
+function generateSequence(mode: BulkMode, count: number, prefix: string, startNum: number): string[] {
+  if (mode === 'numbers') {
+    return Array.from({ length: count }, (_, i) => `${prefix}${startNum + i}`)
+  }
+  if (mode === 'letters') {
+    return Array.from({ length: count }, (_, i) => {
+      // A-Z, then AA, AB, etc.
+      let n = startNum - 1 + i
+      let letter = ''
+      do {
+        letter = String.fromCharCode(65 + (n % 26)) + letter
+        n = Math.floor(n / 26) - 1
+      } while (n >= 0)
+      return `${prefix}${letter}`
+    })
+  }
+  // 'same' mode — single value for all
+  return Array.from({ length: count }, () => prefix)
+}
+
+function BulkEditPopup({ selection, field, onApply, onApplySequence, onCancel, anchorRect }: {
   selection: SelectionRange
   field: string
   onApply: (value: string) => void
+  onApplySequence: (values: string[]) => void
   onCancel: () => void
   anchorRect: { top: number; left: number }
 }) {
   const [value, setValue] = useState('')
+  const [mode, setMode] = useState<BulkMode>('same')
+  const [prefix, setPrefix] = useState('')
+  const [startNum, setStartNum] = useState(1)
   const inputRef = useRef<HTMLInputElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const isColor = field === 'newColor'
@@ -129,7 +156,6 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
     const rect = el.getBoundingClientRect()
     let top = anchorRect.top
     let left = anchorRect.left
-    // Keep within viewport
     if (top + rect.height > window.innerHeight - 10) {
       top = window.innerHeight - rect.height - 10
     }
@@ -142,6 +168,20 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
   }, [anchorRect])
 
   const count = Math.abs(selection.endRowIdx - selection.startRowIdx) + 1
+
+  const handleApply = () => {
+    if (mode === 'same') {
+      onApply(value)
+    } else {
+      const seq = generateSequence(mode, count, prefix, startNum)
+      onApplySequence(seq)
+    }
+  }
+
+  // Preview of the sequence
+  const preview = mode !== 'same'
+    ? generateSequence(mode, Math.min(count, 4), prefix, startNum)
+    : null
 
   return (
     <div
@@ -156,6 +196,26 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
       <div className="text-xs text-helix-text-muted">
         Bulk edit {count} cell{count > 1 ? 's' : ''} in <span className="text-helix-accent font-medium">{field}</span>
       </div>
+
+      {/* Mode selector — not shown for color fields */}
+      {!isColor && (
+        <div className="flex gap-1">
+          {(['same', 'numbers', 'letters'] as BulkMode[]).map(m => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`px-2 py-0.5 text-[11px] rounded border transition-colors ${
+                mode === m
+                  ? 'bg-helix-accent border-helix-accent text-white'
+                  : 'bg-helix-bg border-helix-border text-helix-text-muted hover:text-helix-text'
+              }`}
+            >
+              {m === 'same' ? 'Same Value' : m === 'numbers' ? '1, 2, 3...' : 'A, B, C...'}
+            </button>
+          ))}
+        </div>
+      )}
+
       {isColor ? (
         <select
           ref={inputRef as unknown as React.Ref<HTMLSelectElement>}
@@ -163,7 +223,7 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter') onApply(value)
+            if (e.key === 'Enter') handleApply()
             if (e.key === 'Escape') onCancel()
           }}
         >
@@ -172,7 +232,7 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
             <option key={id} value={id}>{c.name}</option>
           ))}
         </select>
-      ) : (
+      ) : mode === 'same' ? (
         <input
           ref={inputRef}
           className="bg-helix-bg border border-helix-border rounded text-xs px-2 py-1 text-helix-text w-48"
@@ -180,15 +240,64 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter') onApply(value)
+            if (e.key === 'Enter') handleApply()
             if (e.key === 'Escape') onCancel()
           }}
         />
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex gap-2 items-center">
+            <div className="flex-1">
+              <label className="block text-[10px] text-helix-text-muted mb-0.5">Prefix</label>
+              <input
+                ref={inputRef}
+                className="bg-helix-bg border border-helix-border rounded text-xs px-2 py-1 text-helix-text w-full"
+                placeholder="e.g. CAM "
+                value={prefix}
+                onChange={e => setPrefix(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleApply()
+                  if (e.key === 'Escape') onCancel()
+                }}
+              />
+            </div>
+            <div className="w-16">
+              <label className="block text-[10px] text-helix-text-muted mb-0.5">Start</label>
+              {mode === 'numbers' ? (
+                <input
+                  type="number"
+                  min={0}
+                  className="bg-helix-bg border border-helix-border rounded text-xs px-2 py-1 text-helix-text w-full"
+                  value={startNum}
+                  onChange={e => setStartNum(parseInt(e.target.value) || 1)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleApply()
+                    if (e.key === 'Escape') onCancel()
+                  }}
+                />
+              ) : (
+                <input
+                  className="bg-helix-bg border border-helix-border rounded text-xs px-2 py-1 text-helix-text w-full"
+                  value={String.fromCharCode(65 + Math.max(0, startNum - 1))}
+                  readOnly
+                  title="Letters always start from A"
+                />
+              )}
+            </div>
+          </div>
+          {/* Preview */}
+          {preview && (
+            <div className="text-[10px] text-helix-text-muted">
+              Preview: {preview.join(', ')}{count > 4 ? ', ...' : ''}
+            </div>
+          )}
+        </div>
       )}
+
       <div className="flex gap-2">
         <button
           className="px-3 py-1 text-xs bg-helix-accent text-white rounded hover:bg-helix-accent-hover"
-          onClick={() => onApply(value)}
+          onClick={handleApply}
         >
           Apply
         </button>
@@ -205,6 +314,8 @@ function BulkEditPopup({ selection, field, onApply, onCancel, anchorRect }: {
 
 export default function LabelTable() {
   const { labels, filter, searchText, setFilter, setSearchText, updateLabel, bulkUpdateLabels, getFilteredLabels } = useLabelsStore()
+  const routerType = useRouterStore(s => s.routerType)
+  const isKumo = routerType === 'kumo'
   const [sorting, setSorting] = useState<SortingState>([])
 
   // Selection state
@@ -364,6 +475,25 @@ export default function LabelTable() {
     setShowBulkEdit(false)
   }, [filteredLabels, bulkUpdateLabels, getSelectionRows])
 
+  const handleBulkApplySequence = useCallback((values: string[]) => {
+    const sel = selectionRef.current
+    if (!sel) return
+    const { min, max } = getSelectionRows(sel)
+    const field = EDITABLE_FIELDS[sel.colId]
+    if (!field) return
+
+    const selectedIds = filteredLabels.slice(min, max + 1).map(l => l.id)
+    selectedIds.forEach((id, i) => {
+      if (i < values.length) {
+        updateLabel(id, field, values[i])
+      }
+    })
+
+    setSelection(null)
+    selectionRef.current = null
+    setShowBulkEdit(false)
+  }, [filteredLabels, updateLabel, getSelectionRows])
+
   const handleBulkCancel = useCallback(() => {
     setSelection(null)
     selectionRef.current = null
@@ -373,12 +503,12 @@ export default function LabelTable() {
   const columns = useMemo(() => [
     columnHelper.accessor('portNumber', {
       header: 'Port#',
-      size: 55,
+      size: 50,
       cell: info => <span className="text-center block">{info.getValue()}</span>,
     }),
     columnHelper.accessor('portType', {
       header: 'Type',
-      size: 65,
+      size: 58,
       cell: info => (
         <span className={`text-xs font-medium ${info.getValue() === 'INPUT' ? 'text-blue-400' : 'text-orange-400'}`}>
           {info.getValue()}
@@ -386,18 +516,18 @@ export default function LabelTable() {
       ),
     }),
     columnHelper.accessor('currentLabel', {
-      header: 'Current Label',
-      size: 150,
+      header: isKumo ? 'Top' : 'Current Label',
+      size: 130,
       cell: info => <span className="truncate block" title={info.getValue()}>{info.getValue()}</span>,
     }),
-    columnHelper.accessor('currentLabelLine2', {
-      header: 'Current L2',
-      size: 120,
+    ...(isKumo ? [columnHelper.accessor('currentLabelLine2', {
+      header: 'Bottom',
+      size: 100,
       cell: info => <span className="truncate block text-helix-text-muted" title={info.getValue()}>{info.getValue()}</span>,
-    }),
+    })] : []),
     columnHelper.accessor('newLabel', {
-      header: 'New Label',
-      size: 150,
+      header: isKumo ? 'New Top' : 'New Label',
+      size: 140,
       cell: info => (
         <EditableCell
           value={info.getValue()}
@@ -409,9 +539,9 @@ export default function LabelTable() {
         />
       ),
     }),
-    columnHelper.accessor('newLabelLine2', {
-      header: 'New L2',
-      size: 120,
+    ...(isKumo ? [columnHelper.accessor('newLabelLine2', {
+      header: 'New Bottom',
+      size: 100,
       cell: info => (
         <EditableCell
           value={info.getValue()}
@@ -421,15 +551,15 @@ export default function LabelTable() {
           onCellMouseEnter={() => handleCellMouseEnter(info.row.index, 'newLabelLine2')}
         />
       ),
-    }),
-    columnHelper.accessor('currentColor', {
+    })] : []),
+    ...(isKumo ? [columnHelper.accessor('currentColor', {
       header: 'Color',
-      size: 100,
+      size: 80,
       cell: info => <ColorCell color={info.getValue()} />,
-    }),
-    columnHelper.accessor('newColor', {
+    })] : []),
+    ...(isKumo ? [columnHelper.accessor('newColor', {
       header: 'New Color',
-      size: 100,
+      size: 80,
       cell: info => (
         <ColorDropdown
           value={info.getValue()}
@@ -439,10 +569,10 @@ export default function LabelTable() {
           onCellMouseEnter={() => handleCellMouseEnter(info.row.index, 'newColor')}
         />
       ),
-    }),
+    })] : []),
     columnHelper.accessor('notes', {
       header: 'Notes',
-      size: 120,
+      size: 110,
       cell: info => (
         <EditableCell
           value={info.getValue()}
@@ -455,7 +585,7 @@ export default function LabelTable() {
     }),
     columnHelper.accessor('status', {
       header: 'Status',
-      size: 70,
+      size: 60,
       cell: info => {
         const s = info.getValue()
         const colors = { unchanged: 'text-helix-text-dim', modified: 'text-yellow-400', uploaded: 'text-green-400', error: 'text-red-400' }
@@ -463,7 +593,7 @@ export default function LabelTable() {
         return <span className={`text-xs ${colors[s]}`}>{icons[s]}</span>
       },
     }),
-  ], [updateLabel, isCellSelected, handleCellMouseDown, handleCellMouseEnter])
+  ], [updateLabel, isCellSelected, handleCellMouseDown, handleCellMouseEnter, isKumo])
 
   const table = useReactTable({
     data: filteredLabels,
@@ -500,14 +630,14 @@ export default function LabelTable() {
           placeholder="Search..."
           value={searchText}
           onChange={e => setSearchText(e.target.value)}
-          className="bg-helix-bg border border-helix-border rounded px-2 py-1 text-xs text-helix-text w-48 focus:border-helix-accent focus:outline-none"
+          className="bg-helix-bg border border-helix-border rounded px-2 py-1 text-xs text-helix-text w-40 focus:border-helix-accent focus:outline-none"
         />
         <span className="text-xs text-helix-text-muted">{filteredLabels.length} rows</span>
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-auto label-table-container">
-        <table className="w-full text-sm border-collapse">
+        <table className="w-full min-w-max text-sm border-collapse">
           <thead className="sticky top-0 z-10 bg-helix-surface">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
@@ -559,6 +689,7 @@ export default function LabelTable() {
           selection={selection}
           field={selection.colId}
           onApply={handleBulkApply}
+          onApplySequence={handleBulkApplySequence}
           onCancel={handleBulkCancel}
           anchorRect={bulkEditAnchor}
         />

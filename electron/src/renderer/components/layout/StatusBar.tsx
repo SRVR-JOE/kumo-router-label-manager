@@ -22,7 +22,7 @@ export default function StatusBar() {
     <div className="h-7 min-h-[28px] bg-helix-surface border-t border-helix-border flex items-center px-3 text-xs text-helix-text-muted gap-4">
       {/* Connection status */}
       <div className="flex items-center gap-1.5">
-        <span className={`w-2 h-2 rounded-full ${statusColor}`} />
+        <span className={`w-2.5 h-2.5 rounded-full ${statusColor}`} />
         {router.connectionStatus === 'connected' ? (
           <span>{router.deviceName} ({router.ip}) — {router.routerType?.toUpperCase()} {router.inputCount}x{router.outputCount}</span>
         ) : (
@@ -37,14 +37,14 @@ export default function StatusBar() {
 
       {/* File path */}
       {labels.currentFilePath && (
-        <span className="truncate max-w-[300px]">{labels.currentFilePath}</span>
+        <span className="truncate max-w-[400px]">{labels.currentFilePath}</span>
       )}
 
       {/* Progress bar */}
       {ui.progressVisible && (
         <div className="flex items-center gap-2 ml-auto">
           <span>{ui.progressPhase}</span>
-          <div className="w-32 h-2 bg-helix-bg rounded-full overflow-hidden">
+          <div className="w-40 h-2 bg-helix-bg rounded-full overflow-hidden">
             <div
               className="h-full bg-helix-accent transition-all duration-200"
               style={{ width: `${ui.progressTotal > 0 ? (ui.progressValue / ui.progressTotal) * 100 : 0}%` }}

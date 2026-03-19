@@ -1,4 +1,4 @@
-"""Abstract base agent class for KUMO router management system.
+"""Abstract base agent class for Helix router management system.
 
 This module defines the base agent interface that all agents must implement,
 providing standard lifecycle management and event subscription capabilities.

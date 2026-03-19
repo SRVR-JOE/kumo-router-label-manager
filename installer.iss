@@ -1,19 +1,19 @@
 ; =============================================================================
-; Router Label Manager v5.0 - Inno Setup Installer Script
+; Helix v5.0 - Inno Setup Installer Script
 ; Publisher: Solotech
-; Install target: {commonpf}\RouterLabelManager
+; Install target: {commonpf}\Helix
 ;
 ; Build with Inno Setup 6.x: https://jrsoftware.org/isinfo.php
 ; NOTE: The Python CLI backend is NOT included here — install it separately
-;       with:  pip install kumo-router-manager
+;       with:  pip install helix-router-manager
 ; =============================================================================
 
-#define AppName    "Router Label Manager"
+#define AppName    "Helix"
 #define AppVersion "5.0"
 #define AppFullVer "5.0.0"
 #define Publisher  "Solotech"
-#define AppURL     "https://github.com/SRVR-JOE/kumo-router-label-manager"
-#define InstallDir "RouterLabelManager"
+#define AppURL     "https://github.com/SRVR-JOE/helix"
+#define InstallDir "Helix"
 
 ; ---------------------------------------------------------------------------
 ; [Setup] — global installer configuration
@@ -35,7 +35,7 @@ AllowNoIcons=no
 
 ; Output
 OutputDir=dist
-OutputBaseFilename=RouterLabelManager-v{#AppVersion}-Setup
+OutputBaseFilename=Helix-v{#AppVersion}-Setup
 SetupIconFile=
 
 ; Compression
@@ -58,7 +58,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ; Uninstaller
 Uninstallable=yes
 UninstallDisplayName={#AppName} v{#AppVersion}
-UninstallDisplayIcon={app}\KUMO-Label-Manager.ps1
+UninstallDisplayIcon={app}\Helix-Label-Manager.ps1
 
 ; Minimum OS: Windows 10 (build 10240)
 MinVersion=10.0.10240
@@ -84,55 +84,55 @@ Name: "desktopicon"; Description: "Create a &Desktop shortcut"; GroupDescription
 ; ---------------------------------------------------------------------------
 [Files]
 ; Core PowerShell GUI
-Source: "KUMO-Label-Manager.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Helix-Label-Manager.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 ; CLI tool
-Source: "KUMO-Excel-Updater.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Helix-Excel-Updater.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Batch launcher / interactive menu
-Source: "KUMO-Menu.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Helix-Menu.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Documentation
 Source: "README.md";          DestDir: "{app}"; Flags: ignoreversion
-Source: "KUMO-Setup-Guide.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Helix-Setup-Guide.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "VERSION.md";          DestDir: "{app}"; Flags: ignoreversion
 
 ; Sample data (if present — skip if missing)
-Source: "KUMO_Labels_Template.csv"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "Helix_Labels_Template.csv"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; ---------------------------------------------------------------------------
 ; [Icons] — Start Menu and Desktop shortcuts
 ; ---------------------------------------------------------------------------
 [Icons]
 ; Start Menu — main GUI
-Name: "{group}\Router Label Manager"; \
+Name: "{group}\Helix"; \
     Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\KUMO-Label-Manager.ps1"""; \
+    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\Helix-Label-Manager.ps1"""; \
     WorkingDir: "{app}"; \
-    Comment: "Launch the Router Label Manager GUI (KUMO, Videohub, Lightware MX2)"
+    Comment: "Launch Helix Router Label Manager (AJA KUMO, Videohub, Lightware MX2)"
 
 ; Start Menu — CLI menu
-Name: "{group}\Router Label Manager CLI"; \
-    Filename: "{app}\KUMO-Menu.bat"; \
+Name: "{group}\Helix CLI"; \
+    Filename: "{app}\Helix-Menu.bat"; \
     WorkingDir: "{app}"; \
-    Comment: "Interactive command-line menu for Router Label Manager"
+    Comment: "Interactive command-line menu for Helix"
 
 ; Start Menu — Setup Guide (opens in default Markdown viewer / Notepad)
 Name: "{group}\Setup Guide"; \
-    Filename: "{app}\KUMO-Setup-Guide.md"; \
+    Filename: "{app}\Helix-Setup-Guide.md"; \
     WorkingDir: "{app}"; \
-    Comment: "Open the Router Label Manager setup guide"
+    Comment: "Open the Helix setup guide"
 
 ; Start Menu — Uninstall
-Name: "{group}\Uninstall Router Label Manager"; \
+Name: "{group}\Uninstall Helix"; \
     Filename: "{uninstallexe}"
 
 ; Desktop shortcut (optional — only created when the task is checked)
-Name: "{commondesktop}\Router Label Manager"; \
+Name: "{commondesktop}\Helix"; \
     Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\KUMO-Label-Manager.ps1"""; \
+    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\Helix-Label-Manager.ps1"""; \
     WorkingDir: "{app}"; \
-    Comment: "Launch Router Label Manager"; \
+    Comment: "Launch Helix Router Label Manager"; \
     Tasks: desktopicon
 
 ; ---------------------------------------------------------------------------
@@ -141,9 +141,9 @@ Name: "{commondesktop}\Router Label Manager"; \
 [Run]
 ; Offer to launch the GUI immediately after install finishes
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\KUMO-Label-Manager.ps1"""; \
+    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\Helix-Label-Manager.ps1"""; \
     WorkingDir: "{app}"; \
-    Description: "Launch Router Label Manager now"; \
+    Description: "Launch Helix now"; \
     Flags: nowait postinstall skipifsilent unchecked
 
 ; ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ begin
       'PowerShellVersion', PSVersion) then
   begin
     if MsgBox(
-        'PowerShell 5.1 or later is required to run Router Label Manager.' + #13#10 +
+        'PowerShell 5.1 or later is required to run Helix.' + #13#10 +
         'It could not be detected on this system.' + #13#10#13#10 +
         'Do you want to continue the installation anyway?',
         mbConfirmation, MB_YESNO) = IDNO then

@@ -1,4 +1,4 @@
-# Router Label Manager v5.0
+# Helix v5.0 - Router Label Manager
 # Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
 
 # --- Error Logging -----------------------------------------------------------
@@ -845,9 +845,9 @@ function Set-KumoParam {
 
 function Get-DocumentsPath {
     $docs = [Environment]::GetFolderPath("MyDocuments")
-    $kumoDir = Join-Path $docs "KUMO_Labels"
-    if (-not (Test-Path $kumoDir)) { New-Item -ItemType Directory -Path $kumoDir -Force | Out-Null }
-    return $kumoDir
+    $helixDir = Join-Path $docs "Helix_Labels"
+    if (-not (Test-Path $helixDir)) { New-Item -ItemType Directory -Path $helixDir -Force | Out-Null }
+    return $helixDir
 }
 
 # --- Global State ------------------------------------------------------------
@@ -1796,7 +1796,7 @@ function Download-RouterLabels {
 
                 # Write diagnostic log
                 $colorLog.Add("Color download complete: $($inCount + $outCount) ports processed") | Out-Null
-                $logPath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "KUMO_Labels"
+                $logPath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Helix_Labels"
                 if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
                 $colorLog | Out-File (Join-Path $logPath "color_debug.log") -Encoding UTF8
 
@@ -2246,7 +2246,7 @@ function Switch-RouterCrosspoint {
 # --- Main Form ---------------------------------------------------------------
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Router Label Manager v5.0"
+$form.Text = "Helix v5.0"
 $form.Size = New-Object System.Drawing.Size(1100, 750)
 $form.MinimumSize = New-Object System.Drawing.Size(900, 650)
 $form.StartPosition = "CenterScreen"
@@ -3952,10 +3952,10 @@ $connectButton.Add_Click({
 
         if ($connectedCount -eq 1) {
             $lblContentTitle.Text = "$($lastInfo.RouterModel)  `"$($lastInfo.RouterName)`""
-            $form.Text = "Router Label Manager - $($lastInfo.RouterModel) `"$($lastInfo.RouterName)`""
+            $form.Text = "Helix - $($lastInfo.RouterModel) `"$($lastInfo.RouterName)`""
         } else {
             $lblContentTitle.Text = "$connectedCount routers connected"
-            $form.Text = "Router Label Manager - $connectedCount routers"
+            $form.Text = "Helix - $connectedCount routers"
         }
 
         Update-ChangeCount
@@ -4055,7 +4055,7 @@ $btnDownload.Add_Click({
         $autoSavePath = Join-Path $docsPath "Labels_$(Get-Date -Format 'yyyyMMdd_HHmm').csv"
         $global:allLabels | Select-Object Router, Port, Type, Current_Label, Current_Label_2, New_Label, New_Label_2, Color, New_Color, Notes |
             Export-Csv -Path $autoSavePath -NoTypeInformation
-        $statusMsg = "Downloaded $($global:allLabels.Count) labels from $($connectedIPs.Count) router(s) - saved to Documents\KUMO_Labels"
+        $statusMsg = "Downloaded $($global:allLabels.Count) labels from $($connectedIPs.Count) router(s) - saved to Documents\Helix_Labels"
     } catch {
         $statusMsg = "Downloaded $($global:allLabels.Count) labels (auto-save failed)"
     }
@@ -4982,7 +4982,7 @@ $btnUpload.Add_Click({
         Set-StatusMessage "Upload complete: $totalSuccess OK, $totalError failed" $statusColor
 
         $icon = if ($totalError -eq 0) { "Information" } else { "Warning" }
-        $backupMsg = if ($backupSaved) { "`n`nBackup saved to Documents\KUMO_Labels folder." } else { "`n`nWarning: backup could not be saved." }
+        $backupMsg = if ($backupSaved) { "`n`nBackup saved to Documents\Helix_Labels folder." } else { "`n`nWarning: backup could not be saved." }
         [System.Windows.Forms.MessageBox]::Show(
             "Upload complete!`n`nSuccessful: $totalSuccess`nFailed: $totalError$backupMsg",
             "Upload Results", "OK", $icon

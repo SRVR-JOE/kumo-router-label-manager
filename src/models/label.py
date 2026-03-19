@@ -1,7 +1,7 @@
-"""Label data model for KUMO router port labels.
+"""Label data model for router port labels.
 
 This module defines the Label class representing a single port label
-configuration on the KUMO router.
+configuration on a video router.
 """
 
 from dataclasses import dataclass

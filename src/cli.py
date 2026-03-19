@@ -1,5 +1,5 @@
 """
-Command-line interface for Router Label Manager v5.3.0.
+Command-line interface for Helix Router Label Manager v5.3.0.
 
 Beautiful, fast, and functional CLI powered by Rich.
 Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
@@ -172,8 +172,8 @@ def setup_logging(verbose: bool = False) -> None:
 def print_banner() -> None:
     """Print the application banner."""
     banner = Text()
-    banner.append("Router", style="bold purple")
-    banner.append(" Label Manager ", style="bold white")
+    banner.append("Helix", style="bold purple")
+    banner.append(" Router Label Manager ", style="bold white")
     banner.append(f"v{APP_VERSION}", style="dim purple")
 
     console.print(Panel(
@@ -346,7 +346,7 @@ def domain_labels_to_router_labels(labels: List[Label]) -> List[RouterLabel]:
 
 
 def display_labels_table(labels: List[Label], title: str = "Router Labels") -> None:
-    """Display domain Label objects — retained for KUMO backward compatibility."""
+    """Display domain Label objects — retained for AJA KUMO backward compatibility."""
     display_router_labels_table(domain_labels_to_router_labels(labels), title, show_colors=True)
 
 
@@ -417,11 +417,11 @@ def router_labels_to_filedata(labels: List[RouterLabel]) -> Tuple[FileData, int]
 
 
 # ---------------------------------------------------------------------------
-# KumoManager — existing KUMO functionality, unchanged
+# HelixManager — main application coordinator
 # ---------------------------------------------------------------------------
 
-class KumoManager:
-    """Main application coordinator for KUMO router management."""
+class HelixManager:
+    """Main application coordinator for router management."""
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or Settings()
@@ -1344,26 +1344,26 @@ ROUTER_TYPE_HELP = (
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all commands."""
     parser = argparse.ArgumentParser(
-        description="Router Label Manager - Professional AV Production Tool",
+        description="Helix - Professional AV Router Label Manager",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  kumo-cli download labels.csv --ip 192.168.1.100\n"
-            "  kumo-cli download labels.csv --ip 192.168.1.50 --router-type videohub\n"
-            "  kumo-cli download labels.csv --ip 192.168.1.60 --router-type lightware\n"
-            "  kumo-cli upload labels.xlsx --ip 192.168.1.100 --test\n"
-            "  kumo-cli status --ip 192.168.1.100\n"
-            "  kumo-cli status --ip 192.168.1.50 -t videohub\n"
-            "  kumo-cli status --ip 192.168.1.60 -t lightware\n"
-            "  kumo-cli template labels.xlsx\n"
-            "  kumo-cli template labels.xlsx -t lightware --size 16\n"
-            "  kumo-cli view labels.csv\n"
-            "  kumo-cli like-names labels.csv --preview\n"
+            "  helix download labels.csv --ip 192.168.1.100\n"
+            "  helix download labels.csv --ip 192.168.1.50 --router-type videohub\n"
+            "  helix download labels.csv --ip 192.168.1.60 --router-type lightware\n"
+            "  helix upload labels.xlsx --ip 192.168.1.100 --test\n"
+            "  helix status --ip 192.168.1.100\n"
+            "  helix status --ip 192.168.1.50 -t videohub\n"
+            "  helix status --ip 192.168.1.60 -t lightware\n"
+            "  helix template labels.xlsx\n"
+            "  helix template labels.xlsx -t lightware --size 16\n"
+            "  helix view labels.csv\n"
+            "  helix like-names labels.csv --preview\n"
             "\n"
             "Multi-router:\n"
-            "  kumo-cli download labels.csv --ip 192.168.100.51 --ip 192.168.100.52\n"
-            "  kumo-cli download labels.csv --ip 192.168.100.51,192.168.100.52\n"
-            "  kumo-cli status  (uses default IPs from settings)\n"
+            "  helix download labels.csv --ip 192.168.100.51 --ip 192.168.100.52\n"
+            "  helix download labels.csv --ip 192.168.100.51,192.168.100.52\n"
+            "  helix status  (uses default IPs from settings)\n"
         ),
     )
     parser.add_argument(
@@ -1521,7 +1521,7 @@ def _run_for_router(ip: str, router_type_arg: str, command: str, args, base_sett
         elif router_type == "lightware":
             return LightwareManager(settings).download_labels(args.output)
         else:
-            return asyncio.run(KumoManager(settings).download_labels(args.output))
+            return asyncio.run(HelixManager(settings).download_labels(args.output))
 
     elif command == "upload":
         if router_type == "videohub":
@@ -1529,7 +1529,7 @@ def _run_for_router(ip: str, router_type_arg: str, command: str, args, base_sett
         elif router_type == "lightware":
             return LightwareManager(settings).upload_labels(args.input, args.test)
         else:
-            return asyncio.run(KumoManager(settings).upload_labels(args.input, args.test))
+            return asyncio.run(HelixManager(settings).upload_labels(args.input, args.test))
 
     elif command == "status":
         if router_type == "videohub":
@@ -1537,7 +1537,7 @@ def _run_for_router(ip: str, router_type_arg: str, command: str, args, base_sett
         elif router_type == "lightware":
             return LightwareManager(settings).show_status()
         else:
-            return asyncio.run(KumoManager(settings).show_status())
+            return asyncio.run(HelixManager(settings).show_status())
 
     return False
 
@@ -1623,11 +1623,11 @@ def main() -> None:
                 manager = LightwareManager(settings)
                 success = manager.create_template(args.output, size=size)
             else:
-                manager = KumoManager(settings)
+                manager = HelixManager(settings)
                 success = manager.create_template(args.output)
 
         elif args.command == "view":
-            manager = KumoManager(settings)
+            manager = HelixManager(settings)
             success = manager.view_file(args.input)
 
         elif args.command == "like-names":

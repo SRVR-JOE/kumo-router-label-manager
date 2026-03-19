@@ -3,16 +3,16 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kumo-router-manager"
+name = "helix-router-manager"
 version = "5.5.0"
-description = "Professional AV Production Tool for managing AJA KUMO router labels"
+description = "Professional AV Production Tool for managing video router labels"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "KUMO Tools Team"}
+    {name = "Helix Team"}
 ]
-keywords = ["AJA", "KUMO", "router", "video", "production", "live events"]
+keywords = ["helix", "router", "video", "production", "live events", "AJA", "KUMO", "Videohub", "Lightware"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Other Audience",
@@ -45,7 +45,7 @@ dev = [
 ]
 
 [project.scripts]
-kumo-cli = "src.cli:main"
+helix = "src.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

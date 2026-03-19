@@ -1,4 +1,4 @@
-# KUMO Router Label Manager - Version Information
+# Helix - Version Information
 
 ## Current Version: 5.0.0
 **Release Date**: March 3, 2026
@@ -29,7 +29,7 @@
 **Major Update - Download Functionality Added**
 
 #### ✨ New Features
-- **📥 Download Current Labels**: Pull existing labels directly from KUMO router
+- **📥 Download Current Labels**: Pull existing labels directly from router
 - **🔄 Smart Connection Methods**: Multiple API endpoints with automatic fallback
 - **📊 Enhanced GUI**: Live preview grid with progress tracking
 - **⚡ Batch Operations**: Process multiple routers in sequence
@@ -62,7 +62,7 @@
 
 #### ✨ Features
 - Upload labels from Excel spreadsheet
-- GUI and command-line interfaces  
+- GUI and command-line interfaces
 - Template generation
 - 32x32 router support
 - REST API and Telnet connectivity
@@ -73,7 +73,7 @@
 
 ### Supported KUMO Models
 - **KUMO 1616** - 16x16 SDI router
-- **KUMO 3232** - 32x32 SDI router  
+- **KUMO 3232** - 32x32 SDI router
 - **KUMO 6464** - 64x64 SDI router (via KUMO CP2)
 - **KUMO 1616-12G** - 12G-SDI support
 - **KUMO 3232-12G** - 12G-SDI support
@@ -97,7 +97,7 @@
 ### System Requirements
 - **Operating System**: Windows 10/11, Windows Server 2016+
 - **PowerShell**: Version 5.1 or later
-- **Network**: HTTP/Telnet access to KUMO router
+- **Network**: Network access to router
 - **Memory**: 100MB available RAM
 - **Storage**: 50MB available disk space
 
@@ -127,7 +127,7 @@
 
 ### Version 2.0.0
 - **Excel Large Files**: Files >5MB may load slowly
-- **Network Latency**: High latency connections may timeout  
+- **Network Latency**: High latency connections may timeout
 - **Character Limits**: Some KUMO models limit label length to 8-16 characters
 - **Special Characters**: Avoid / \ : * ? " < > | in labels
 
@@ -146,7 +146,7 @@
 - **Multi-Router Dashboard**: Centralized management interface
 - **Label Templates Library**: Predefined templates for different event types
 - **Change History**: Track label modifications over time
-- **Network Discovery**: Automatic KUMO router detection
+- **Network Discovery**: Automatic router detection
 
 ### Version 2.2 (Future)
 - **API Integration**: Third-party control system integration
@@ -159,10 +159,10 @@
 ## Support Information
 
 ### Technical Support
-- **Documentation**: KUMO-Setup-Guide.md
-- **Examples**: Quick-Start-Examples.ps1  
-- **Templates**: KUMO_Labels_Template.csv
-- **Installation**: Install-KUMO-Tools.ps1
+- **Documentation**: Helix-Setup-Guide.md
+- **Examples**: Quick-Start-Examples.ps1
+- **Templates**: Helix_Labels_Template.csv
+- **Installation**: Install-Helix-Tools.ps1
 
 ### Contact Information
 - **AJA Support**: support@aja.com
@@ -178,5 +178,5 @@
 
 ---
 
-**© 2026 - Created for Professional Live Event Production**  
+**© 2026 - Created for Professional Live Event Production**
 **Compatible with Solotech workflows and industry standards**

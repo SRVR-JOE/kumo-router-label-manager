@@ -1,12 +1,12 @@
-# Router Label Manager v5.0
+# Helix v5.0
 
 **Professional AV Production Tool for Live Events**
 
-Supports **AJA KUMO** and **Blackmagic Videohub** routers. The command-line tool auto-detects which type of router you are connected to, so the same workflow applies to both.
+Supports **AJA KUMO**, **Blackmagic Videohub**, and **Lightware MX2** routers. The command-line tool auto-detects which type of router you are connected to, so the same workflow applies to all.
 
 ## Overview
 
-Complete solution for managing video router labels across KUMO and Videohub hardware. Designed for professional live event production environments like concerts, tours, and corporate events.
+Complete solution for managing video router labels across AJA KUMO, Videohub, and Lightware MX2 hardware. Designed for professional live event production environments like concerts, tours, and corporate events.
 
 ### Supported Hardware
 
@@ -24,30 +24,35 @@ Complete solution for managing video router labels across KUMO and Videohub hard
 - Universal Videohub 72 / 288
 - Any Videohub model with TCP 9990 control port
 
+**Lightware MX2**
+- All MX2 models with LW3 protocol support (TCP 6107)
+
 ### What's New in v5.0
 
+- **Multi-router support** - AJA KUMO, Blackmagic Videohub, and Lightware MX2
+- **Crosspoint matrix view** - Visual matrix display for routing connections
 - **Inline editing** - Click any New Label cell to type directly in the grid
 - **Filter tabs** - Switch between All / Inputs / Outputs / Changed views
 - **Search** - Find labels by name or port number instantly
 - **Find & Replace** - Batch rename with scope control (inputs only, outputs only, copy current labels)
 - **Auto-Number** - Generate sequential labels like "Camera 1", "Camera 2"... with custom prefix and start number
 - **Auto backup** - Labels are backed up to a CSV before every upload
-- **Character count** - Live validation showing chars used vs 50-char limit
+- **Character count** - Live validation showing chars used vs limit
 - **CSV-first** - No Excel dependency required; CSV works out of the box
 - **Resizable window** - Scale the UI to fit your monitor
 - **Improved progress** - Per-port status during download and upload
-- **Videohub TCP 9990** - Full download and upload support for Blackmagic Videohub
+- **Security hardening** - HTTPS-first with HTTP fallback, input validation
 
 ## Quick Start
 
 ### Launch the GUI
 
 ```powershell
-.\KUMO-Label-Manager.ps1
+.\Helix-Label-Manager.ps1
 ```
 
 ### Workflow
-1. Enter your router IP and click **Connect** (KUMO and Videohub both supported)
+1. Enter your router IP and click **Connect** (all router types supported)
 2. Click **Download from Router** to pull current labels
 3. Edit labels directly in the grid (click the yellow "New Label" column)
 4. Use **Find & Replace** or **Auto-Number** for bulk edits
@@ -57,17 +62,26 @@ Complete solution for managing video router labels across KUMO and Videohub hard
 
 ```powershell
 # Download current labels (router type auto-detected)
-.\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "labels.csv"
+.\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "labels.csv"
 
 # Force a specific router type
-.\KUMO-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "vh_labels.csv"
-.\KUMO-Excel-Updater.ps1 -RouterType KUMO    -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "kumo_labels.csv"
+.\Helix-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "vh_labels.csv"
+.\Helix-Excel-Updater.ps1 -RouterType KUMO    -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "kumo_labels.csv"
 
 # Upload from file (router type auto-detected)
-.\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.csv"
+.\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.csv"
 
 # Dry run (test without uploading)
-.\KUMO-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.csv" -TestOnly
+.\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.csv" -TestOnly
+```
+
+### Python CLI
+
+```bash
+pip install -e .
+helix download labels.csv --ip 192.168.1.100
+helix upload labels.xlsx --ip 192.168.1.100 --test
+helix status --ip 192.168.1.100
 ```
 
 ## Connection Protocols
@@ -108,11 +122,15 @@ INPUT LABELS:
 
 Videohub uses **0-based** port indexing. The script converts automatically — your CSV/Excel files always use **1-based** port numbers regardless of router type.
 
+### Lightware MX2 — LW3 Protocol (TCP 6107)
+Uses the LW3 protocol to communicate with Lightware MX2 matrix routers.
+
 ### Auto-Detection Logic
 When `-RouterType Auto` (the default) is used:
-1. Probe Videohub TCP 9990 (2-second timeout)
-2. If no response, probe KUMO REST API
-3. Error if neither responds — use `-RouterType` to specify manually
+1. Probe Lightware LW3 TCP 6107
+2. Probe Videohub TCP 9990 (2-second timeout)
+3. If no response, probe AJA KUMO REST API
+4. Error if none responds — use `-RouterType` to specify manually
 
 ## File Format
 
@@ -120,13 +138,13 @@ Works with CSV (recommended) or Excel (.xlsx). Columns:
 
 | Column | Description |
 |--------|-------------|
-| Port | Port number (1-based for both KUMO and Videohub) |
+| Port | Port number (1-based for all router types) |
 | Type | INPUT or OUTPUT |
 | Current_Label | What is on the router now |
 | New_Label | Your desired label (leave blank to skip) |
 | Notes | Optional documentation |
 
-Labels must be 50 characters or fewer. The app warns you if any labels exceed this limit.
+Labels must be 50 characters or fewer for AJA KUMO. The app warns you if any labels exceed this limit.
 
 ## Batch Operations
 
@@ -144,10 +162,10 @@ Generate sequential labels:
 ### Multi-Router Batch (Mixed Fleet)
 
 ```powershell
-# Batch across KUMO and Videohub routers — type auto-detected per IP
+# Batch across mixed router fleet — type auto-detected per IP
 $routers = @("192.168.1.100", "192.168.1.101", "192.168.1.102")
 foreach ($ip in $routers) {
-    .\KUMO-Excel-Updater.ps1 -KumoIP $ip -ExcelFile "TourLabels.csv"
+    .\Helix-Excel-Updater.ps1 -KumoIP $ip -ExcelFile "TourLabels.csv"
 }
 ```
 
@@ -155,8 +173,9 @@ foreach ($ip in $routers) {
 
 - **Windows 10/11** with **PowerShell 5.1+**
 - Network access to router:
-  - KUMO: port 80 (HTTP REST), port 23 (Telnet fallback)
+  - AJA KUMO: port 80 (HTTP REST), port 23 (Telnet fallback)
   - Videohub: port 9990 (TCP)
+  - Lightware MX2: port 6107 (TCP)
 - Optional: ImportExcel PowerShell module for .xlsx support
 
 ```powershell
@@ -166,7 +185,7 @@ Install-Module ImportExcel -Scope CurrentUser -Force
 
 ## Troubleshooting
 
-**Can't connect to KUMO?**
+**Can't connect to AJA KUMO?**
 - Verify the IP address is correct
 - Check you are on the same network segment
 - Try `ping <router-ip>` from PowerShell
@@ -179,15 +198,14 @@ Install-Module ImportExcel -Scope CurrentUser -Force
 - Use `-RouterType Videohub` to skip auto-detection
 
 **Auto-detection picks the wrong type?**
-- Use `-RouterType KUMO` or `-RouterType Videohub` to force the correct type
-- If both routers share the same IP range, ensure Videohub has port 9990 open
+- Use `-RouterType KUMO` or `-RouterType Videohub` or `-RouterType Lightware` to force the correct type
 
 **PowerShell won't run the script?**
 ```powershell
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-**KUMO labels not updating?**
+**AJA KUMO labels not updating?**
 - Some KUMO models have shorter character limits (8-16 chars)
 - Check the firmware version and API compatibility
 - Try enabling Telnet in the KUMO web interface
@@ -209,8 +227,7 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 - Live character count validation
 - CSV-first approach (no Excel dependency)
 - Resizable window with improved dark theme
-- Blackmagic Videohub TCP 9990 download and upload support
-- Auto-detection of router type (KUMO vs Videohub)
+- Auto-detection of router type
 - `-RouterType` parameter for manual override
 
 ### v4.0
@@ -234,4 +251,5 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ---
 
+**GitHub**: https://github.com/SRVR-JOE/helix
 **Created for professional live event production environments**

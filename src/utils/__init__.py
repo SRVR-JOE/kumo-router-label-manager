@@ -1,15 +1,15 @@
-"""Utility modules for the KUMO Router Management System."""
+"""Utility modules for the Helix Router Management System."""
 
 from .exceptions import (
-    KUMOException,
-    KUMOConnectionError,
-    KUMOValidationError,
-    KUMOFileError,
+    HelixException,
+    HelixConnectionError,
+    HelixValidationError,
+    HelixFileError,
 )
 
 __all__ = [
-    "KUMOException",
-    "KUMOConnectionError",
-    "KUMOValidationError",
-    "KUMOFileError",
+    "HelixException",
+    "HelixConnectionError",
+    "HelixValidationError",
+    "HelixFileError",
 ]

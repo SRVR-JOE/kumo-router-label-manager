@@ -4,7 +4,7 @@ import { RouterType, Label, ConnectResult, UploadResult, Crosspoint } from './ty
 import { detectRouterType } from './auto-detect'
 import { kumoConnect, kumoDownloadLabels, kumoUploadLabels, kumoGetCrosspoints, kumoSetRoute } from './kumo-rest'
 import { videohubConnect, videohubDownloadLabels, videohubUploadLabels, videohubGetRouting, videohubSetRoute } from './videohub'
-import { lightwareConnect, lightwareDownloadLabels, lightwareUploadLabels } from './lightware'
+import { lightwareConnect, lightwareDownloadLabels, lightwareUploadLabels, lightwareGetRouting, lightwareSetRoute } from './lightware'
 
 let currentIp = ''
 let currentType: RouterType | null = null
@@ -95,7 +95,7 @@ export async function getCrosspoints(): Promise<Crosspoint[]> {
     case 'videohub':
       return videohubGetRouting(currentIp)
     case 'lightware':
-      throw new Error('Lightware does not support crosspoint queries via this protocol')
+      return lightwareGetRouting(currentIp)
   }
 }
 
@@ -110,6 +110,7 @@ export async function setRoute(output: number, input: number): Promise<boolean> 
       // Videohub uses 0-based
       return videohubSetRoute(currentIp, output, input)
     case 'lightware':
-      throw new Error('Lightware routing not implemented')
+      // Lightware conversion handled inside lightwareSetRoute
+      return lightwareSetRoute(currentIp, output, input)
   }
 }

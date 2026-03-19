@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type DialogType = 'connect' | 'find-replace' | 'auto-number' | 'bulk-ops' | 'statistics' | 'settings' | 'about' | 'crosspoint' | null
+type DialogType = 'connect' | 'find-replace' | 'auto-number' | 'bulk-ops' | 'statistics' | 'settings' | 'about' | 'crosspoint' | 'scan' | null
 
 interface UIState {
   activeDialog: DialogType

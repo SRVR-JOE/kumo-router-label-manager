@@ -337,7 +337,7 @@ class DefaultLabelGenerator:
 
 
 # Timeout constants (seconds) - tuned for LAN connectivity.
-# These serve as fallback defaults; override via Settings (KUMO_ env vars).
+# These serve as fallback defaults; override via Settings (HLX_ env vars).
 TIMEOUT_REST_REQUEST = 4
 TIMEOUT_TELNET_CONNECT = 3
 TIMEOUT_TELNET_COMMAND = 2

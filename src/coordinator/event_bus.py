@@ -1,7 +1,7 @@
 """Event bus implementation for inter-agent communication.
 
 This module provides an async publish/subscribe event bus for coordinating
-communication between agents in the KUMO router management system.
+communication between agents in the Helix router management system.
 """
 
 import asyncio

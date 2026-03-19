@@ -1,9 +1,9 @@
-# Router Label Manager - Installation Script
+# Helix - Installation Script
 # Professional AV Production Tool for Solotech
-# Version 4.0 - Supports AJA KUMO and Blackmagic Videohub
+# Version 5.0 - Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2
 
 param(
-    [string]$InstallPath = "C:\KUMO-Tools",
+    [string]$InstallPath = "C:\Helix-Tools",
     [switch]$CreateDesktopShortcuts,
     [switch]$InstallExcelModule,
     [switch]$Uninstall
@@ -11,14 +11,14 @@ param(
 
 Write-Host @"
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      Router Label Manager v4.0                               ║
+║                            Helix v5.0                                       ║
 ║                   Professional AV Production Tool                            ║
 ║                                                                               ║
 ║  Features:                                                                    ║
-║  • Download current labels from KUMO / Videohub routers                     ║
+║  • Download current labels from AJA KUMO / Videohub / Lightware routers    ║
 ║  • Bulk update labels via Excel spreadsheet                                  ║
 ║  • Professional GUI and command-line interfaces                              ║
-║  • AJA KUMO (REST API / Telnet) and Blackmagic Videohub (TCP 9990)          ║
+║  • AJA KUMO (REST API / Telnet), Videohub (TCP 9990), Lightware MX2 (LW3) ║
 ║  • Auto-detects router type on connect                                       ║
 ║                                                                               ║
 ║  Created for Solotech Live Event Production                                  ║
@@ -27,27 +27,27 @@ Write-Host @"
 
 # Handle uninstall
 if ($Uninstall) {
-    Write-Host "`nUninstalling Router Label Manager Tools..." -ForegroundColor Yellow
-    
+    Write-Host "`nUninstalling Helix Tools..." -ForegroundColor Yellow
+
     if (Test-Path $InstallPath) {
         Remove-Item $InstallPath -Recurse -Force
         Write-Host "✓ Removed installation directory: $InstallPath" -ForegroundColor Green
     }
-    
+
     # Remove desktop shortcuts
     $shortcuts = @(
-        "$env:USERPROFILE\Desktop\KUMO Label Manager.lnk",
-        "$env:PUBLIC\Desktop\KUMO Label Manager.lnk"
+        "$env:USERPROFILE\Desktop\Helix.lnk",
+        "$env:PUBLIC\Desktop\Helix.lnk"
     )
-    
+
     foreach ($shortcut in $shortcuts) {
         if (Test-Path $shortcut) {
             Remove-Item $shortcut -Force
             Write-Host "✓ Removed shortcut: $shortcut" -ForegroundColor Green
         }
     }
-    
-    Write-Host "✓ Router Label Manager Tools uninstalled successfully!" -ForegroundColor Green
+
+    Write-Host "✓ Helix Tools uninstalled successfully!" -ForegroundColor Green
     exit 0
 }
 
@@ -57,7 +57,7 @@ if ($executionPolicy -eq "Restricted") {
     Write-Warning "PowerShell execution policy is Restricted."
     Write-Host "To fix this, run PowerShell as Administrator and execute:" -ForegroundColor Yellow
     Write-Host "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor White
-    
+
     $response = Read-Host "`nDo you want to continue anyway? (y/N)"
     if ($response -ne 'y' -and $response -ne 'Y') {
         exit 1
@@ -73,8 +73,8 @@ if (-not (Test-Path $InstallPath)) {
     Write-Host "✓ Directory exists: $InstallPath" -ForegroundColor Green
 }
 
-# Support note for Videohub users
-Write-Host "  Supports AJA KUMO / Videohub routers - auto-detected on connect" -ForegroundColor Gray
+# Support note
+Write-Host "  Supports AJA KUMO / Videohub / Lightware MX2 routers - auto-detected on connect" -ForegroundColor Gray
 
 # Install Excel module if requested
 if ($InstallExcelModule) {
@@ -93,59 +93,59 @@ if ($InstallExcelModule) {
 }
 
 # Copy files (in a real deployment, these would be copied from the source)
-Write-Host "`nInstalling Router Label Manager Tools..." -ForegroundColor Yellow
+Write-Host "`nInstalling Helix Tools..." -ForegroundColor Yellow
 
 # Create batch file for easy GUI launch
 $batchContent = @"
 @echo off
 cd /d "$InstallPath"
-powershell -ExecutionPolicy RemoteSigned -File "KUMO-Label-Manager.ps1"
+powershell -ExecutionPolicy RemoteSigned -File "Helix-Label-Manager.ps1"
 pause
 "@
 
-$batchContent | Out-File -FilePath "$InstallPath\Launch-KUMO-GUI.bat" -Encoding ASCII
-Write-Host "✓ Created GUI launcher: Launch-KUMO-GUI.bat" -ForegroundColor Green
+$batchContent | Out-File -FilePath "$InstallPath\Launch-Helix-GUI.bat" -Encoding ASCII
+Write-Host "✓ Created GUI launcher: Launch-Helix-GUI.bat" -ForegroundColor Green
 
 # Create PowerShell profile addition for easy command access
 $profileAddition = @"
 
-# Router Label Manager Tools - Added by installer
+# Helix Tools - Added by installer
 `$env:PATH += ";$InstallPath"
-function kumo-download { & "$InstallPath\KUMO-Excel-Updater.ps1" -DownloadLabels @args }
-function kumo-update { & "$InstallPath\KUMO-Excel-Updater.ps1" @args }
-function kumo-template { & "$InstallPath\KUMO-Excel-Updater.ps1" -CreateTemplate @args }
-function kumo-gui { & "$InstallPath\Launch-KUMO-GUI.bat" }
+function helix-download { & "$InstallPath\Helix-Excel-Updater.ps1" -DownloadLabels @args }
+function helix-update { & "$InstallPath\Helix-Excel-Updater.ps1" @args }
+function helix-template { & "$InstallPath\Helix-Excel-Updater.ps1" -CreateTemplate @args }
+function helix-gui { & "$InstallPath\Launch-Helix-GUI.bat" }
 
 "@
 
 # Create quick start script
 $quickStartContent = @'
-# Router Label Manager - Quick Start Examples
-# Supports AJA KUMO and Blackmagic Videohub routers
+# Helix - Quick Start Examples
+# Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 routers
 # Run these commands from PowerShell
 
 # Download current labels (router type auto-detected):
-kumo-download -KumoIP "192.168.1.100" -DownloadPath "C:\temp\current_labels.xlsx"
+helix-download -KumoIP "192.168.1.100" -DownloadPath "C:\temp\current_labels.xlsx"
 
 # Download from a Videohub explicitly:
-# .\KUMO-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "C:\temp\vh_labels.csv"
+# .\Helix-Excel-Updater.ps1 -RouterType Videohub -DownloadLabels -KumoIP "192.168.1.101" -DownloadPath "C:\temp\vh_labels.csv"
 
 # Create a blank template:
-kumo-template
+helix-template
 
-# Update labels from Excel file (KUMO / Videohub auto-detected):
-kumo-update -KumoIP "192.168.1.100" -ExcelFile "C:\temp\labels.xlsx"
+# Update labels from Excel file (router type auto-detected):
+helix-update -KumoIP "192.168.1.100" -ExcelFile "C:\temp\labels.xlsx"
 
 # Test connection without making changes:
-kumo-update -KumoIP "192.168.1.100" -ExcelFile "C:\temp\labels.xlsx" -TestOnly
+helix-update -KumoIP "192.168.1.100" -ExcelFile "C:\temp\labels.xlsx" -TestOnly
 
 # Launch GUI application:
-kumo-gui
+helix-gui
 
 # Manual commands (if functions don't work):
-# .\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "IP" -DownloadPath "file.xlsx"
-# .\KUMO-Excel-Updater.ps1 -KumoIP "IP" -ExcelFile "file.xlsx"
-# .\KUMO-Label-Manager.ps1
+# .\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "IP" -DownloadPath "file.xlsx"
+# .\Helix-Excel-Updater.ps1 -KumoIP "IP" -ExcelFile "file.xlsx"
+# .\Helix-Label-Manager.ps1
 '@
 
 $quickStartContent | Out-File -FilePath "$InstallPath\Quick-Start-Examples.ps1" -Encoding UTF8
@@ -154,20 +154,20 @@ Write-Host "✓ Created quick start guide: Quick-Start-Examples.ps1" -Foreground
 # Create desktop shortcuts if requested
 if ($CreateDesktopShortcuts) {
     Write-Host "`nCreating desktop shortcuts..." -ForegroundColor Yellow
-    
+
     try {
         $WshShell = New-Object -comObject WScript.Shell
-        
+
         # GUI shortcut
-        $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\KUMO Label Manager.lnk")
+        $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Helix.lnk")
         $Shortcut.TargetPath = "powershell.exe"
-        $Shortcut.Arguments = "-ExecutionPolicy RemoteSigned -File `"$InstallPath\KUMO-Label-Manager.ps1`""
+        $Shortcut.Arguments = "-ExecutionPolicy RemoteSigned -File `"$InstallPath\Helix-Label-Manager.ps1`""
         $Shortcut.WorkingDirectory = $InstallPath
-        $Shortcut.Description = "Router Label Manager - GUI (KUMO / Videohub)"
+        $Shortcut.Description = "Helix - Router Label Manager (AJA KUMO / Videohub / Lightware MX2)"
         $Shortcut.Save()
-        
-        Write-Host "✓ Created desktop shortcut: KUMO Label Manager" -ForegroundColor Green
-        
+
+        Write-Host "✓ Created desktop shortcut: Helix" -ForegroundColor Green
+
     } catch {
         Write-Warning "Failed to create desktop shortcuts: $($_.Exception.Message)"
     }
@@ -175,14 +175,15 @@ if ($CreateDesktopShortcuts) {
 
 # Create configuration file
 $configContent = @{
-    Version = "4.0"
+    Version = "5.0"
     InstallPath = $InstallPath
     InstallDate = Get-Date
     Features = @(
-        "Download current labels from KUMO / Videohub routers",
+        "Download current labels from AJA KUMO / Videohub / Lightware MX2 routers",
         "Upload labels from Excel or CSV",
         "AJA KUMO: REST API and Telnet",
         "Blackmagic Videohub: TCP 9990 protocol",
+        "Lightware MX2: LW3 protocol on TCP 6107",
         "Auto-detects router type on connect",
         "GUI and command-line interfaces"
     )
@@ -198,33 +199,33 @@ Write-Host @"
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
 Installation Directory: $InstallPath
-Supported Routers: AJA KUMO (REST/Telnet) and Blackmagic Videohub (TCP 9990)
+Supported Routers: AJA KUMO, Blackmagic Videohub, Lightware MX2
 
 Quick Commands (add to PowerShell profile):
-• kumo-download -KumoIP "192.168.1.100" -DownloadPath "labels.xlsx"
-• kumo-update -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
-• kumo-template
-• kumo-gui
+• helix-download -KumoIP "192.168.1.100" -DownloadPath "labels.xlsx"
+• helix-update -KumoIP "192.168.1.100" -ExcelFile "labels.xlsx"
+• helix-template
+• helix-gui
 
 Files Created:
-• KUMO-Label-Manager.ps1     (GUI Application)
-• KUMO-Excel-Updater.ps1     (Command Line Tool - KUMO + Videohub)
-• Launch-KUMO-GUI.bat        (Easy GUI Launcher)
+• Helix-Label-Manager.ps1     (GUI Application)
+• Helix-Excel-Updater.ps1     (Command Line Tool)
+• Launch-Helix-GUI.bat        (Easy GUI Launcher)
 • Quick-Start-Examples.ps1   (Usage Examples)
-• KUMO-Setup-Guide.md        (Complete Documentation)
+• Helix-Setup-Guide.md        (Complete Documentation)
 
 Next Steps:
 1. Copy the main PowerShell files to: $InstallPath
-2. Run: .\Launch-KUMO-GUI.bat (for GUI)
-3. Or use command line: kumo-download -KumoIP "YOUR_ROUTER_IP" -DownloadPath "labels.xlsx"
+2. Run: .\Launch-Helix-GUI.bat (for GUI)
+3. Or use command line: helix-download -KumoIP "YOUR_ROUTER_IP" -DownloadPath "labels.xlsx"
    (Router type is auto-detected. Use -RouterType Videohub to force Videohub mode.)
 
-For support: Check KUMO-Setup-Guide.md for troubleshooting
+For support: Check Helix-Setup-Guide.md for troubleshooting
 "@ -ForegroundColor Green
 
 # Offer to add functions to PowerShell profile
 Write-Host "`nOptional: Add quick commands to PowerShell profile?" -ForegroundColor Yellow
-Write-Host "This will allow you to use 'kumo-download', 'kumo-update', etc. from anywhere" -ForegroundColor White
+Write-Host "This will allow you to use 'helix-download', 'helix-update', etc. from anywhere" -ForegroundColor White
 $addToProfile = Read-Host "Add to profile? (y/N)"
 
 if ($addToProfile -eq 'y' -or $addToProfile -eq 'Y') {
@@ -232,17 +233,17 @@ if ($addToProfile -eq 'y' -or $addToProfile -eq 'Y') {
         if (-not (Test-Path $PROFILE)) {
             New-Item -ItemType File -Path $PROFILE -Force | Out-Null
         }
-        
+
         Add-Content -Path $PROFILE -Value $profileAddition
-        Write-Host "✓ Added KUMO functions to PowerShell profile" -ForegroundColor Green
+        Write-Host "✓ Added Helix functions to PowerShell profile" -ForegroundColor Green
         Write-Host "  Restart PowerShell to use the new commands" -ForegroundColor Yellow
-        
+
     } catch {
         Write-Warning "Failed to update PowerShell profile: $($_.Exception.Message)"
         Write-Host "You can manually add the functions by editing your profile: $PROFILE" -ForegroundColor Yellow
     }
 }
 
-Write-Host "`nRouter Label Manager is ready to use!" -ForegroundColor Magenta
-Write-Host "  AJA KUMO and Blackmagic Videohub support included." -ForegroundColor White
+Write-Host "`nHelix is ready to use!" -ForegroundColor Magenta
+Write-Host "  AJA KUMO, Blackmagic Videohub, and Lightware MX2 support included." -ForegroundColor White
 Write-Host "  Perfect for live event production and professional AV workflows." -ForegroundColor White

@@ -14,6 +14,32 @@ export function useRouter() {
     if (result.success) {
       router.setConnected(result.routerType, result.deviceName, result.inputCount, result.outputCount)
       ui.showToast(`Connected to ${result.deviceName}`, 'success')
+      // Auto-download labels after successful connect
+      try {
+        const rawLabels = await window.helix.router.download() as Array<{
+          portNumber: number; portType: 'INPUT' | 'OUTPUT'
+          currentLabel: string; newLabel: string | null
+          currentLabelLine2: string; newLabelLine2: string | null
+          currentColor: number; newColor: number | null; notes: string
+        }>
+        const labels: LabelRow[] = rawLabels.map(l => ({
+          id: `${l.portType}-${l.portNumber}`,
+          portNumber: l.portNumber,
+          portType: l.portType,
+          currentLabel: l.currentLabel,
+          newLabel: l.newLabel || '',
+          currentLabelLine2: l.currentLabelLine2 || '',
+          newLabelLine2: l.newLabelLine2 || '',
+          currentColor: l.currentColor,
+          newColor: l.newColor,
+          notes: l.notes || '',
+          status: 'unchanged' as const,
+        }))
+        labelsStore.setLabels(labels)
+        ui.showToast(`Downloaded ${labels.length} labels`, 'success')
+      } catch {
+        ui.showToast('Auto-download labels failed', 'warning')
+      }
     } else {
       router.setError(result.error || 'Connection failed')
       ui.showToast(result.error || 'Connection failed', 'error')

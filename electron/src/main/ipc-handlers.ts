@@ -3,6 +3,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import * as routerAgent from './protocols/router-agent'
 import { detectRouterType } from './protocols/auto-detect'
+import { scanSubnet } from './protocols/network-scanner'
 import * as fileAgent from './file-io/file-agent'
 import { getSettings, setSettings, addRecentFile, getRecentFiles } from './settings-store'
 import { Label, PortData } from './protocols/types'
@@ -38,6 +39,18 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('router:detect-type', async (_event, ip: string) => {
     return detectRouterType(ip)
+  })
+
+  ipcMain.handle('router:scan-subnet', async (_event, baseIp: string) => {
+    try {
+      const results = await scanSubnet(baseIp, (progress) => {
+        sendToRenderer('scan-progress', progress)
+      })
+      return results
+    } catch (e) {
+      sendToRenderer('error', String(e))
+      return []
+    }
   })
 
   ipcMain.handle('router:download', async () => {
@@ -126,6 +139,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('file:get-recent', () => {
     return getRecentFiles()
+  })
+
+  ipcMain.handle('file:get-default-templates', () => {
+    return fileAgent.getDefaultTemplates()
+  })
+
+  ipcMain.handle('file:open-default-template', async (_event, name: string) => {
+    try {
+      return await fileAgent.openDefaultTemplate(name)
+    } catch (e) {
+      sendToRenderer('error', String(e))
+      return null
+    }
   })
 
   // --- Settings ---

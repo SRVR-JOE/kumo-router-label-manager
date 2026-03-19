@@ -1,7 +1,8 @@
 // Unified file I/O facade with native dialogs
 
-import { dialog, BrowserWindow } from 'electron'
-import { extname } from 'path'
+import { dialog, BrowserWindow, app } from 'electron'
+import { extname, join, resolve } from 'path'
+import { readdirSync, existsSync } from 'fs'
 import { FileData } from '../protocols/types'
 import { readExcel, writeExcel, createExcelTemplate } from './excel-handler'
 import { readCsv, writeCsv, createCsvTemplate } from './csv-handler'
@@ -101,4 +102,48 @@ export async function createTemplate(portCount = 32): Promise<string | null> {
   }
 
   return filePath
+}
+
+function getTemplatesDir(): string {
+  // In production, resources are in the app's resource path
+  // In dev, they're relative to the electron directory
+  const prodPath = join(process.resourcesPath || '', 'templates')
+  const devPath = resolve(__dirname, '..', '..', '..', 'resources', 'templates')
+
+  if (existsSync(prodPath)) return prodPath
+  if (existsSync(devPath)) return devPath
+
+  // Fallback: try relative to app path
+  const appPath = join(app.getAppPath(), 'resources', 'templates')
+  return appPath
+}
+
+export function getDefaultTemplates(): Array<{ name: string; filename: string }> {
+  const dir = getTemplatesDir()
+  if (!existsSync(dir)) return []
+
+  try {
+    const files = readdirSync(dir).filter(f => f.endsWith('.xlsx'))
+    return files.map(filename => {
+      // Extract a friendly name: "Helix_16x16_Template.xlsx" -> "16x16 Template"
+      const name = filename
+        .replace(/^Helix_/, '')
+        .replace(/\.xlsx$/, '')
+        .replace(/_/g, ' ')
+      return { name, filename }
+    })
+  } catch {
+    return []
+  }
+}
+
+export async function openDefaultTemplate(templateName: string): Promise<FileData | null> {
+  const dir = getTemplatesDir()
+  const filePath = join(dir, templateName)
+
+  if (!existsSync(filePath)) {
+    throw new Error(`Template not found: ${templateName}`)
+  }
+
+  return readExcel(filePath)
 }

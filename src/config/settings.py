@@ -1,4 +1,4 @@
-"""Application settings for the KUMO Router Management System.
+"""Application settings for the Helix Router Management System.
 
 This module defines application configuration using Pydantic BaseSettings,
 allowing configuration from environment variables and config files.
@@ -16,14 +16,14 @@ from src.utils.validation import validate_ip_address as _validate_ip
 class Settings(BaseSettings):
     """Application settings with validation.
 
-    Settings can be configured via environment variables with the prefix 'KUMO_'
+    Settings can be configured via environment variables with the prefix 'HLX_'
     or through a .env file.
     """
 
     # Router Settings
     router_ip: str = Field(
         default="192.168.100.52",
-        description="Default IP address of the KUMO router"
+        description="Default IP address of the router"
     )
     router_ips: List[str] = Field(
         default=["192.168.100.51", "192.168.100.52"],
@@ -79,13 +79,13 @@ class Settings(BaseSettings):
         default=120,
         ge=1,
         le=120,
-        description="Maximum valid port number (supports KUMO 16/32/64 and Videohub up to 120)"
+        description="Maximum valid port number (supports KUMO 16/32/64, Videohub up to 120, Lightware MX2)"
     )
     max_label_length: int = Field(
         default=255,
         ge=1,
         le=255,
-        description="Maximum length for port labels (50 for KUMO, 255 for Videohub)"
+        description="Maximum length for port labels (50 for AJA KUMO, 255 for Videohub)"
     )
     allowed_port_types: List[str] = Field(
         default=["INPUT", "OUTPUT"],
@@ -180,7 +180,7 @@ class Settings(BaseSettings):
 
     # Application Settings
     app_name: str = Field(
-        default="KUMO Router Manager",
+        default="Helix Router Manager",
         description="Application name"
     )
     app_version: str = Field(
@@ -280,7 +280,7 @@ class Settings(BaseSettings):
         return Path(self.labels_file_path)
 
     model_config = ConfigDict(
-        env_prefix="KUMO_",
+        env_prefix="HLX_",
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,

@@ -15,6 +15,7 @@ export function getSettings(): AppSettings {
     recentFiles: store.get('recentFiles', DEFAULT_SETTINGS.recentFiles),
     theme: store.get('theme', DEFAULT_SETTINGS.theme),
     windowBounds: store.get('windowBounds', undefined),
+    savedRouters: store.get('savedRouters', DEFAULT_SETTINGS.savedRouters),
   }
 }
 

@@ -1,14 +1,14 @@
-"""Custom exception hierarchy for the KUMO Router Management System.
+"""Custom exception hierarchy for the Helix Router Management System.
 
 This module defines all custom exceptions used throughout the system,
 providing specific error types for different failure scenarios.
 """
 
 
-class KUMOException(Exception):
-    """Base exception class for all KUMO-related errors.
+class HelixException(Exception):
+    """Base exception class for all Helix-related errors.
 
-    All custom exceptions in the KUMO system inherit from this base class,
+    All custom exceptions in the Helix system inherit from this base class,
     allowing for easy catching of all system-specific errors.
 
     Attributes:
@@ -35,10 +35,10 @@ class KUMOException(Exception):
         return self.message
 
 
-class KUMOConnectionError(KUMOException):
+class HelixConnectionError(HelixException):
     """Exception raised for router connection errors.
 
-    This exception is raised when there are problems connecting to the KUMO router,
+    This exception is raised when there are problems connecting to the router,
     including network errors, authentication failures, or timeout issues.
 
     Attributes:
@@ -73,7 +73,7 @@ class KUMOConnectionError(KUMOException):
         super().__init__(message, error_details)
 
 
-class KUMOValidationError(KUMOException):
+class HelixValidationError(HelixException):
     """Exception raised for data validation errors.
 
     This exception is raised when validation of labels, configuration,
@@ -117,7 +117,7 @@ class KUMOValidationError(KUMOException):
         super().__init__(message, error_details)
 
 
-class KUMOFileError(KUMOException):
+class HelixFileError(HelixException):
     """Exception raised for file operation errors.
 
     This exception is raised when file operations fail, including

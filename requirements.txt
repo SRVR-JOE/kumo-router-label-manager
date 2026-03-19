@@ -1,4 +1,4 @@
-# KUMO Router Label Manager - Python Dependencies
+# Helix Router Label Manager - Python Dependencies
 # Install with: pip install -r requirements.txt
 
 # Core dependencies

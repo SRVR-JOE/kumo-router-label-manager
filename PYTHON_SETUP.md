@@ -1,10 +1,10 @@
-# Python Components Setup Guide
+# Helix Python Components Setup Guide
 
-This guide explains how to set up and use the Python components of the KUMO Router Label Manager.
+This guide explains how to set up and use the Python components of Helix.
 
 ## Current Status
 
-The Python components provide an event-driven agent architecture for managing KUMO routers. The PowerShell tools are **production-ready** and fully functional. The Python components are provided as an architectural framework for advanced integration scenarios.
+The Python components provide an event-driven agent architecture for managing video routers. The PowerShell tools are **production-ready** and fully functional. The Python components are provided as an architectural framework for advanced integration scenarios.
 
 ## Installation
 
@@ -28,7 +28,7 @@ pip install -r requirements.txt
 # Copy the example environment file
 copy .env.example .env
 
-# Edit .env with your KUMO router settings
+# Edit .env with your router settings
 notepad .env
 ```
 
@@ -88,7 +88,7 @@ if __name__ == "__main__":
 ### Components
 
 - **EventBus**: Async publish/subscribe system for inter-agent communication
-- **APIAgent**: Handles REST and Telnet communication with KUMO routers
+- **APIAgent**: Handles REST and Telnet communication with video routers
 - **FileHandlerAgent**: Manages CSV, Excel, and JSON file operations
 - **Models**: Data structures (Label, Router, Events)
 
@@ -166,5 +166,5 @@ See the main README.md for a complete list of known issues, including:
 The Python components are provided for:
 - Advanced integration scenarios
 - Custom automation workflows
-- Programmatic access to KUMO routers
+- Programmatic access to video routers
 - Building custom tools and services

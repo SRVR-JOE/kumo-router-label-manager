@@ -26,7 +26,7 @@ class FileHandlerAgent:
     Main agent for handling file operations across multiple formats.
 
     Supports:
-    - Excel (.xlsx) files with KUMO_Labels worksheet
+    - Excel (.xlsx) files with Router_Labels worksheet
     - CSV files with proper encoding and escaping
     - JSON files with nested or flat structure
 

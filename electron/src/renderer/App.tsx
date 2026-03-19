@@ -3,6 +3,7 @@ import Sidebar from './components/layout/Sidebar'
 import StatusBar from './components/layout/StatusBar'
 import LabelTable from './components/labels/LabelTable'
 import ConnectDialog from './components/router/ConnectDialog'
+import ScanDialog from './components/router/ScanDialog'
 import FindReplace from './components/dialogs/FindReplace'
 import AutoNumber from './components/dialogs/AutoNumber'
 import BulkOps from './components/dialogs/BulkOps'
@@ -92,6 +93,7 @@ export default function App() {
 
       {/* Dialogs */}
       {activeDialog === 'connect' && <ConnectDialog />}
+      {activeDialog === 'scan' && <ScanDialog />}
       {activeDialog === 'find-replace' && <FindReplace />}
       {activeDialog === 'auto-number' && <AutoNumber />}
       {activeDialog === 'bulk-ops' && <BulkOps />}

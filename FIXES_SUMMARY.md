@@ -1,11 +1,11 @@
-# Fixes Summary - KUMO Router Label Manager
+# Fixes Summary - Helix
 
-This document summarizes all the critical fixes applied to the KUMO Router Label Manager codebase.
+This document summarizes all the critical fixes applied to the Helix codebase.
 
 ## Overview
 
 All **4 critical issues** identified during the comprehensive code review have been fixed and pushed to GitHub:
-- https://github.com/SRVR-JOE/kumo-router-label-manager
+- https://github.com/SRVR-JOE/helix
 
 ---
 
@@ -14,7 +14,7 @@ All **4 critical issues** identified during the comprehensive code review have b
 ### Problem
 - PowerShell scripts used the `??` null coalescing operator (PowerShell 7.0+)
 - Broke on Windows default PowerShell 5.1
-- Affected lines: KUMO-Label-Manager.ps1:343, 357
+- Affected lines: Helix-Label-Manager.ps1:343, 357
 
 ### Solution
 ```powershell
@@ -104,8 +104,8 @@ function Invoke-SecureRestMethod {
 ```
 
 ### Updated Calls
-- `KUMO-Excel-Updater.ps1`: 15+ web request calls
-- `KUMO-Label-Manager.ps1`: 13+ web request calls
+- `Helix-Excel-Updater.ps1`: 15+ web request calls
+- `Helix-Label-Manager.ps1`: 13+ web request calls
 - All `Invoke-RestMethod` → `Invoke-SecureRestMethod`
 - All `Invoke-WebRequest` → `Invoke-SecureWebRequest`
 
@@ -115,7 +115,7 @@ function Invoke-SecureRestMethod {
 
 ### Impact
 - ✅ All connections try HTTPS first
-- ✅ Automatic fallback to HTTP for older routers
+- ✅ Automatic fallback to HTTP for older AJA KUMO routers
 - ✅ Protects against MITM attacks when HTTPS available
 - ✅ Maintains compatibility with HTTP-only devices
 
@@ -136,18 +136,18 @@ openpyxl>=3.1.0
 
 #### `pyproject.toml`
 - Package configuration for pip installation
-- Entry point: `kumo-cli` command
+- Entry point: `helix` command
 - Development dependencies (pytest, black, mypy)
 
 #### `.env.example`
 - Environment variable template
-- KUMO router configuration
+- Router configuration
 - Logging settings
 - Default paths
 
 #### `src/cli.py`
 - Command-line interface entry point
-- `KumoManager` coordinator class
+- `HelixManager` coordinator class
 - Download/upload commands
 - Proper async/await integration
 
@@ -160,7 +160,7 @@ openpyxl>=3.1.0
 
 ### Architecture Completed
 ```
-KumoManager (coordinator)
+HelixManager (coordinator)
     ├── EventBus (async pub/sub)
     ├── APIAgent (REST + Telnet)
     └── FileHandlerAgent (Excel/CSV/JSON)
@@ -188,8 +188,8 @@ python -m src.cli upload labels.xlsx --ip 192.168.1.100
 ## Summary of Changes
 
 ### Files Modified: 6
-1. `KUMO-Excel-Updater.ps1` - HTTPS + PS 5.1 compatibility
-2. `KUMO-Label-Manager.ps1` - HTTPS + PS 5.1 compatibility
+1. `Helix-Excel-Updater.ps1` - HTTPS + PS 5.1 compatibility
+2. `Helix-Label-Manager.ps1` - HTTPS + PS 5.1 compatibility
 3. `src/agents/api_agent/__init__.py` - Async event publishing
 4. `src/agents/file_handler/__init__.py` - Fixed event API usage
 5. `src/coordinator/event_bus.py` - Async-safe locking
@@ -217,10 +217,10 @@ python -m src.cli upload labels.xlsx --ip 192.168.1.100
 $PSVersionTable.PSVersion  # Should show 5.1.x
 
 # Test HTTPS with fallback
-.\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "test.xlsx"
+.\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "test.xlsx"
 
 # Force HTTP mode
-.\KUMO-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "test.xlsx" -ForceHTTP
+.\Helix-Excel-Updater.ps1 -DownloadLabels -KumoIP "192.168.1.100" -DownloadPath "test.xlsx" -ForceHTTP
 ```
 
 ### Python Components
@@ -270,7 +270,7 @@ mypy src/
 ---
 
 ## GitHub Repository
-**Repository**: https://github.com/SRVR-JOE/kumo-router-label-manager
+**Repository**: https://github.com/SRVR-JOE/helix
 
 **Commits**:
 - `bb012b2` - Initial commit with all components
@@ -285,7 +285,7 @@ mypy src/
 For issues or questions:
 1. Check `README.md` for general usage
 2. Check `PYTHON_SETUP.md` for Python-specific setup
-3. Check `KUMO-Setup-Guide.md` for detailed configuration
+3. Check `Helix-Setup-Guide.md` for detailed configuration
 4. Review this document for recent changes
 
 ---

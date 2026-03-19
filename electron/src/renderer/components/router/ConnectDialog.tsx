@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useUIStore } from '../../stores/ui-store'
 import { useRouter } from '../../hooks/useRouter'
 
@@ -6,6 +6,13 @@ export default function ConnectDialog() {
   const { closeDialog } = useUIStore()
   const { connect } = useRouter()
   const [ip, setIp] = useState('')
+
+  useEffect(() => {
+    window.helix.settings.get().then((s: unknown) => {
+      const settings = s as { defaultIp?: string }
+      if (settings.defaultIp) setIp(settings.defaultIp)
+    })
+  }, [])
   const [routerType, setRouterType] = useState<string>('')
   const [detecting, setDetecting] = useState(false)
   const [detectedType, setDetectedType] = useState<string | null>(null)
@@ -90,7 +97,7 @@ export function DialogWrapper({ title, onClose, children, width = 'max-w-md' }: 
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className={`bg-helix-surface border border-helix-border rounded-lg shadow-2xl p-5 ${width}`} onClick={e => e.stopPropagation()}>
+      <div className={`bg-helix-surface border border-helix-border rounded-lg shadow-2xl p-5 max-h-[90vh] overflow-y-auto ${width}`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-helix-text">{title}</h2>
           <button onClick={onClose} className="text-helix-text-dim hover:text-helix-text text-lg">&times;</button>

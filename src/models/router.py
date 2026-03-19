@@ -1,7 +1,8 @@
-"""Router configuration model for KUMO router management.
+"""Router configuration model for video router management.
 
-This module defines the Router class representing the KUMO router
-configuration and state.
+This module defines the Router class representing a router's
+configuration and state. Supports AJA KUMO, Blackmagic Videohub,
+and Lightware MX2 routers.
 """
 
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ class ConnectionStatus(Enum):
 
 @dataclass
 class Router:
-    """Represents a KUMO router configuration and state.
+    """Represents a router configuration and state.
 
     Attributes:
         ip_address: IP address of the router

@@ -19,6 +19,8 @@ const helixAPI = {
       ipcRenderer.invoke('router:get-crosspoints'),
     setRoute: (output: number, input: number) =>
       ipcRenderer.invoke('router:set-route', output, input),
+    scanSubnet: (baseIp: string) =>
+      ipcRenderer.invoke('router:scan-subnet', baseIp),
   },
 
   // File operations
@@ -33,6 +35,10 @@ const helixAPI = {
       ipcRenderer.invoke('file:create-template', path, portCount),
     getRecent: () =>
       ipcRenderer.invoke('file:get-recent'),
+    getDefaultTemplates: () =>
+      ipcRenderer.invoke('file:get-default-templates'),
+    openDefaultTemplate: (name: string) =>
+      ipcRenderer.invoke('file:open-default-template', name),
   },
 
   // Settings
@@ -67,6 +73,7 @@ const helixAPI = {
       'menu:undo',
       'menu:redo',
       'menu:about',
+      'scan-progress',
     ]
     if (validChannels.includes(channel)) {
       const subscription = (_event: unknown, ...args: unknown[]) => callback(...args)

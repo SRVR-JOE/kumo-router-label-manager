@@ -1,7 +1,8 @@
-"""API Agent for communicating with AJA KUMO routers.
+"""API Agent for communicating with video routers.
 
 This module provides the main APIAgent class that orchestrates communication
-with KUMO routers using multiple protocols (REST, Telnet) with automatic fallback.
+with routers using multiple protocols (REST, Telnet) with automatic fallback.
+Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2.
 """
 
 import asyncio
@@ -28,9 +29,9 @@ class APIAgentError(Exception):
 
 
 class APIAgent:
-    """Main API Agent for KUMO router communication.
+    """Main API Agent for router communication.
 
-    Manages communication with KUMO routers using multiple protocols with
+    Manages communication with video routers using multiple protocols with
     automatic fallback. Implements label download/upload with retry logic
     and emits events through the event bus for progress tracking.
     """
@@ -39,7 +40,7 @@ class APIAgent:
         """Initialize API Agent.
 
         Args:
-            router_ip: IP address of the KUMO router
+            router_ip: IP address of the router
             event_bus: Optional event bus for emitting events
         """
         self.router_ip = router_ip

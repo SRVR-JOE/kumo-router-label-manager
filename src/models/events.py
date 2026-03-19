@@ -1,4 +1,4 @@
-"""Event data models for the KUMO Router Management System.
+"""Event data models for the Helix Router Management System.
 
 This module defines the event hierarchy used for communication between agents
 through the event bus.

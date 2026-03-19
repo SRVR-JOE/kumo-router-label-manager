@@ -245,6 +245,54 @@ export async function lightwareDownloadLabels(ip: string): Promise<Label[]> {
   }
 }
 
+export async function lightwareGetRouting(ip: string): Promise<{ output: number; input: number }[]> {
+  const sock = await connectSocket(ip)
+  const sendId = { value: 1 }
+
+  try {
+    const lines = await lw3SendCommand(sock, 'GET /MEDIA/XP/VIDEO.DestinationConnection*', sendId)
+    const crosspoints: { output: number; input: number }[] = []
+    // Lines look like: /MEDIA/XP/VIDEO.DestinationConnectionD{n}=S{m}
+    const re = /DestinationConnectionD(\d+)=S(\d+)/
+
+    for (const line of lines) {
+      const m = re.exec(line)
+      if (m) {
+        const output = parseInt(m[1], 10) - 1 // convert to 0-based
+        const input = parseInt(m[2], 10) - 1
+        if (output >= 0 && input >= 0) {
+          crosspoints.push({ output, input })
+        }
+      }
+    }
+
+    return crosspoints
+  } finally {
+    sock.destroy()
+  }
+}
+
+export async function lightwareSetRoute(ip: string, output: number, input: number): Promise<boolean> {
+  const sock = await connectSocket(ip)
+  const sendId = { value: 1 }
+
+  try {
+    // Lightware uses 1-based port numbers
+    const command = `SET /MEDIA/XP/VIDEO.DestinationConnectionD${output + 1}=S${input + 1}`
+    const lines = await lw3SendCommand(sock, command, sendId)
+
+    // Check for errors
+    for (const line of lines) {
+      if (line.startsWith('pE') || line.startsWith('nE') || line.startsWith('-E')) {
+        return false
+      }
+    }
+    return true
+  } finally {
+    sock.destroy()
+  }
+}
+
 export async function lightwareUploadLabels(ip: string, labels: Label[]): Promise<UploadResult> {
   const changes = labels.filter(l => l.newLabel !== null && l.newLabel !== l.currentLabel)
   if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [] }

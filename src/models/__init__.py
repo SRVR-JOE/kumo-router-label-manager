@@ -1,4 +1,4 @@
-"""Data models for the KUMO Router Management System."""
+"""Data models for the Helix Router Management System."""
 
 from .events import BaseEvent, ConnectionEvent, LabelsEvent, ValidationEvent, FileEvent
 from .label import Label, PortType

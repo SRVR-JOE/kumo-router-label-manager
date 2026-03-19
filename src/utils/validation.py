@@ -1,4 +1,4 @@
-"""Shared validation utilities for the KUMO Router Management System.
+"""Shared validation utilities for the Helix Router Management System.
 
 Consolidates duplicate validation logic for IP addresses, port numbers,
 and color IDs used across settings, models, and schema modules.

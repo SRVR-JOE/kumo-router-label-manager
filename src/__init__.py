@@ -1,1 +1,1 @@
-"""KUMO Router Management System - Main package initialization."""
+"""Helix Router Management System - Main package initialization."""

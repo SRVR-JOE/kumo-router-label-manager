@@ -27,7 +27,7 @@ class ExcelHandler:
 
     def read_excel(self, file_path: Path) -> FileData:
         """
-        Read Excel file and parse KUMO_Labels worksheet.
+        Read Excel file and parse the labels worksheet.
 
         Args:
             file_path: Path to Excel file
