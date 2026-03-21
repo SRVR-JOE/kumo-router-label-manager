@@ -1,12 +1,25 @@
 // Lightware MX2 LW3 TCP 6107 protocol
-// Framed requests: {NNNN#command\r\n} -> {NNNN ... }
+// Confirmed working against MX2-32x32-HDMI20-A-R at 192.168.100.51
+//
+// Key findings from live device:
+//   - GETALL /MEDIA/XP/VIDEO returns DestinationConnectionStatus (NOT DestinationConnectionList)
+//   - No .SourcePortCount / .DestinationPortCount — derive counts from label names
+//   - CALL /MEDIA/XP/VIDEO:switch(I{n}:O{n}) works, returns "mO ...=OK"
+//   - Labels: GET /MEDIA/NAMES/VIDEO.* → "pw ...I{n}={page};{name}"
+//   - Product name: GET /.ProductName
+//   - Serial: GET /.SerialNumber
 
 import * as net from 'net'
 import { Label, ConnectResult, UploadResult, KUMO_DEFAULT_COLOR } from './types'
 
 const LIGHTWARE_PORT = 6107
-const CONNECT_TIMEOUT = 2000
+const CONNECT_TIMEOUT = 5000
+const COMMAND_TIMEOUT = 10000
 const MAX_LABEL_LENGTH = 255
+
+// ---------------------------------------------------------------------------
+// Socket helpers
+// ---------------------------------------------------------------------------
 
 function connectSocket(ip: string, port = LIGHTWARE_PORT): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
@@ -28,6 +41,10 @@ function connectSocket(ip: string, port = LIGHTWARE_PORT): Promise<net.Socket> {
   })
 }
 
+/**
+ * Send an LW3 command wrapped in {NNNN#command\r\n} framing.
+ * Collects all response lines between { } block markers.
+ */
 function lw3SendCommand(
   sock: net.Socket,
   command: string,
@@ -47,7 +64,7 @@ function lw3SendCommand(
     const deadline = setTimeout(() => {
       sock.removeListener('data', onData)
       resolve(lines)
-    }, 5000)
+    }, COMMAND_TIMEOUT)
 
     const onData = (chunk: Buffer): void => {
       buf += chunk.toString('ascii')
@@ -87,13 +104,20 @@ function lw3SendCommand(
   })
 }
 
-interface LightwareInfo {
-  productName: string
-  inputCount: number
-  outputCount: number
-  inputLabels: Map<number, string>
-  outputLabels: Map<number, string>
+/** Check if a response line is an LW3 error */
+function isErrorLine(line: string): boolean {
+  return line.startsWith('pE') || line.startsWith('-E') || line.startsWith('nE')
 }
+
+/** Extract value from a property line like "pr /.ProductName=MX2-32x32" */
+function extractValue(line: string): string | null {
+  const eqIdx = line.indexOf('=')
+  return eqIdx >= 0 ? line.slice(eqIdx + 1) : null
+}
+
+// ---------------------------------------------------------------------------
+// Connect
+// ---------------------------------------------------------------------------
 
 export async function lightwareConnect(ip: string): Promise<ConnectResult> {
   let sock: net.Socket
@@ -104,73 +128,47 @@ export async function lightwareConnect(ip: string): Promise<ConnectResult> {
   }
 
   const sendId = { value: 1 }
-  const info: LightwareInfo = {
-    productName: 'Lightware MX2',
-    inputCount: 0,
-    outputCount: 0,
-    inputLabels: new Map(),
-    outputLabels: new Map(),
-  }
 
   try {
     // Product name
+    let productName = 'Lightware MX2'
     const pnLines = await lw3SendCommand(sock, 'GET /.ProductName', sendId)
+    console.log('[LW3] ProductName response lines:', pnLines.length, pnLines)
     for (const line of pnLines) {
-      if (line.includes('=')) {
-        info.productName = line.split('=')[1].trim()
-        break
-      }
+      const val = extractValue(line)
+      if (val) { productName = val; break }
     }
 
-    // Source port count
-    const srcLines = await lw3SendCommand(sock, 'GET /MEDIA/XP/VIDEO.SourcePortCount', sendId)
-    for (const line of srcLines) {
-      if (line.includes('=')) {
-        info.inputCount = parseInt(line.split('=')[1].trim(), 10) || 0
-        break
-      }
-    }
-
-    // Destination port count
-    const dstLines = await lw3SendCommand(sock, 'GET /MEDIA/XP/VIDEO.DestinationPortCount', sendId)
-    for (const line of dstLines) {
-      if (line.includes('=')) {
-        info.outputCount = parseInt(line.split('=')[1].trim(), 10) || 0
-        break
-      }
-    }
-
-    // Labels (wildcard GET)
+    // Get labels to derive port counts (SourcePortCount/DestinationPortCount don't exist on MX2)
     const labelLines = await lw3SendCommand(sock, 'GET /MEDIA/NAMES/VIDEO.*', sendId)
-    const inputRe = /\/MEDIA\/NAMES\/VIDEO\.I(\d+)=\d+;(.*)/
-    const outputRe = /\/MEDIA\/NAMES\/VIDEO\.O(\d+)=\d+;(.*)/
+    console.log('[LW3] Label response lines:', labelLines.length)
+    let inputCount = 0
+    let outputCount = 0
+
+    const inputRe = /\/MEDIA\/NAMES\/VIDEO\.I(\d+)=/
+    const outputRe = /\/MEDIA\/NAMES\/VIDEO\.O(\d+)=/
 
     for (const line of labelLines) {
       let m = inputRe.exec(line)
       if (m) {
-        info.inputLabels.set(parseInt(m[1], 10), m[2])
+        const n = parseInt(m[1], 10)
+        if (n > inputCount) inputCount = n
         continue
       }
       m = outputRe.exec(line)
       if (m) {
-        info.outputLabels.set(parseInt(m[1], 10), m[2])
+        const n = parseInt(m[1], 10)
+        if (n > outputCount) outputCount = n
       }
     }
 
-    // Fill defaults
-    for (let i = 1; i <= info.inputCount; i++) {
-      if (!info.inputLabels.has(i)) info.inputLabels.set(i, `Input ${i}`)
-    }
-    for (let i = 1; i <= info.outputCount; i++) {
-      if (!info.outputLabels.has(i)) info.outputLabels.set(i, `Output ${i}`)
-    }
-
+    console.log(`[LW3] Connect result: ${productName}, inputs=${inputCount}, outputs=${outputCount}`)
     return {
       success: true,
       routerType: 'lightware',
-      deviceName: info.productName,
-      inputCount: info.inputCount,
-      outputCount: info.outputCount,
+      deviceName: productName,
+      inputCount,
+      outputCount,
     }
   } catch (e) {
     return { success: false, routerType: 'lightware', deviceName: '', inputCount: 0, outputCount: 0, error: `Error querying device: ${e}` }
@@ -179,36 +177,46 @@ export async function lightwareConnect(ip: string): Promise<ConnectResult> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Download labels
+// ---------------------------------------------------------------------------
+
 export async function lightwareDownloadLabels(ip: string): Promise<Label[]> {
-  const sock = await connectSocket(ip)
+  let sock: net.Socket
+  try {
+    sock = await connectSocket(ip)
+  } catch (e) {
+    throw new Error(`Cannot connect to Lightware at ${ip}: ${e}`)
+  }
+
   const sendId = { value: 1 }
 
   try {
-    // Get port counts
+    // Get all labels — response: "pw /MEDIA/NAMES/VIDEO.I1=1;Input 1"
+    const labelLines = await lw3SendCommand(sock, 'GET /MEDIA/NAMES/VIDEO.*', sendId)
+    console.log('[LW3] Download label lines:', labelLines.length, labelLines.slice(0, 4))
+    const inputLabels = new Map<number, string>()
+    const outputLabels = new Map<number, string>()
+    // Match with page;name format OR plain name (fallback)
+    const inputRe = /\/MEDIA\/NAMES\/VIDEO\.I(\d+)=(?:\d+;)?(.*)/
+    const outputRe = /\/MEDIA\/NAMES\/VIDEO\.O(\d+)=(?:\d+;)?(.*)/
     let inputCount = 0
     let outputCount = 0
 
-    const srcLines = await lw3SendCommand(sock, 'GET /MEDIA/XP/VIDEO.SourcePortCount', sendId)
-    for (const line of srcLines) {
-      if (line.includes('=')) { inputCount = parseInt(line.split('=')[1].trim(), 10) || 0; break }
-    }
-    const dstLines = await lw3SendCommand(sock, 'GET /MEDIA/XP/VIDEO.DestinationPortCount', sendId)
-    for (const line of dstLines) {
-      if (line.includes('=')) { outputCount = parseInt(line.split('=')[1].trim(), 10) || 0; break }
-    }
-
-    // Get all labels
-    const labelLines = await lw3SendCommand(sock, 'GET /MEDIA/NAMES/VIDEO.*', sendId)
-    const inputLabels = new Map<number, string>()
-    const outputLabels = new Map<number, string>()
-    const inputRe = /\/MEDIA\/NAMES\/VIDEO\.I(\d+)=\d+;(.*)/
-    const outputRe = /\/MEDIA\/NAMES\/VIDEO\.O(\d+)=\d+;(.*)/
-
     for (const line of labelLines) {
       let m = inputRe.exec(line)
-      if (m) { inputLabels.set(parseInt(m[1], 10), m[2]); continue }
+      if (m) {
+        const n = parseInt(m[1], 10)
+        inputLabels.set(n, m[2])
+        if (n > inputCount) inputCount = n
+        continue
+      }
       m = outputRe.exec(line)
-      if (m) { outputLabels.set(parseInt(m[1], 10), m[2]) }
+      if (m) {
+        const n = parseInt(m[1], 10)
+        outputLabels.set(n, m[2])
+        if (n > outputCount) outputCount = n
+      }
     }
 
     const labels: Label[] = []
@@ -245,24 +253,42 @@ export async function lightwareDownloadLabels(ip: string): Promise<Label[]> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Get routing (crosspoints)
+// ---------------------------------------------------------------------------
+
 export async function lightwareGetRouting(ip: string): Promise<{ output: number; input: number }[]> {
-  const sock = await connectSocket(ip)
+  let sock: net.Socket
+  try {
+    sock = await connectSocket(ip)
+  } catch (e) {
+    throw new Error(`Cannot connect to Lightware at ${ip}: ${e}`)
+  }
+
   const sendId = { value: 1 }
 
   try {
-    const lines = await lw3SendCommand(sock, 'GET /MEDIA/XP/VIDEO.DestinationConnection*', sendId)
+    // GETALL returns DestinationConnectionStatus: "I1;I22;I22;..."
+    // This is a semicolon-separated list where index = output (0-based), value = input name
+    const lines = await lw3SendCommand(sock, 'GETALL /MEDIA/XP/VIDEO', sendId)
     const crosspoints: { output: number; input: number }[] = []
-    // Lines look like: /MEDIA/XP/VIDEO.DestinationConnectionD{n}=S{m}
-    const re = /DestinationConnectionD(\d+)=S(\d+)/
 
     for (const line of lines) {
-      const m = re.exec(line)
-      if (m) {
-        const output = parseInt(m[1], 10) - 1 // convert to 0-based
-        const input = parseInt(m[2], 10) - 1
-        if (output >= 0 && input >= 0) {
-          crosspoints.push({ output, input })
+      if (line.includes('.DestinationConnectionStatus=')) {
+        const val = extractValue(line)
+        if (!val) break
+
+        const entries = val.split(';').filter(s => s.length > 0)
+        for (let o = 0; o < entries.length; o++) {
+          const inputMatch = /^I(\d+)$/.exec(entries[o].trim())
+          if (inputMatch) {
+            crosspoints.push({
+              output: o,
+              input: parseInt(inputMatch[1], 10) - 1, // convert to 0-based
+            })
+          }
         }
+        break
       }
     }
 
@@ -272,51 +298,75 @@ export async function lightwareGetRouting(ip: string): Promise<{ output: number;
   }
 }
 
+// ---------------------------------------------------------------------------
+// Set route (single crosspoint)
+// ---------------------------------------------------------------------------
+
 export async function lightwareSetRoute(ip: string, output: number, input: number): Promise<boolean> {
-  const sock = await connectSocket(ip)
+  let sock: net.Socket
+  try {
+    sock = await connectSocket(ip)
+  } catch {
+    return false
+  }
+
   const sendId = { value: 1 }
 
   try {
-    // Lightware uses 1-based port numbers
-    const command = `SET /MEDIA/XP/VIDEO.DestinationConnectionD${output + 1}=S${input + 1}`
+    // CALL /MEDIA/XP/VIDEO:switch(I{input}:O{output}) — 1-based
+    const command = `CALL /MEDIA/XP/VIDEO:switch(I${input + 1}:O${output + 1})`
     const lines = await lw3SendCommand(sock, command, sendId)
 
-    // Check for errors
+    // Success returns "mO /MEDIA/XP/VIDEO:switch=OK"
     for (const line of lines) {
-      if (line.startsWith('pE') || line.startsWith('nE') || line.startsWith('-E')) {
+      if (line.includes('mO') && line.includes('=OK')) {
+        return true
+      }
+      if (isErrorLine(line)) {
         return false
       }
     }
-    return true
+    // If we got any response without error, assume success
+    return lines.length > 0
   } finally {
     sock.destroy()
   }
 }
 
+// ---------------------------------------------------------------------------
+// Upload labels
+// ---------------------------------------------------------------------------
+
 export async function lightwareUploadLabels(ip: string, labels: Label[]): Promise<UploadResult> {
   const changes = labels.filter(l => l.newLabel !== null && l.newLabel !== l.currentLabel)
   if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [] }
 
+  let sock: net.Socket
+  try {
+    sock = await connectSocket(ip)
+  } catch (e) {
+    return { successCount: 0, errorCount: changes.length, errors: [`Connection failed: ${e}`] }
+  }
+
+  const sendId = { value: 1 }
   let successCount = 0
   let errorCount = 0
   const errors: string[] = []
 
-  // Open one connection for all changes
-  const sock = await connectSocket(ip)
-  const sendId = { value: 1 }
-
   try {
     for (const label of changes) {
       const typeChar = label.portType === 'INPUT' ? 'I' : 'O'
-      const labelText = label.newLabel!.slice(0, MAX_LABEL_LENGTH)
-      const path = `/MEDIA/NAMES/VIDEO.${typeChar}${label.portNumber}=${label.portNumber};${labelText}`
-      const command = `SET ${path}`
+      // Sanitize: strip semicolons from label text to avoid breaking the value format
+      const labelText = label.newLabel!.replace(/;/g, '').slice(0, MAX_LABEL_LENGTH)
+      // Format: SET /MEDIA/NAMES/VIDEO.I{n}={page};{name}
+      // Page number doesn't affect the label — use 1
+      const command = `SET /MEDIA/NAMES/VIDEO.${typeChar}${label.portNumber}=1;${labelText}`
 
       const responseLines = await lw3SendCommand(sock, command, sendId)
 
       let hasError = false
       for (const line of responseLines) {
-        if (line.startsWith('pE') || line.startsWith('nE') || line.startsWith('-E')) {
+        if (isErrorLine(line)) {
           hasError = true
           errors.push(`${label.portType} ${label.portNumber}: ${line}`)
           break

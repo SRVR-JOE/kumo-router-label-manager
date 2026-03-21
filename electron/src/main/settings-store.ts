@@ -14,7 +14,7 @@ export function getSettings(): AppSettings {
     maxLabelLength: store.get('maxLabelLength', DEFAULT_SETTINGS.maxLabelLength),
     recentFiles: store.get('recentFiles', DEFAULT_SETTINGS.recentFiles),
     theme: store.get('theme', DEFAULT_SETTINGS.theme),
-    windowBounds: store.get('windowBounds', undefined),
+    windowBounds: store.get('windowBounds') as AppSettings['windowBounds'],
     savedRouters: store.get('savedRouters', DEFAULT_SETTINGS.savedRouters),
   }
 }

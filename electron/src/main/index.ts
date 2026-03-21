@@ -9,13 +9,13 @@ let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   const settings = getSettings()
-  const bounds = settings.windowBounds || { width: 1200, height: 800 }
+  const bounds = settings.windowBounds
 
   mainWindow = new BrowserWindow({
-    width: bounds.width,
-    height: bounds.height,
-    x: bounds.x,
-    y: bounds.y,
+    width: bounds?.width ?? 1200,
+    height: bounds?.height ?? 800,
+    x: bounds?.x,
+    y: bounds?.y,
     minWidth: 900,
     minHeight: 600,
     show: false,

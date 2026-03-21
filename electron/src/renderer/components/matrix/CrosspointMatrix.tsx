@@ -328,7 +328,7 @@ export default function CrosspointMatrix() {
   const routerTypeBadge = router.routerType ? router.routerType.toUpperCase() : 'ROUTER'
   const portLabel = `${inputCount} x ${outputCount}`
   const LABEL_COL_W = 160
-  const LABEL_ROW_H = 200
+  const LABEL_ROW_H = 140
 
   // ---- render -------------------------------------------------------------
 
@@ -574,22 +574,37 @@ export default function CrosspointMatrix() {
                         borderRight: `1px solid ${C.border}`,
                         borderBottom: `2px solid ${highlighted ? C.accent : C.border}`,
                         display: 'flex',
-                        alignItems: 'flex-end',
-                        justifyContent: 'center',
-                        padding: '0 0 6px 0',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'flex-start',
+                        padding: '6px 0 6px 0',
                         overflow: 'hidden',
                         transition: 'background 150ms, border-color 150ms',
                       }}
                       title={label}
                     >
+                      {/* Port number */}
+                      <span
+                        style={{
+                          fontSize: 15,
+                          fontWeight: 800,
+                          color: highlighted ? C.text : C.accent,
+                          fontFamily: 'Consolas, "Courier New", monospace',
+                          lineHeight: 1,
+                          marginBottom: 3,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {i + 1}
+                      </span>
+                      {/* Label name - vertical, reading top to bottom */}
                       <div
                         style={{
-                          writingMode: 'vertical-rl',
-                          transform: 'rotate(180deg)',
+                          writingMode: 'vertical-lr',
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
-                          maxHeight: LABEL_ROW_H - 12,
+                          maxHeight: LABEL_ROW_H - 26,
                           fontSize: 16,
                           fontFamily: 'Consolas, "Courier New", monospace',
                           fontWeight: highlighted ? 700 : 500,
@@ -645,16 +660,31 @@ export default function CrosspointMatrix() {
                             flexShrink: 0,
                           }} />
                         )}
+                        {/* Port number */}
                         <span
                           style={{
-                            fontSize: 14,
+                            fontSize: 15,
+                            fontWeight: 800,
+                            color: rowHighlighted ? C.text : C.accent,
+                            fontFamily: 'Consolas, "Courier New", monospace',
+                            marginRight: 8,
+                            flexShrink: 0,
+                            minWidth: 26,
+                            textAlign: 'right',
+                          }}
+                        >
+                          {o + 1}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 16,
                             fontFamily: 'Consolas, "Courier New", monospace',
                             fontWeight: rowHighlighted ? 700 : 500,
                             color: rowHighlighted ? C.text : C.textMuted,
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
-                            maxWidth: LABEL_COL_W - 20,
+                            maxWidth: LABEL_COL_W - 50,
                             textAlign: 'right',
                             transition: 'color 150ms',
                           }}

@@ -60,7 +60,7 @@ function EditableCell({ value, onChange, className = '', isSelected, onCellMouse
   return (
     <div
       className={`cell-content cursor-text truncate px-1 min-h-[22px] ${className} ${isSelected ? 'cell-selected' : ''}`}
-      onDoubleClick={() => setEditing(true)}
+      onClick={() => setEditing(true)}
       onMouseDown={onCellMouseDown}
       onMouseEnter={onCellMouseEnter}
       title={value}
@@ -317,6 +317,7 @@ export default function LabelTable() {
   const routerType = useRouterStore(s => s.routerType)
   const isKumo = routerType === 'kumo'
   const [sorting, setSorting] = useState<SortingState>([])
+  const [pasteStatus, setPasteStatus] = useState('')
 
   // Selection state
   const [selection, setSelection] = useState<SelectionRange | null>(null)
@@ -411,20 +412,16 @@ export default function LabelTable() {
       const { min, max } = getSelectionRows(sel)
       const cellCount = max - min + 1
 
-      // Only show bulk edit if user actually dragged across multiple cells,
-      // or if they explicitly selected at least one cell (single click = 1 cell selected, show popup)
-      if (cellCount >= 1 && didDragRef.current) {
+      // Only show bulk edit if user actually dragged across 2+ cells
+      if (cellCount >= 2 && didDragRef.current) {
         // Position popup near where the mouse ended
         setBulkEditAnchor({
           top: e.clientY + 8,
           left: e.clientX + 8,
         })
         setShowBulkEdit(true)
-      } else if (cellCount === 1 && !didDragRef.current) {
-        // Single click without drag - clear selection, let double-click handle editing
-        setSelection(null)
-        selectionRef.current = null
       }
+      // Single click: keep selection (sets paste anchor) but no popup
     }
     window.addEventListener('mouseup', handleMouseUp)
     return () => window.removeEventListener('mouseup', handleMouseUp)
@@ -441,7 +438,7 @@ export default function LabelTable() {
     return () => window.removeEventListener('mousedown', handleMouseDown)
   }, [showBulkEdit])
 
-  // Escape to cancel selection
+  // Escape to cancel selection + Ctrl+V paste from clipboard
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -454,6 +451,81 @@ export default function LabelTable() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
+
+  // Paste from clipboard (Ctrl+V / Cmd+V)
+  // Parses tab-separated Excel data and fills editable columns
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      // Don't intercept paste inside input/select elements
+      const active = document.activeElement
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) return
+
+      const text = e.clipboardData?.getData('text/plain')
+      if (!text || filteredLabels.length === 0) return
+
+      e.preventDefault()
+
+      // Parse rows (newlines) and columns (tabs)
+      const rows = text.split(/\r?\n/).filter(r => r.length > 0)
+      if (rows.length === 0) return
+
+      const parsedRows = rows.map(r => r.split('\t'))
+
+      // Determine which editable columns to fill based on paste width
+      // Order: newLabel, newLabelLine2 (kumo only), newColor (kumo only), notes
+      const editableColOrder: (keyof LabelRow)[] = isKumo
+        ? ['newLabel', 'newLabelLine2', 'newColor', 'notes']
+        : ['newLabel', 'notes']
+
+      // Determine start row — use selection if exists, otherwise row 0
+      const sel = selectionRef.current
+      const startRow = sel ? Math.min(sel.startRowIdx, sel.endRowIdx) : 0
+
+      // If selection targets a specific column, start filling from that column
+      let startColIdx = 0
+      if (sel && sel.colId in EDITABLE_FIELDS) {
+        const idx = editableColOrder.indexOf(EDITABLE_FIELDS[sel.colId])
+        if (idx >= 0) startColIdx = idx
+      }
+
+      let pastedCount = 0
+      for (let r = 0; r < parsedRows.length; r++) {
+        const rowIdx = startRow + r
+        if (rowIdx >= filteredLabels.length) break
+        const label = filteredLabels[rowIdx]
+        const cols = parsedRows[r]
+
+        for (let c = 0; c < cols.length; c++) {
+          const colIdx = startColIdx + c
+          if (colIdx >= editableColOrder.length) break
+          const field = editableColOrder[colIdx]
+          const value = cols[c].trim()
+
+          if (field === 'newColor') {
+            const num = parseInt(value, 10)
+            updateLabel(label.id, field, (num >= 1 && num <= 9) ? num : null)
+          } else {
+            updateLabel(label.id, field, value)
+          }
+          pastedCount++
+        }
+      }
+
+      // Clear selection after paste
+      setSelection(null)
+      selectionRef.current = null
+      setShowBulkEdit(false)
+
+      // Flash a brief status in the toolbar
+      if (pastedCount > 0) {
+        setPasteStatus(`Pasted ${rows.length} row${rows.length > 1 ? 's' : ''}`)
+        setTimeout(() => setPasteStatus(''), 3000)
+      }
+    }
+
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [filteredLabels, updateLabel, isKumo])
 
   const handleBulkApply = useCallback((value: string) => {
     const sel = selectionRef.current
@@ -619,6 +691,9 @@ export default function LabelTable() {
           </button>
         ))}
         <div className="flex-1" />
+        {pasteStatus && (
+          <span className="text-xs text-green-400 font-medium">{pasteStatus}</span>
+        )}
         {selection && (
           <span className="text-xs text-helix-accent">
             {Math.abs(selection.endRowIdx - selection.startRowIdx) + 1} cells selected
