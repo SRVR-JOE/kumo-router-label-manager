@@ -1,13 +1,30 @@
 # Helix - Version Information
 
-## Current Version: 5.0.0
-**Release Date**: March 3, 2026
+## Current Version: 5.1.0
+**Release Date**: March 24, 2026
 **Build**: Production Release
 **Compatibility**: AJA KUMO, Blackmagic Videohub, Lightware MX2
 
 ---
 
 ## Changelog
+
+### Version 5.1.0 - March 24, 2026
+**Bug Fixes and Enhancements**
+
+#### New Features
+- **Auto-Number Letter Mode**: Auto-Number dialog now supports letter sequences (A-Z, AA, AB...) with configurable starting letter
+- **Single-Click Cell Editing**: Click directly on New Label or Color cells to edit inline
+- **AJA KUMO Label Colors**: Color column with visual swatches, bulk color assignment via context menu
+
+#### Bug Fixes
+- **ComboBox Dark Theme**: All dropdown menus now render with correct dark theme colors (fixes white background bug)
+- **Auto-Discover Port Detection**: Independent input/output count detection fixes wrong port counts on asymmetric KUMO models (3216, 6432)
+
+#### Electron App
+- First packaged Electron desktop app release (v1.1.0)
+
+---
 
 ### Version 5.0.0 - March 3, 2026
 **Major Update - Multi-Router Support and Security Hardening**
