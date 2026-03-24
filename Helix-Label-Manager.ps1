@@ -740,6 +740,22 @@ $clrStatusBar     = [System.Drawing.Color]::FromArgb(25, 20, 35)
 $clrSelectedRow   = [System.Drawing.Color]::FromArgb(103, 58, 183)
 $clrAltRow        = [System.Drawing.Color]::FromArgb(45, 40, 60)
 
+function Register-ComboBoxOwnerDraw {
+    param([System.Windows.Forms.ComboBox]$Combo)
+    $Combo.DrawMode = [System.Windows.Forms.DrawMode]::OwnerDrawFixed
+    $Combo.Add_DrawItem({
+        param($sender, $e)
+        if ($e.Index -lt 0) { return }
+        $isSelected = ($e.State -band [System.Windows.Forms.DrawItemState]::Selected) -ne 0
+        $bgColor = if ($isSelected) { $clrAccent } else { $clrField }
+        $fgColor = $clrText
+        $e.Graphics.FillRectangle((New-Object System.Drawing.SolidBrush($bgColor)), $e.Bounds)
+        $text = $sender.Items[$e.Index].ToString()
+        [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $text, $sender.Font, $e.Bounds, $fgColor, [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter)
+        $e.DrawFocusRectangle()
+    })
+}
+
 # --- KUMO Button Color Presets (1-9) ------------------------------------------
 $script:kumoColors = @{
     1 = @{ Name = "Red";         IdleColor = [System.Drawing.ColorTranslator]::FromHtml("#cb7676"); ActiveColor = [System.Drawing.ColorTranslator]::FromHtml("#fe0000") }
@@ -1000,7 +1016,7 @@ function Connect-KumoRouter {
         } catch { return $null }
     }
 
-    $probePool = [RunspaceFactory]::CreateRunspacePool(1, 4)
+    $probePool = [RunspaceFactory]::CreateRunspacePool(1, 6)
     $probePool.Open()
     $baseProbe = "http://$IP/config?action=get&configid=0&paramid="
     $probes = @(
@@ -1008,6 +1024,8 @@ function Connect-KumoRouter {
         @{ Name = "p64";  Uri = "${baseProbe}eParamID_XPT_Source33_Line_1" }
         @{ Name = "p32";  Uri = "${baseProbe}eParamID_XPT_Source17_Line_1" }
         @{ Name = "d5";   Uri = "${baseProbe}eParamID_XPT_Destination5_Line_1" }
+        @{ Name = "d17";  Uri = "${baseProbe}eParamID_XPT_Destination17_Line_1" }
+        @{ Name = "d33";  Uri = "${baseProbe}eParamID_XPT_Destination33_Line_1" }
     )
     $probeJobs = [System.Collections.ArrayList]::new()
     foreach ($p in $probes) {
@@ -1029,13 +1047,20 @@ function Connect-KumoRouter {
     if ($probeResults["p64"] -ne $null) { $inputCount = 64 }
     elseif ($probeResults["p32"] -eq $null) { $inputCount = 16 }
 
-    $outputCount = $inputCount
-    if ($inputCount -eq 16 -and $probeResults["d5"] -eq $null) { $outputCount = 4 }
+    $outputCount = 32
+    if ($probeResults["d33"] -ne $null) { $outputCount = 64 }
+    elseif ($probeResults["d17"] -eq $null) {
+        # Sub-32 outputs
+        if ($probeResults["d5"] -eq $null) { $outputCount = 4 }
+        else { $outputCount = 16 }
+    }
 
     $modelName = switch ("$inputCount`x$outputCount") {
         "16x4"  { "KUMO 1604" }
         "16x16" { "KUMO 1616" }
+        "32x16" { "KUMO 3216" }
         "32x32" { "KUMO 3232" }
+        "64x32" { "KUMO 6432" }
         "64x64" { "KUMO 6464" }
         default { "KUMO ${inputCount}x${outputCount}" }
     }
@@ -2336,6 +2361,7 @@ $cboRouterType.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $cboRouterType.Items.AddRange(@("Auto-detect", "AJA KUMO", "BMD Videohub", "Lightware MX2"))
 $cboRouterType.SelectedIndex = 0
 $connSectionPanel.Controls.Add($cboRouterType)
+Register-ComboBoxOwnerDraw $cboRouterType
 
 # IP label
 $lblIp = New-Object System.Windows.Forms.Label
@@ -4365,12 +4391,23 @@ $btnFindReplace.Add_Click({
 
 # --- Auto-Number --------------------------------------------------------------
 
+function ConvertTo-ColumnLetters {
+    param([int]$Number)
+    $result = ""
+    while ($Number -gt 0) {
+        $Number--
+        $result = [char](65 + ($Number % 26)) + $result
+        $Number = [math]::Floor($Number / 26)
+    }
+    return $result
+}
+
 $btnAutoNumber.Add_Click({
     Sync-GridToData
 
     $anForm = New-Object System.Windows.Forms.Form
     $anForm.Text = "Auto-Number Labels"
-    $anForm.Size = New-Object System.Drawing.Size(400, 250)
+    $anForm.Size = New-Object System.Drawing.Size(400, 310)
     $anForm.StartPosition = "CenterParent"
     $anForm.BackColor = $clrPanel
     $anForm.ForeColor = $clrText
@@ -4386,32 +4423,84 @@ $btnAutoNumber.Add_Click({
     }
     $anForm.Controls.Add($prefixBox)
 
+    # Sequence mode row (y=53)
     $anForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
-        Text="Start #:"; Location="20,55"; Size="60,20"; ForeColor=$clrText
+        Text="Sequence:"; Location="20,56"; Size="65,20"; ForeColor=$clrText
     }))
+    $rbNumbers = New-Object System.Windows.Forms.RadioButton -Property @{
+        Text="Numbers"; Location="90,54"; Size="85,20"; Checked=$true; ForeColor=$clrText
+    }
+    $rbLetters = New-Object System.Windows.Forms.RadioButton -Property @{
+        Text="Letters (A-Z, AA...)"; Location="180,54"; Size="150,20"; ForeColor=$clrText
+    }
+    $anForm.Controls.Add($rbNumbers)
+    $anForm.Controls.Add($rbLetters)
+
+    # Start value row (y=88) - label is a variable so its text can toggle
+    $startLbl = New-Object System.Windows.Forms.Label -Property @{
+        Text="Start #:"; Location="20,91"; Size="65,20"; ForeColor=$clrText
+    }
+    $anForm.Controls.Add($startLbl)
+
     $startNumBox = New-Object System.Windows.Forms.NumericUpDown -Property @{
-        Location="90,53"; Size="80,24"; BackColor=$clrField; ForeColor=$clrText; Value=1; Minimum=1; Maximum=999
+        Location="90,88"; Size="80,24"; BackColor=$clrField; ForeColor=$clrText; Value=1; Minimum=1; Maximum=999
     }
     $anForm.Controls.Add($startNumBox)
 
+    $startLetterBox = New-Object System.Windows.Forms.ComboBox -Property @{
+        Location="90,88"; Size="80,24"; BackColor=$clrField; ForeColor=$clrText;
+        DropDownStyle="DropDownList"; Visible=$false
+    }
+    foreach ($i in 1..26) { $startLetterBox.Items.Add([char](64 + $i)) | Out-Null }
+    $startLetterBox.SelectedIndex = 0
+    $anForm.Controls.Add($startLetterBox)
+
+    # Preview row (y=128)
     $anForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
-        Text="Preview:"; Location="20,90"; Size="60,20"; ForeColor=$clrDimText
+        Text="Preview:"; Location="20,131"; Size="60,20"; ForeColor=$clrDimText
     }))
     $previewLbl = New-Object System.Windows.Forms.Label -Property @{
-        Location="90,90"; Size="270,20"; ForeColor=$clrChanged; Text="Camera 1, Camera 2, Camera 3..."
+        Location="90,131"; Size="270,20"; ForeColor=$clrChanged; Text="Camera 1, Camera 2, Camera 3..."
     }
     $anForm.Controls.Add($previewLbl)
 
     $updatePreview = {
         $p = $prefixBox.Text
-        $s = [int]$startNumBox.Value
-        $previewLbl.Text = "$p$s, $p$($s+1), $p$($s+2)..."
+        if ($rbNumbers.Checked) {
+            $s = [int]$startNumBox.Value
+            $previewLbl.Text = "$p$s, $p$($s+1), $p$($s+2)..."
+        } else {
+            $s = $startLetterBox.SelectedIndex + 1
+            $l1 = ConvertTo-ColumnLetters $s
+            $l2 = ConvertTo-ColumnLetters ($s + 1)
+            $l3 = ConvertTo-ColumnLetters ($s + 2)
+            $previewLbl.Text = "$p$l1, $p$l2, $p$l3..."
+        }
     }
     $prefixBox.Add_TextChanged($updatePreview)
     $startNumBox.Add_ValueChanged($updatePreview)
+    $startLetterBox.Add_SelectedIndexChanged($updatePreview)
 
+    $rbNumbers.Add_CheckedChanged({
+        if ($rbNumbers.Checked) {
+            $startNumBox.Visible    = $true
+            $startLetterBox.Visible = $false
+            $startLbl.Text = "Start #:"
+            & $updatePreview
+        }
+    })
+    $rbLetters.Add_CheckedChanged({
+        if ($rbLetters.Checked) {
+            $startNumBox.Visible    = $false
+            $startLetterBox.Visible = $true
+            $startLbl.Text = "Start letter:"
+            & $updatePreview
+        }
+    })
+
+    # Apply-to GroupBox (y=155)
     $typeGroup2 = New-Object System.Windows.Forms.GroupBox -Property @{
-        Text="Apply to"; Location="20,115"; Size="340,50"; ForeColor=$clrDimText
+        Text="Apply to"; Location="20,155"; Size="340,50"; ForeColor=$clrDimText
     }
     $rbInputs2 = New-Object System.Windows.Forms.RadioButton -Property @{
         Text="Inputs"; Location="15,20"; Size="70,20"; Checked=$true; ForeColor=$clrText
@@ -4431,52 +4520,87 @@ $btnAutoNumber.Add_Click({
     $typeGroup2.Controls.Add($rbSelected2)
     $anForm.Controls.Add($typeGroup2)
 
+    # Buttons (y=245)
     $btnApply = New-Object ModernButton -Property @{
-        Location="240,185"; Size="70,30"; Text="Apply"
+        Location="240,245"; Size="70,30"; Text="Apply"
     }
     $btnApply.Style = [ModernButton+ButtonStyle]::Primary
 
     $btnCancelAN = New-Object ModernButton -Property @{
-        Location="320,185"; Size="55,30"; Text="Cancel"
+        Location="320,245"; Size="55,30"; Text="Cancel"
     }
     $btnCancelAN.Style = [ModernButton+ButtonStyle]::Secondary
 
     $btnApply.Add_Click({
         $prefix = $prefixBox.Text
-        $num    = [int]$startNumBox.Value
 
-        if ($rbSelected2.Checked) {
-            $sortedRows = $dataGrid.SelectedRows | Sort-Object { $_.Index }
-            foreach ($row in $sortedRows) {
-                $port = $row.Cells["Port"].Value
-                $type = $row.Cells["Type"].Value
-                $router = $row.Cells["Router"].Value
-                foreach ($lbl in $global:allLabels) {
-                    if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
-                        $label = "$prefix$num"
-                        if ($label.Length -gt $global:maxLabelLength) {
-                            $label = $label.Substring(0, $global:maxLabelLength)
+        if ($rbNumbers.Checked) {
+            $num = [int]$startNumBox.Value
+
+            if ($rbSelected2.Checked) {
+                $sortedRows = $dataGrid.SelectedRows | Sort-Object { $_.Index }
+                foreach ($row in $sortedRows) {
+                    $port   = $row.Cells["Port"].Value
+                    $type   = $row.Cells["Type"].Value
+                    $router = $row.Cells["Router"].Value
+                    foreach ($lbl in $global:allLabels) {
+                        if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                            $label = "$prefix$num"
+                            if ($label.Length -gt $global:maxLabelLength) { $label = $label.Substring(0, $global:maxLabelLength) }
+                            Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
+                            $lbl.New_Label = $label
+                            $num++
+                            break
                         }
-                        Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
-                        $lbl.New_Label = $label
-                        $num++
-                        break
                     }
+                }
+            } else {
+                foreach ($lbl in $global:allLabels) {
+                    if ($rbInputs2.Checked  -and $lbl.Type -ne "INPUT")  { continue }
+                    if ($rbOutputs2.Checked -and $lbl.Type -ne "OUTPUT") { continue }
+                    $label = "$prefix$num"
+                    if ($label.Length -gt $global:maxLabelLength) { $label = $label.Substring(0, $global:maxLabelLength) }
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
+                    $lbl.New_Label = $label
+                    $num++
                 }
             }
         } else {
-            foreach ($lbl in $global:allLabels) {
-                if ($rbInputs2.Checked  -and $lbl.Type -ne "INPUT")  { continue }
-                if ($rbOutputs2.Checked -and $lbl.Type -ne "OUTPUT") { continue }
-                $label = "$prefix$num"
-                if ($label.Length -gt $global:maxLabelLength) {
-                    $label = $label.Substring(0, $global:maxLabelLength)
+            # Letter mode
+            $letterIndex = $startLetterBox.SelectedIndex + 1  # 1-based
+
+            if ($rbSelected2.Checked) {
+                $sortedRows = $dataGrid.SelectedRows | Sort-Object { $_.Index }
+                foreach ($row in $sortedRows) {
+                    $port   = $row.Cells["Port"].Value
+                    $type   = $row.Cells["Type"].Value
+                    $router = $row.Cells["Router"].Value
+                    foreach ($lbl in $global:allLabels) {
+                        if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                            $seq   = ConvertTo-ColumnLetters $letterIndex
+                            $label = "$prefix$seq"
+                            if ($label.Length -gt $global:maxLabelLength) { $label = $label.Substring(0, $global:maxLabelLength) }
+                            Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
+                            $lbl.New_Label = $label
+                            $letterIndex++
+                            break
+                        }
+                    }
                 }
-                Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
-                $lbl.New_Label = $label
-                $num++
+            } else {
+                foreach ($lbl in $global:allLabels) {
+                    if ($rbInputs2.Checked  -and $lbl.Type -ne "INPUT")  { continue }
+                    if ($rbOutputs2.Checked -and $lbl.Type -ne "OUTPUT") { continue }
+                    $seq   = ConvertTo-ColumnLetters $letterIndex
+                    $label = "$prefix$seq"
+                    if ($label.Length -gt $global:maxLabelLength) { $label = $label.Substring(0, $global:maxLabelLength) }
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; OldValue=$lbl.New_Label; NewValue=$label }
+                    $lbl.New_Label = $label
+                    $letterIndex++
+                }
             }
         }
+
         $anForm.Close()
         Populate-Grid
         Set-StatusMessage "Auto-numbered labels" "Changed"
@@ -4536,6 +4660,7 @@ $btnTemplate.Add_Click({
         ))
         $modelCombo.SelectedIndex = 2
         $pickForm.Controls.Add($modelCombo)
+        Register-ComboBoxOwnerDraw $modelCombo
 
         $btnPickOK = New-Object ModernButton -Property @{
             Text="OK"; Location="150,105"; Size="70,28"; DialogResult="OK"
@@ -4817,6 +4942,20 @@ $dataGrid.Add_CellEndEdit({
             }
         }
         Update-ChangeCount
+    }
+})
+
+$dataGrid.Add_CellClick({
+    param($sender, $e)
+    if ($e.RowIndex -ge 0) {
+        $colName = $sender.Columns[$e.ColumnIndex].Name
+        if ($colName -eq "New_Label" -or $colName -eq "New_Label_2" -or $colName -eq "Color") {
+            $col = $sender.Columns[$e.ColumnIndex]
+            if (-not $col.ReadOnly -and $col.Visible) {
+                $sender.CurrentCell = $sender.Rows[$e.RowIndex].Cells[$e.ColumnIndex]
+                $sender.BeginEdit($true)
+            }
+        }
     }
 })
 
