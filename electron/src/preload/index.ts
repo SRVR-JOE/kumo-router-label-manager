@@ -1,51 +1,52 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import type { Label, PortData, AppSettings, ConnectResult, UploadResult, Crosspoint, FileData, RouterType } from '../main/protocols/types'
 
 export type HelixAPI = typeof helixAPI
 
 const helixAPI = {
   // Router operations
   router: {
-    connect: (ip: string, routerType?: string) =>
+    connect: (ip: string, routerType?: RouterType): Promise<ConnectResult> =>
       ipcRenderer.invoke('router:connect', ip, routerType),
-    disconnect: () =>
+    disconnect: (): Promise<void> =>
       ipcRenderer.invoke('router:disconnect'),
-    detectType: (ip: string) =>
+    detectType: (ip: string): Promise<RouterType | null> =>
       ipcRenderer.invoke('router:detect-type', ip),
-    download: () =>
+    download: (): Promise<Label[]> =>
       ipcRenderer.invoke('router:download'),
-    upload: (labels: unknown[]) =>
+    upload: (labels: Label[]): Promise<UploadResult> =>
       ipcRenderer.invoke('router:upload', labels),
-    getCrosspoints: () =>
+    getCrosspoints: (): Promise<Crosspoint[]> =>
       ipcRenderer.invoke('router:get-crosspoints'),
-    setRoute: (output: number, input: number) =>
+    setRoute: (output: number, input: number): Promise<boolean> =>
       ipcRenderer.invoke('router:set-route', output, input),
-    scanSubnet: (baseIp: string) =>
+    scanSubnet: (baseIp: string): Promise<Array<{ ip: string; routerType: RouterType }>> =>
       ipcRenderer.invoke('router:scan-subnet', baseIp),
   },
 
   // File operations
   file: {
-    open: (filters?: unknown) =>
-      ipcRenderer.invoke('file:open', filters),
-    save: (path: string, data: unknown) =>
+    open: (): Promise<FileData | null> =>
+      ipcRenderer.invoke('file:open'),
+    save: (path: string, data: { ports: PortData[] }): Promise<void> =>
       ipcRenderer.invoke('file:save', path, data),
-    saveAs: (data: unknown) =>
+    saveAs: (data: { ports: PortData[] }): Promise<string | null> =>
       ipcRenderer.invoke('file:save-as', data),
-    createTemplate: (path: string, portCount: number) =>
+    createTemplate: (path: string, portCount: number): Promise<FileData | null> =>
       ipcRenderer.invoke('file:create-template', path, portCount),
-    getRecent: () =>
+    getRecent: (): Promise<string[]> =>
       ipcRenderer.invoke('file:get-recent'),
-    getDefaultTemplates: () =>
+    getDefaultTemplates: (): Promise<string[]> =>
       ipcRenderer.invoke('file:get-default-templates'),
-    openDefaultTemplate: (name: string) =>
+    openDefaultTemplate: (name: string): Promise<FileData | null> =>
       ipcRenderer.invoke('file:open-default-template', name),
   },
 
   // Settings
   settings: {
-    get: () =>
+    get: (): Promise<AppSettings> =>
       ipcRenderer.invoke('settings:get'),
-    set: (partial: unknown) =>
+    set: (partial: Partial<AppSettings>): Promise<void> =>
       ipcRenderer.invoke('settings:set', partial),
   },
 
@@ -76,16 +77,25 @@ const helixAPI = {
       'scan-progress',
     ]
     if (validChannels.includes(channel)) {
-      const subscription = (_event: unknown, ...args: unknown[]) => callback(...args)
+      const subscription = (_event: IpcRendererEvent, ...args: unknown[]) => callback(...args)
       ipcRenderer.on(channel, subscription)
       return () => { ipcRenderer.removeListener(channel, subscription) }
     }
     return () => {}
   },
 
-  // Remove all listeners for a channel
+  // Remove all listeners for a channel — restricted to the same allowlist as on()
   removeAllListeners: (channel: string) => {
-    ipcRenderer.removeAllListeners(channel)
+    const validChannels = [
+      'progress', 'connection-status', 'error', 'scan-progress',
+      'menu:new', 'menu:open', 'menu:save', 'menu:save-as', 'menu:create-template',
+      'menu:connect', 'menu:disconnect', 'menu:download', 'menu:upload',
+      'menu:crosspoint', 'menu:find-replace', 'menu:auto-number', 'menu:bulk-ops',
+      'menu:statistics', 'menu:settings', 'menu:undo', 'menu:redo', 'menu:about',
+    ]
+    if (validChannels.includes(channel)) {
+      ipcRenderer.removeAllListeners(channel)
+    }
   },
 }
 

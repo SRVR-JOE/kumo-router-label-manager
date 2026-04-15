@@ -110,24 +110,23 @@ async function parallelLimit<T>(
 }
 
 export async function kumoTestConnection(ip: string): Promise<boolean> {
+  return (await kumoProbeSystemName(ip)) !== null
+}
+
+// Returns the parsed system name if reachable, else null — single HTTP call.
+export async function kumoProbeSystemName(ip: string): Promise<string | null> {
   try {
     const resp = await fetchWithTimeout(getUrl(ip, 'eParamID_SysName'), CONNECT_TIMEOUT)
-    if (!resp.ok) return false
+    if (!resp.ok) return null
     const json = await resp.json()
-    return parseParamResponse(json) !== null
+    return parseParamResponse(json)
   } catch {
-    return false
+    return null
   }
 }
 
 export async function kumoGetSystemName(ip: string): Promise<string> {
-  try {
-    const resp = await fetchWithTimeout(getUrl(ip, 'eParamID_SysName'))
-    const json = await resp.json()
-    return parseParamResponse(json) || 'KUMO'
-  } catch {
-    return 'KUMO'
-  }
+  return (await kumoProbeSystemName(ip)) || 'KUMO'
 }
 
 export async function kumoGetFirmwareVersion(ip: string): Promise<string> {
@@ -154,18 +153,18 @@ export async function kumoDetectPortCount(ip: string): Promise<number> {
 }
 
 export async function kumoConnect(ip: string): Promise<ConnectResult> {
-  const isConnected = await kumoTestConnection(ip)
-  if (!isConnected) {
-    return { success: false, routerType: 'kumo', deviceName: '', inputCount: 0, outputCount: 0, error: `Cannot connect to KUMO at ${ip}` }
-  }
-  const [deviceName, portCount] = await Promise.all([
-    kumoGetSystemName(ip),
+  // Probe SysName + port count in parallel; SysName doubles as the connection test.
+  const [sysName, portCount] = await Promise.all([
+    kumoProbeSystemName(ip),
     kumoDetectPortCount(ip),
   ])
+  if (sysName === null) {
+    return { success: false, routerType: 'kumo', deviceName: '', inputCount: 0, outputCount: 0, error: `Cannot connect to KUMO at ${ip}` }
+  }
   return {
     success: true,
     routerType: 'kumo',
-    deviceName,
+    deviceName: sysName || 'KUMO',
     inputCount: portCount,
     outputCount: portCount,
   }
@@ -176,11 +175,13 @@ export async function kumoDownloadLabels(
   portCount: number,
   onProgress?: (done: number, total: number) => void
 ): Promise<Label[]> {
-  type FetchResult = { port: number; portType: 'INPUT' | 'OUTPUT'; line: number; label: string | null }
+  type LabelResult = { kind: 'label'; port: number; portType: 'INPUT' | 'OUTPUT'; line: number; label: string | null }
+  type ColorResult = { kind: 'color'; port: number; portType: 'INPUT' | 'OUTPUT'; color: number }
+  type FetchResult = LabelResult | ColorResult
 
   const tasks: (() => Promise<FetchResult>)[] = []
 
-  // Build all fetch tasks for inputs and outputs, lines 1 and 2
+  // Label fetches (lines 1+2) and color fetches all go into a single concurrency-limited batch.
   for (const portType of ['INPUT', 'OUTPUT'] as const) {
     for (let port = 1; port <= portCount; port++) {
       for (const line of [1, 2]) {
@@ -189,63 +190,50 @@ export async function kumoDownloadLabels(
           try {
             const resp = await fetchWithTimeout(getUrl(ip, paramId))
             const json = await resp.json()
-            return { port, portType, line, label: parseParamResponse(json) }
+            return { kind: 'label', port, portType, line, label: parseParamResponse(json) }
           } catch {
-            return { port, portType, line, label: null }
+            return { kind: 'label', port, portType, line, label: null }
           }
         })
       }
+      const colorParamId = buttonColorParam(port, portType)
+      tasks.push(async () => {
+        try {
+          const resp = await fetchWithTimeout(getUrl(ip, colorParamId))
+          const json = await resp.json()
+          const raw = json.value || json.value_name || null
+          const color = parseButtonColor(typeof raw === 'string' ? raw : null)
+          return { kind: 'color', port, portType, color }
+        } catch {
+          return { kind: 'color', port, portType, color: KUMO_DEFAULT_COLOR }
+        }
+      })
     }
   }
 
   const results = await parallelLimit(tasks, MAX_CONCURRENT, onProgress)
 
-  // Build label map
   const labelMap = new Map<string, { l1: string; l2: string }>()
+  const colorMap = new Map<string, number>()
   for (let port = 1; port <= portCount; port++) {
     labelMap.set(`INPUT-${port}`, { l1: `Source ${port}`, l2: '' })
     labelMap.set(`OUTPUT-${port}`, { l1: `Dest ${port}`, l2: '' })
   }
 
   for (const r of results) {
-    if (r && !(r instanceof Error)) {
-      const key = `${r.portType}-${r.port}`
+    if (!r || r instanceof Error) continue
+    const key = `${r.portType}-${r.port}`
+    if (r.kind === 'label') {
       const entry = labelMap.get(key)
       if (entry && r.label) {
         if (r.line === 1) entry.l1 = r.label
         else entry.l2 = r.label
       }
+    } else {
+      colorMap.set(key, r.color)
     }
   }
 
-  // Fetch colors in parallel
-  const colorTasks: (() => Promise<{ port: number; portType: 'INPUT' | 'OUTPUT'; color: number }>)[] = []
-  for (const portType of ['INPUT', 'OUTPUT'] as const) {
-    for (let port = 1; port <= portCount; port++) {
-      const paramId = buttonColorParam(port, portType)
-      colorTasks.push(async () => {
-        try {
-          const resp = await fetchWithTimeout(getUrl(ip, paramId))
-          const json = await resp.json()
-          const raw = json.value || json.value_name || null
-          const color = parseButtonColor(typeof raw === 'string' ? raw : null)
-          return { port, portType, color }
-        } catch {
-          return { port, portType, color: KUMO_DEFAULT_COLOR }
-        }
-      })
-    }
-  }
-
-  const colorResults = await parallelLimit(colorTasks, MAX_CONCURRENT)
-  const colorMap = new Map<string, number>()
-  for (const r of colorResults) {
-    if (r && !(r instanceof Error)) {
-      colorMap.set(`${r.portType}-${r.port}`, r.color)
-    }
-  }
-
-  // Assemble Label array
   const labels: Label[] = []
   for (const portType of ['INPUT', 'OUTPUT'] as const) {
     for (let port = 1; port <= portCount; port++) {

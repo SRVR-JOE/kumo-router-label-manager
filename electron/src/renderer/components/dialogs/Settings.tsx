@@ -7,7 +7,7 @@ interface AppSettings {
   defaultFilePath: string
   autoConnect: boolean
   maxLabelLength: number
-  theme: string
+  theme: 'dark' | 'light'
 }
 
 export default function Settings() {

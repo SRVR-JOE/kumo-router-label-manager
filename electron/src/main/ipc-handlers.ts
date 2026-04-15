@@ -1,26 +1,66 @@
 // All ipcMain.handle() registrations
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
+import { isAbsolute, resolve as resolvePath, sep } from 'path'
 import * as routerAgent from './protocols/router-agent'
 import { detectRouterType } from './protocols/auto-detect'
 import { scanSubnet } from './protocols/network-scanner'
 import * as fileAgent from './file-io/file-agent'
 import { getSettings, setSettings, addRecentFile, getRecentFiles } from './settings-store'
 import { Label, PortData } from './protocols/types'
+import { validateIpAddress, validatePortNumber } from './utils/validation'
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   const win = BrowserWindow.getAllWindows()[0]
   if (win) win.webContents.send(channel, ...args)
 }
 
+function isPrivateSubnetBase(base: string): boolean {
+  // Accept "a.b.c" (3-octet prefix) where base IP is in RFC1918 range
+  const parts = base.split('.')
+  if (parts.length !== 3) return false
+  const octets = parts.map(p => parseInt(p, 10))
+  if (octets.some(n => isNaN(n) || n < 0 || n > 255)) return false
+  if (parts.some((p, i) => String(octets[i]) !== p)) return false
+  const [a, b] = octets
+  if (a === 10) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 169 && b === 254) return true // link-local
+  return false
+}
+
+function isSafeUserPath(filePath: string): boolean {
+  if (typeof filePath !== 'string' || !filePath) return false
+  if (!isAbsolute(filePath)) return false
+  const resolved = resolvePath(filePath)
+  const allowedRoots = [
+    app.getPath('documents'),
+    app.getPath('desktop'),
+    app.getPath('downloads'),
+    app.getPath('userData'),
+    app.getPath('home'),
+    app.getPath('temp'),
+  ].map(p => resolvePath(p))
+  return allowedRoots.some(root => resolved === root || resolved.startsWith(root + sep))
+}
+
 export function registerIpcHandlers(): void {
   // --- Router ---
   ipcMain.handle('router:connect', async (_event, ip: string, routerType?: string) => {
+    if (!validateIpAddress(ip)) {
+      sendToRenderer('connection-status', 'error')
+      return { success: false, error: 'Invalid IP address', routerType: 'kumo', deviceName: '', inputCount: 0, outputCount: 0 }
+    }
+    const allowedTypes = ['kumo', 'videohub', 'lightware'] as const
+    const typedRouter = (routerType && allowedTypes.includes(routerType as typeof allowedTypes[number]))
+      ? (routerType as typeof allowedTypes[number])
+      : undefined
     try {
       sendToRenderer('connection-status', 'connecting')
       const result = await routerAgent.connect(
         ip,
-        routerType as 'kumo' | 'videohub' | 'lightware' | undefined,
+        typedRouter,
         (done, total) => sendToRenderer('progress', { done, total, phase: 'connect' })
       )
       sendToRenderer('connection-status', result.success ? 'connected' : 'disconnected')
@@ -38,10 +78,15 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('router:detect-type', async (_event, ip: string) => {
+    if (!validateIpAddress(ip)) return null
     return detectRouterType(ip)
   })
 
   ipcMain.handle('router:scan-subnet', async (_event, baseIp: string) => {
+    if (!isPrivateSubnetBase(baseIp)) {
+      sendToRenderer('error', 'Subnet scan refused: base must be an RFC1918 private prefix (e.g. 192.168.1)')
+      return []
+    }
     try {
       const results = await scanSubnet(baseIp, (progress) => {
         sendToRenderer('scan-progress', progress)
@@ -88,6 +133,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('router:set-route', async (_event, output: number, input: number) => {
+    if (!validatePortNumber(output) || !validatePortNumber(input)) return false
     try {
       return await routerAgent.setRoute(output, input)
     } catch (e) {
@@ -109,6 +155,10 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('file:save', async (_event, path: string, data: { ports: PortData[] }) => {
+    if (!isSafeUserPath(path)) {
+      sendToRenderer('error', 'Save refused: path is outside allowed user directories')
+      return
+    }
     try {
       await fileAgent.saveFile(path, data)
       addRecentFile(path)
@@ -146,6 +196,10 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('file:open-default-template', async (_event, name: string) => {
+    if (typeof name !== 'string' || !/^[A-Za-z0-9 _.\-]+$/.test(name)) {
+      sendToRenderer('error', 'Template name contains disallowed characters')
+      return null
+    }
     try {
       return await fileAgent.openDefaultTemplate(name)
     } catch (e) {

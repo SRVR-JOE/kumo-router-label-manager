@@ -1,13 +1,14 @@
 import { useRouterStore } from '../stores/router-store'
 import { useLabelsStore, LabelRow } from '../stores/labels-store'
 import { useUIStore } from '../stores/ui-store'
+import type { RouterType } from '../../main/protocols/types'
 
 export function useRouter() {
   const router = useRouterStore()
   const labelsStore = useLabelsStore()
   const ui = useUIStore()
 
-  const connect = async (ip: string, routerType?: string) => {
+  const connect = async (ip: string, routerType?: RouterType) => {
     router.setIp(ip)
     router.setConnecting()
     const result = await window.helix.router.connect(ip, routerType)

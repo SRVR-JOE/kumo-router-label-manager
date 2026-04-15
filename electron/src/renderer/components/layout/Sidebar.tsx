@@ -51,7 +51,9 @@ export default function Sidebar() {
   }
 
   const handleQuickConnect = async (saved: { name: string; ip: string; routerType?: string }) => {
-    await connect(saved.ip, saved.routerType)
+    const allowed = ['kumo', 'videohub', 'lightware'] as const
+    const rt = allowed.find(t => t === saved.routerType)
+    await connect(saved.ip, rt)
   }
 
   return (

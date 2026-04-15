@@ -29,7 +29,9 @@ export default function ConnectDialog() {
 
   const handleConnect = async () => {
     if (!ip.trim()) return
-    await connect(ip.trim(), routerType || undefined)
+    const allowed = ['kumo', 'videohub', 'lightware'] as const
+    const rt = allowed.find(t => t === routerType)
+    await connect(ip.trim(), rt)
     closeDialog()
   }
 
