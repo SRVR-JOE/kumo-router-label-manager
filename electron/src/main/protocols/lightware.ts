@@ -133,7 +133,6 @@ export async function lightwareConnect(ip: string): Promise<ConnectResult> {
     // Product name
     let productName = 'Lightware MX2'
     const pnLines = await lw3SendCommand(sock, 'GET /.ProductName', sendId)
-    console.log('[LW3] ProductName response lines:', pnLines.length, pnLines)
     for (const line of pnLines) {
       const val = extractValue(line)
       if (val) { productName = val; break }
@@ -141,7 +140,6 @@ export async function lightwareConnect(ip: string): Promise<ConnectResult> {
 
     // Get labels to derive port counts (SourcePortCount/DestinationPortCount don't exist on MX2)
     const labelLines = await lw3SendCommand(sock, 'GET /MEDIA/NAMES/VIDEO.*', sendId)
-    console.log('[LW3] Label response lines:', labelLines.length)
     let inputCount = 0
     let outputCount = 0
 
@@ -162,7 +160,6 @@ export async function lightwareConnect(ip: string): Promise<ConnectResult> {
       }
     }
 
-    console.log(`[LW3] Connect result: ${productName}, inputs=${inputCount}, outputs=${outputCount}`)
     return {
       success: true,
       routerType: 'lightware',
@@ -194,7 +191,6 @@ export async function lightwareDownloadLabels(ip: string): Promise<Label[]> {
   try {
     // Get all labels — response: "pw /MEDIA/NAMES/VIDEO.I1=1;Input 1"
     const labelLines = await lw3SendCommand(sock, 'GET /MEDIA/NAMES/VIDEO.*', sendId)
-    console.log('[LW3] Download label lines:', labelLines.length, labelLines.slice(0, 4))
     const inputLabels = new Map<number, string>()
     const outputLabels = new Map<number, string>()
     // Match with page;name format OR plain name (fallback)

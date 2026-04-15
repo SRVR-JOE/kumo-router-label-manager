@@ -1,12 +1,14 @@
 // IP range scanner — probes a /24 subnet for routers
-// Checks ports 6107 (Lightware), 9990 (Videohub), 80 (KUMO) in parallel batches
+// Checks ports 6107 (Lightware), 9990 (Videohub), 80 (KUMO) in parallel.
 
-import * as net from 'net'
 import { RouterType } from './types'
 import { kumoTestConnection } from './kumo-rest'
+import { probePort } from './net-utils'
 
 const SCAN_PROBE_TIMEOUT = 500
-const BATCH_SIZE = 25
+const LIGHTWARE_PORT = 6107
+const VIDEOHUB_PORT = 9990
+const KUMO_HTTP_PORT = 80
 
 export interface DiscoveredRouter {
   ip: string
@@ -20,34 +22,12 @@ export interface ScanProgress {
   found: DiscoveredRouter[]
 }
 
-function probePort(ip: string, port: number, timeout = SCAN_PROBE_TIMEOUT): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = new net.Socket()
-    const timer = setTimeout(() => {
-      sock.destroy()
-      resolve(false)
-    }, timeout)
-
-    sock.connect(port, ip, () => {
-      clearTimeout(timer)
-      sock.destroy()
-      resolve(true)
-    })
-
-    sock.on('error', () => {
-      clearTimeout(timer)
-      sock.destroy()
-      resolve(false)
-    })
-  })
-}
-
 async function detectAtIp(ip: string): Promise<{ routerType: RouterType; deviceName: string } | null> {
   // Probe all three ports in parallel for speed
   const [lightware, videohub, kumo] = await Promise.all([
-    probePort(ip, 6107),
-    probePort(ip, 9990),
-    probePort(ip, 80).then(async (open) => {
+    probePort(ip, LIGHTWARE_PORT, SCAN_PROBE_TIMEOUT),
+    probePort(ip, VIDEOHUB_PORT, SCAN_PROBE_TIMEOUT),
+    probePort(ip, KUMO_HTTP_PORT, SCAN_PROBE_TIMEOUT).then(async (open) => {
       if (!open) return false
       // Port 80 is common — confirm it's actually a KUMO
       try {
@@ -71,6 +51,8 @@ async function detectAtIp(ip: string): Promise<{ routerType: RouterType; deviceN
  * @param onProgress - Called after each batch with current progress
  * @returns Array of all discovered routers
  */
+const MAX_CONCURRENT_PROBES = 50
+
 export async function scanSubnet(
   baseIp: string,
   onProgress?: (progress: ScanProgress) => void,
@@ -81,31 +63,26 @@ export async function scanSubnet(
   const found: DiscoveredRouter[] = []
   const total = 254
   let scanned = 0
+  let nextHost = 1
 
-  // Process in batches to avoid flooding the network
-  for (let batchStart = 1; batchStart <= 254; batchStart += BATCH_SIZE) {
-    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, 254)
-    const batchPromises: Promise<void>[] = []
-
-    for (let i = batchStart; i <= batchEnd; i++) {
-      const ip = `${base}.${i}`
-      batchPromises.push(
-        detectAtIp(ip).then((result) => {
-          if (result) {
-            const router: DiscoveredRouter = { ip, ...result }
-            found.push(router)
-          }
-        }),
-      )
-    }
-
-    await Promise.all(batchPromises)
-    scanned = Math.min(batchEnd, 254)
-
-    if (onProgress) {
-      onProgress({ scanned, total, found: [...found] })
+  // Worker-pool pattern: N workers pull from a shared counter.
+  // Reports progress after every probe completes rather than every batch.
+  async function worker(): Promise<void> {
+    while (nextHost <= total) {
+      const host = nextHost++
+      const ip = `${base}.${host}`
+      const result = await detectAtIp(ip)
+      if (result) {
+        found.push({ ip, ...result })
+      }
+      scanned++
+      if (onProgress) {
+        onProgress({ scanned, total, found: [...found] })
+      }
     }
   }
 
+  const workerCount = Math.min(MAX_CONCURRENT_PROBES, total)
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
   return found
 }
