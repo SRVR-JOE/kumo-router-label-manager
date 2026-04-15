@@ -89,8 +89,11 @@
 ## Technical Specifications
 
 ### Supported KUMO Models
+- **KUMO 1604** - 16x4 SDI router
 - **KUMO 1616** - 16x16 SDI router
 - **KUMO 3232** - 32x32 SDI router
+- **KUMO 3216** - 32x16 asymmetric SDI router
+- **KUMO 6432** - 64x32 asymmetric SDI router
 - **KUMO 6464** - 64x64 SDI router (via KUMO CP2)
 - **KUMO 1616-12G** - 12G-SDI support
 - **KUMO 3232-12G** - 12G-SDI support
