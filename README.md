@@ -1,4 +1,4 @@
-# Helix v5.0
+# Helix v5.1
 
 **Professional AV Production Tool for Live Events**
 
@@ -26,6 +26,15 @@ Complete solution for managing video router labels across AJA KUMO, Videohub, an
 
 **Lightware MX2**
 - All MX2 models with LW3 protocol support (TCP 6107)
+
+### What's New in v5.1
+
+- **Electron desktop app** - First packaged cross-platform build (v1.1.0)
+- **AJA KUMO label colors** - Color column with visual swatches, bulk color assignment via context menu
+- **Single-click cell editing** - Click directly on New Label or Color cells to edit inline
+- **Auto-Number Letter Mode** - Letter sequences (A-Z, AA, AB...) with configurable starting letter
+- **Auto-Discover port detection** - Independent input/output count detection for asymmetric KUMO models (3216, 6432)
+- **ComboBox dark theme fix** - Dropdown menus now render correctly in dark theme
 
 ### What's New in v5.0
 
@@ -144,7 +153,7 @@ Works with CSV (recommended) or Excel (.xlsx). Columns:
 | New_Label | Your desired label (leave blank to skip) |
 | Notes | Optional documentation |
 
-Labels must be 50 characters or fewer for AJA KUMO. The app warns you if any labels exceed this limit.
+Label length limits vary by router — the app enforces the correct per-router limit (up to 255 chars) and warns if any label exceeds it. AJA KUMO hardware typically displays the first ~16 characters on its front panel regardless.
 
 ## Batch Operations
 
@@ -216,7 +225,15 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ## Version History
 
-### v5.0 (Current)
+### v5.1 (Current)
+- First packaged Electron desktop app release (v1.1.0)
+- AJA KUMO label colors with bulk assignment
+- Single-click cell editing for New Label and Color columns
+- Auto-Number Letter Mode (A-Z, AA, AB...)
+- Auto-Discover independent input/output port detection (3216, 6432)
+- Dark-theme ComboBox rendering fix
+
+### v5.0
 - Multi-router support: AJA KUMO, Blackmagic Videohub, and Lightware MX2
 - Crosspoint matrix view for routing connections
 - Security hardening (HTTPS-first with HTTP fallback, input validation)

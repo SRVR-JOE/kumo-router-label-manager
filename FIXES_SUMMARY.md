@@ -290,6 +290,19 @@ For issues or questions:
 
 ---
 
-**Last Updated**: 2026-02-15
-**Version**: 5.0.0
+**Last Updated**: 2026-04-15
+**Version**: 5.1.0
 **Status**: ✅ All critical issues resolved
+
+---
+
+## v5.1.0 Fixes (March 24, 2026)
+
+- **ComboBox dark theme** - All dropdown menus now render with correct dark theme colors (previously defaulted to white background)
+- **Auto-Discover port detection** - Independent input/output count detection fixes wrong port counts on asymmetric KUMO models (3216, 6432)
+- **Lightware label download** - Reliability improvements to LW3 label fetching
+- **Clipboard paste** - Fixed paste-from-clipboard into the label grid
+- **Matrix layout** - Crosspoint matrix layout fixes
+- **Letter Mode** - Auto-Number now supports letter sequences (A-Z, AA, AB...)
+- **Single-click cell editing** - Click directly on New Label or Color cells to edit inline
+- **AJA KUMO colors** - Color column with visual swatches, bulk color assignment via context menu
