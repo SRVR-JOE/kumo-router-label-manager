@@ -18,11 +18,13 @@
   },
   "dependencies": {
     "@tanstack/react-table": "^8.20.0",
+    "@types/react-window": "^1.8.8",
     "electron-store": "^8.2.0",
     "exceljs": "^4.4.0",
     "papaparse": "^5.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-window": "^1.8.11",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
