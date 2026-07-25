@@ -1,13 +1,26 @@
 # Helix - Version Information
 
-## Current Version: 5.1.0
-**Release Date**: March 24, 2026
+## Current Version: 5.2.0
+**Release Date**: July 25, 2026
 **Build**: Production Release
 **Compatibility**: AJA KUMO, Blackmagic Videohub, Lightware MX2
 
 ---
 
 ## Changelog
+
+### Version 5.2.0 - July 25, 2026
+**Security, Performance, and Stability Update**
+
+#### Improvements
+- **Security and Performance Audit**: Merged in findings and fixes from the April security/performance audit
+- **Crosspoint Matrix Virtualization**: The crosspoint matrix view now renders with row/column virtualization, keeping large router grids responsive
+- **Upload Safety Fixes**: Hardened label upload path against malformed/unsafe input before it reaches the router
+
+#### Electron App
+- Electron desktop app version aligned to the shared 5.x product line (previously tracked separately as 1.1.0)
+
+---
 
 ### Version 5.1.0 - March 24, 2026
 **Bug Fixes and Enhancements**

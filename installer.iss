@@ -9,8 +9,8 @@
 ; =============================================================================
 
 #define AppName    "Helix"
-#define AppVersion "5.0"
-#define AppFullVer "5.0.0"
+#define AppVersion "5.2.0"
+#define AppFullVer "5.2.0"
 #define Publisher  "Solotech"
 #define AppURL     "https://github.com/SRVR-JOE/helix"
 #define InstallDir "Helix"

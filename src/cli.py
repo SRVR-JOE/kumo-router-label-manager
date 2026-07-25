@@ -51,7 +51,7 @@ from .models import Label, PortType
 console = Console()
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "5.3.0"
+APP_VERSION = "5.2.0"
 
 
 # ---------------------------------------------------------------------------

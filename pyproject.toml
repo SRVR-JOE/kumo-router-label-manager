@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "helix-router-manager"
-version = "5.5.0"
+version = "5.2.0"
 description = "Professional AV Production Tool for managing video router labels"
 readme = "README.md"
 requires-python = ">=3.8"
