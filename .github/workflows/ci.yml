@@ -39,6 +39,9 @@ jobs:
 
       - name: Type check with mypy
         run: mypy src/ --ignore-missing-imports
+        # NOTE: continue-on-error keeps this non-blocking while mypy debt is resolved.
+        # disallow_untyped_defs = true in pyproject.toml requires this for now.
+        # Error count could not be determined locally (mypy not available without pip install).
         continue-on-error: true
 
       - name: Run tests with coverage
@@ -52,7 +55,7 @@ jobs:
           path: coverage.xml
 
   electron:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     defaults:
       run:
         working-directory: electron
@@ -73,5 +76,32 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test
+
       - name: Build
         run: npm run build
+
+  powershell:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Run PSScriptAnalyzer on root PowerShell scripts
+        # Error-only severity: non-blocking to avoid immediate CI breakage on production scripts
+        # that currently have zero validation. This provides useful feedback without blocking.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Get-ChildItem -Path . | Where-Object { $_.Extension -in @('.ps1', '.psm1') } | ForEach-Object {
+            Write-Host "Analyzing: $($_.Name)"
+            Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error
+          }
+        shell: pwsh
