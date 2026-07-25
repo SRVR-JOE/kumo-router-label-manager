@@ -1,7 +1,7 @@
 import { useRouterStore } from '../stores/router-store'
 import { useLabelsStore, LabelRow } from '../stores/labels-store'
 import { useUIStore } from '../stores/ui-store'
-import type { RouterType } from '../../main/protocols/types'
+import type { RouterType, UploadResult } from '../../main/protocols/types'
 
 export function useRouter() {
   const router = useRouterStore()
@@ -117,18 +117,48 @@ export function useRouter() {
       newColor: l.newColor,
       notes: l.notes,
     }))
-    const result = await window.helix.router.upload(uploadData) as { successCount: number; errorCount: number; errors: string[] }
-    if (result.errorCount === 0 && result.successCount > 0) {
-      // Only clear the pending edits when every port was confirmed written.
-      labelsStore.markUploaded(changed.map(l => l.id))
-      ui.showToast(`Uploaded ${result.successCount} labels`, 'success')
-    } else if (result.successCount > 0) {
-      // Partial write. The upload result carries no per-port detail, so we cannot
-      // tell which ports landed — leave ALL rows pending rather than showing a
-      // clean grid over a router that is only partly correct.
+    const result = await window.helix.router.upload(uploadData) as UploadResult
+
+    // The upload result now carries a per-port outcome (results[]), so we can
+    // mark exactly the confirmed ports as uploaded and leave the rest pending
+    // — instead of the old conservative fallback of leaving EVERY row pending
+    // on any partial failure because we couldn't tell which ports landed.
+    if (result.results.length === 0) {
+      // No per-port detail available at all (e.g. an unexpected exception
+      // thrown before any port write was attempted) — fall back to the old,
+      // conservative "leave everything pending" behaviour rather than guess.
+      if (result.errorCount === 0 && result.successCount === 0) {
+        ui.showToast('No changes to upload', 'warning')
+      } else {
+        ui.showToast(`Upload failed: ${result.errors.join(', ')}`, 'error')
+      }
+      return
+    }
+
+    const okIds: string[] = []
+    const failedIds: string[] = []
+    for (const portResult of result.results) {
+      const id = `${portResult.portType}-${portResult.portNumber}`
+      if (portResult.ok) okIds.push(id)
+      else failedIds.push(id)
+    }
+
+    if (okIds.length > 0) {
+      labelsStore.markUploaded(okIds)
+    }
+    if (failedIds.length > 0) {
+      // Leave the failed rows' pending edits intact (so nothing is lost) but
+      // flag them with the store's 'error' status so they're visibly
+      // distinct from untouched/modified rows and clearly need a retry.
+      labelsStore.bulkUpdateLabels(failedIds, 'status', 'error')
+    }
+
+    if (failedIds.length === 0) {
+      ui.showToast(`Uploaded ${okIds.length} labels`, 'success')
+    } else if (okIds.length > 0) {
       ui.showToast(
-        `Partial upload: ${result.successCount} of ${changed.length} labels written, ${result.errorCount} failed. ` +
-        `Changes kept pending — re-upload to retry. ${result.errors.join(', ')}`,
+        `Partial upload: ${okIds.length} of ${changed.length} labels written, ${failedIds.length} failed and are flagged for retry. ` +
+        `${result.errors.join(', ')}`,
         'warning'
       )
     } else {

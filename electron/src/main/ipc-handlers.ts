@@ -46,6 +46,23 @@ function isSafeUserPath(filePath: string): boolean {
 }
 
 export function registerIpcHandlers(): void {
+  // Push proactive liveness transitions to the renderer. connect()/disconnect()
+  // already emit 'connection-status' directly from their own handlers below;
+  // this covers the case the old code couldn't: the session going dead *while
+  // idle* (switch reboot, cable pull) via router-agent's keepalive, or a
+  // download/upload/etc. discovering the router is gone.
+  routerAgent.onSessionChange((s) => {
+    if (s.state === 'error') {
+      sendToRenderer('connection-status', 'error')
+      sendToRenderer(
+        'error',
+        `Lost connection to ${s.routerType ?? 'router'} at ${s.ip}${s.lastError ? `: ${s.lastError}` : ''}. Reconnect to continue.`
+      )
+    } else if (s.state === 'connected') {
+      sendToRenderer('connection-status', 'connected')
+    }
+  })
+
   // --- Router ---
   ipcMain.handle('router:connect', async (_event, ip: string, routerType?: string) => {
     if (!validateIpAddress(ip)) {
@@ -119,7 +136,16 @@ export function registerIpcHandlers(): void {
       return result
     } catch (e) {
       sendToRenderer('error', String(e))
-      return { successCount: 0, errorCount: 0, errors: [String(e)] }
+      return { successCount: 0, errorCount: 0, errors: [String(e)], results: [] }
+    }
+  })
+
+  ipcMain.handle('router:get-videohub-status', async () => {
+    try {
+      return await routerAgent.getVideohubStatus()
+    } catch (e) {
+      sendToRenderer('error', String(e))
+      return null
     }
   })
 

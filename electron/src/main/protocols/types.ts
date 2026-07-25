@@ -25,10 +25,42 @@ export interface ConnectResult {
   error?: string
 }
 
+// Per-port outcome of a single upload. One entry per port that had a pending
+// change, regardless of how many underlying wire operations that port required
+// (e.g. KUMO's label-line-1/line-2/color are three separate HTTP requests but
+// collapse to one PortUploadResult per port here).
+export interface PortUploadResult {
+  portNumber: number
+  portType: PortType
+  ok: boolean
+  error?: string
+}
+
 export interface UploadResult {
   successCount: number
   errorCount: number
   errors: string[]
+  // Always populated (one entry per port with a pending change) whenever the
+  // upload attempt reached the point of dispatching at least one port write.
+  // Only left empty when the router rejected the batch before any per-port
+  // detail could be established (e.g. an unexpected exception thrown before
+  // dispatch) — callers must treat an empty array as "no per-port detail
+  // available" and fall back to a conservative all-pending treatment.
+  results: PortUploadResult[]
+}
+
+// Videohub-specific lock/take-mode state, parsed from the device's dump but
+// not currently surfaced anywhere in the UI. A future UI could use this to
+// grey out / block writes to outputs whose lock state isn't 'U' (unlocked)
+// and to show whether the device is in "take" (confirm-before-switch) mode.
+export interface VideohubLockState {
+  output: number // 0-based, matches Crosspoint.output
+  state: string // raw Blackmagic lock code: 'U' unlocked, 'O' owned by this connection, 'L' locked by someone else
+}
+
+export interface VideohubStatus {
+  locks: VideohubLockState[]
+  takeMode: boolean
 }
 
 export interface Crosspoint {

@@ -10,7 +10,8 @@
 //   - Serial: GET /.SerialNumber
 
 import * as net from 'net'
-import { Label, ConnectResult, UploadResult, KUMO_DEFAULT_COLOR } from './types'
+import { Label, ConnectResult, UploadResult, PortUploadResult, KUMO_DEFAULT_COLOR } from './types'
+import { withRetry } from './retry'
 
 const LIGHTWARE_PORT = 6107
 const CONNECT_TIMEOUT = 5000
@@ -21,7 +22,7 @@ const MAX_LABEL_LENGTH = 255
 // Socket helpers
 // ---------------------------------------------------------------------------
 
-function connectSocket(ip: string, port = LIGHTWARE_PORT): Promise<net.Socket> {
+function connectOnce(ip: string, port = LIGHTWARE_PORT): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const sock = new net.Socket()
     const timer = setTimeout(() => {
@@ -39,6 +40,12 @@ function connectSocket(ip: string, port = LIGHTWARE_PORT): Promise<net.Socket> {
       reject(new Error(`Cannot connect to ${ip}:${port} — ${err.message}`))
     })
   })
+}
+
+// TCP connect is idempotent (no device-visible side effect), so it's safe to
+// retry with the shared backoff policy.
+function connectSocket(ip: string, port = LIGHTWARE_PORT): Promise<net.Socket> {
+  return withRetry(() => connectOnce(ip, port))
 }
 
 /**
@@ -335,19 +342,27 @@ export async function lightwareSetRoute(ip: string, output: number, input: numbe
 
 export async function lightwareUploadLabels(ip: string, labels: Label[]): Promise<UploadResult> {
   const changes = labels.filter(l => l.newLabel !== null && l.newLabel !== l.currentLabel)
-  if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [] }
+  if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [], results: [] }
 
   let sock: net.Socket
   try {
     sock = await connectSocket(ip)
   } catch (e) {
-    return { successCount: 0, errorCount: changes.length, errors: [`Connection failed: ${e}`] }
+    const reason = `Connection failed: ${e}`
+    const results: PortUploadResult[] = changes.map(label => ({
+      portNumber: label.portNumber,
+      portType: label.portType,
+      ok: false,
+      error: reason,
+    }))
+    return { successCount: 0, errorCount: changes.length, errors: [reason], results }
   }
 
   const sendId = { value: 1 }
   let successCount = 0
   let errorCount = 0
   const errors: string[] = []
+  const results: PortUploadResult[] = []
 
   try {
     for (const label of changes) {
@@ -361,10 +376,12 @@ export async function lightwareUploadLabels(ip: string, labels: Label[]): Promis
       const responseLines = await lw3SendCommand(sock, command, sendId)
 
       let hasError = false
+      let errorDetail = ''
       for (const line of responseLines) {
         if (isErrorLine(line)) {
           hasError = true
-          errors.push(`${label.portType} ${label.portNumber}: ${line}`)
+          errorDetail = `${label.portType} ${label.portNumber}: ${line}`
+          errors.push(errorDetail)
           break
         }
       }
@@ -372,15 +389,39 @@ export async function lightwareUploadLabels(ip: string, labels: Label[]): Promis
       if (hasError || responseLines.length === 0) {
         errorCount++
         if (responseLines.length === 0) {
-          errors.push(`${label.portType} ${label.portNumber}: no response`)
+          errorDetail = `${label.portType} ${label.portNumber}: no response`
+          errors.push(errorDetail)
         }
+        results.push({ portNumber: label.portNumber, portType: label.portType, ok: false, error: errorDetail })
       } else {
         successCount++
+        results.push({ portNumber: label.portNumber, portType: label.portType, ok: true })
       }
     }
   } finally {
     sock.destroy()
   }
 
-  return { successCount, errorCount, errors }
+  return { successCount, errorCount, errors, results }
+}
+
+// Lightweight liveness probe used by router-agent's session keepalive.
+// Per docs/plans/2026-02-27-lightware-mx2-support-design.md (~line 63):
+// "No dedicated ping command. Use periodic GET /.ProductName every 25 seconds."
+export async function lightwareProbe(ip: string): Promise<boolean> {
+  let sock: net.Socket
+  try {
+    sock = await connectSocket(ip)
+  } catch {
+    return false
+  }
+  const sendId = { value: 1 }
+  try {
+    const lines = await lw3SendCommand(sock, 'GET /.ProductName', sendId)
+    return lines.some(line => !isErrorLine(line) && extractValue(line) !== null)
+  } catch {
+    return false
+  } finally {
+    sock.destroy()
+  }
 }

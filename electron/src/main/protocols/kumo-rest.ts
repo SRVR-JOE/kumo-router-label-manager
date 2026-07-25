@@ -1,7 +1,8 @@
 // AJA KUMO REST API client
 // Ports: HTTP 80 (GET /config?action=get|set&configid=0&paramid=...)
 
-import { Label, ConnectResult, UploadResult, KUMO_DEFAULT_COLOR } from './types'
+import { Label, ConnectResult, UploadResult, PortUploadResult, KUMO_DEFAULT_COLOR } from './types'
+import { withRetry } from './retry'
 
 const MAX_CONCURRENT = 32
 const REQUEST_TIMEOUT = 4000
@@ -32,14 +33,22 @@ function setUrl(ip: string, paramId: string, value: string): string {
   return `http://${ip}/config?action=set&configid=0&paramid=${paramId}&value=${encodeURIComponent(value)}`
 }
 
+// Retries transient failures (timeout/abort, network error, non-2xx) with the
+// shared backoff policy — mirrors src/agents/api_agent/rest_client.py's _get(),
+// which retries on both thrown errors and non-200 status before giving up.
 async function fetchWithTimeout(url: string, timeout = REQUEST_TIMEOUT): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeout)
-  try {
-    return await fetch(url, { signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
+  return withRetry(
+    async () => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeout)
+      try {
+        return await fetch(url, { signal: controller.signal })
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+    { isRetryableResult: (resp) => !resp.ok }
+  )
 }
 
 function parseParamResponse(json: Record<string, unknown>): string | null {
@@ -266,20 +275,28 @@ export async function kumoUploadLabels(
     (l.newLabelLine2 !== null && l.newLabelLine2 !== l.currentLabelLine2) ||
     (l.newColor !== null && l.newColor !== l.currentColor)
   )
-  if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [] }
+  if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [], results: [] }
 
-  const tasks: (() => Promise<{ success: boolean; error?: string }>)[] = []
+  // Each port change may fan out into up to 3 independent HTTP requests
+  // (label line 1, line 2, color). Tag every subtask with the index of the
+  // port change it belongs to so we can roll the wire-level results back up
+  // into one PortUploadResult per port.
+  const httpErrorSuffix = (resp: Response): string => (resp.status ? `HTTP ${resp.status}` : 'request failed')
+  type SubTaskResult = { success: boolean; error?: string }
+  const subTaskChangeIndex: number[] = []
+  const tasks: (() => Promise<SubTaskResult>)[] = []
 
-  for (const label of changes) {
+  changes.forEach((label, changeIdx) => {
     // Label line 1
     if (label.newLabel !== null && label.newLabel !== label.currentLabel) {
       const paramId = label.portType === 'INPUT'
         ? sourceNameParam(label.portNumber, 1)
         : destNameParam(label.portNumber, 1)
+      subTaskChangeIndex.push(changeIdx)
       tasks.push(async () => {
         try {
           const resp = await fetchWithTimeout(setUrl(ip, paramId, label.newLabel!))
-          return { success: resp.ok }
+          return { success: resp.ok, error: resp.ok ? undefined : `${label.portType} ${label.portNumber} L1: ${httpErrorSuffix(resp)}` }
         } catch (e) {
           return { success: false, error: `${label.portType} ${label.portNumber} L1: ${e}` }
         }
@@ -290,10 +307,11 @@ export async function kumoUploadLabels(
       const paramId = label.portType === 'INPUT'
         ? sourceNameParam(label.portNumber, 2)
         : destNameParam(label.portNumber, 2)
+      subTaskChangeIndex.push(changeIdx)
       tasks.push(async () => {
         try {
           const resp = await fetchWithTimeout(setUrl(ip, paramId, label.newLabelLine2!))
-          return { success: resp.ok }
+          return { success: resp.ok, error: resp.ok ? undefined : `${label.portType} ${label.portNumber} L2: ${httpErrorSuffix(resp)}` }
         } catch (e) {
           return { success: false, error: `${label.portType} ${label.portNumber} L2: ${e}` }
         }
@@ -303,32 +321,56 @@ export async function kumoUploadLabels(
     if (label.newColor !== null && label.newColor !== label.currentColor) {
       const paramId = buttonColorParam(label.portNumber, label.portType)
       const colorValue = encodeButtonColor(label.newColor)
+      subTaskChangeIndex.push(changeIdx)
       tasks.push(async () => {
         try {
           const resp = await fetchWithTimeout(setUrl(ip, paramId, colorValue))
-          return { success: resp.ok }
+          return { success: resp.ok, error: resp.ok ? undefined : `${label.portType} ${label.portNumber} color: ${httpErrorSuffix(resp)}` }
         } catch (e) {
           return { success: false, error: `${label.portType} ${label.portNumber} color: ${e}` }
         }
       })
     }
-  }
+  })
 
-  const results = await parallelLimit(tasks, MAX_CONCURRENT, onProgress)
+  const subResults = await parallelLimit(tasks, MAX_CONCURRENT, onProgress)
+
+  // Roll subtask results back up to one outcome per port change: a port is
+  // only "ok" if every one of its subtasks (label/line2/color) succeeded.
+  const changeOk: boolean[] = changes.map(() => true)
+  const changeErrors: string[][] = changes.map(() => [])
+
+  subResults.forEach((r, i) => {
+    const changeIdx = subTaskChangeIndex[i]
+    if (r && !(r instanceof Error) && r.success) return
+    changeOk[changeIdx] = false
+    if (r && !(r instanceof Error) && r.error) {
+      changeErrors[changeIdx].push(r.error)
+    } else {
+      changeErrors[changeIdx].push(`${changes[changeIdx].portType} ${changes[changeIdx].portNumber}: request failed`)
+    }
+  })
+
   let successCount = 0
   let errorCount = 0
   const errors: string[] = []
-
-  for (const r of results) {
-    if (r && !(r instanceof Error) && r.success) {
+  const results: PortUploadResult[] = changes.map((label, idx) => {
+    const ok = changeOk[idx]
+    if (ok) {
       successCount++
     } else {
       errorCount++
-      if (r && !(r instanceof Error) && r.error) errors.push(r.error)
+      errors.push(...changeErrors[idx])
     }
-  }
+    return {
+      portNumber: label.portNumber,
+      portType: label.portType,
+      ok,
+      error: ok ? undefined : changeErrors[idx].join('; '),
+    }
+  })
 
-  return { successCount, errorCount, errors }
+  return { successCount, errorCount, errors, results }
 }
 
 export async function kumoGetCrosspoints(ip: string, outputCount: number): Promise<{ output: number; input: number }[]> {

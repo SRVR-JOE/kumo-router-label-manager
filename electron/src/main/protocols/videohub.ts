@@ -2,7 +2,10 @@
 // Block-based text protocol with 300ms silence detection
 
 import * as net from 'net'
-import { Label, ConnectResult, UploadResult, KUMO_DEFAULT_COLOR } from './types'
+import { Label, ConnectResult, UploadResult, PortUploadResult, VideohubStatus, KUMO_DEFAULT_COLOR } from './types'
+import { withRetry } from './retry'
+import { probePort } from './net-utils'
+import { sanitizeLabel } from '../utils/validation'
 
 const VIDEOHUB_PORT = 9990
 const CONNECT_TIMEOUT = 2000
@@ -165,7 +168,7 @@ function parseVideohubDump(raw: string): VideohubInfo {
   return info
 }
 
-function connectSocket(ip: string): Promise<net.Socket> {
+function connectOnce(ip: string): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const sock = new net.Socket()
     const timer = setTimeout(() => {
@@ -183,6 +186,20 @@ function connectSocket(ip: string): Promise<net.Socket> {
       reject(new Error(`Cannot connect to ${ip}:${VIDEOHUB_PORT} — ${err.message}`))
     })
   })
+}
+
+// TCP connect is idempotent (no device-visible side effect), so it's safe to
+// retry with the shared backoff policy — this is what actually fixes
+// "flaky show-site network drops one packet and the whole operation fails".
+function connectSocket(ip: string): Promise<net.Socket> {
+  return withRetry(() => connectOnce(ip))
+}
+
+// Lightweight liveness probe used by router-agent's session keepalive.
+// Reuses the plain TCP probe (no data exchange, no dump parsing) so a
+// liveness check never blocks on/consumes an actual protocol round-trip.
+export async function videohubProbe(ip: string): Promise<boolean> {
+  return probePort(ip, VIDEOHUB_PORT, CONNECT_TIMEOUT)
 }
 
 function sendAndWaitAck(sock: net.Socket, payload: string, timeout = 5000): Promise<string> {
@@ -275,7 +292,7 @@ export async function videohubDownloadLabels(ip: string): Promise<Label[]> {
 
 export async function videohubUploadLabels(ip: string, labels: Label[]): Promise<UploadResult> {
   const changes = labels.filter(l => l.newLabel !== null && l.newLabel !== l.currentLabel)
-  if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [] }
+  if (changes.length === 0) return { successCount: 0, errorCount: 0, errors: [], results: [] }
 
   const inputChanges = changes.filter(l => l.portType === 'INPUT')
   const outputChanges = changes.filter(l => l.portType === 'OUTPUT')
@@ -283,8 +300,45 @@ export async function videohubUploadLabels(ip: string, labels: Label[]): Promise
   let successCount = 0
   let errorCount = 0
   const errors: string[] = []
+  const results: PortUploadResult[] = []
 
-  const sock = await connectSocket(ip)
+  // Videohub ACKs/NAKs an entire "LABELS:" block at once — there is no
+  // per-line acknowledgement in this protocol, so the finest-grained truth
+  // we can report is "every port in this block landed" or "none of them did".
+  // Splitting into one SET per port to get finer granularity would change
+  // request timing/behaviour against real hardware in a way we can't verify
+  // here, so we keep the existing batched writes and attribute the shared
+  // block outcome to each port in it.
+  function recordBlock(blockLabel: string, portsInBlock: Label[], ack: string): void {
+    if (ack.toUpperCase().includes('ACK')) {
+      successCount += portsInBlock.length
+      for (const lbl of portsInBlock) {
+        results.push({ portNumber: lbl.portNumber, portType: lbl.portType, ok: true })
+      }
+    } else {
+      const reason = ack.toUpperCase().includes('NAK') ? 'device returned NAK' : 'no ACK received'
+      errorCount += portsInBlock.length
+      errors.push(`${blockLabel}: ${reason}`)
+      for (const lbl of portsInBlock) {
+        results.push({ portNumber: lbl.portNumber, portType: lbl.portType, ok: false, error: `${blockLabel} block: ${reason}` })
+      }
+    }
+  }
+
+  let sock: net.Socket
+  try {
+    sock = await connectSocket(ip)
+  } catch (e) {
+    // Could not even establish the connection — every pending change is
+    // unconfirmed, but we still report one result entry per port so callers
+    // can rely on results.length === changes.length whenever changes exist.
+    const reason = `Connection failed: ${e}`
+    for (const lbl of changes) {
+      results.push({ portNumber: lbl.portNumber, portType: lbl.portType, ok: false, error: reason })
+    }
+    return { successCount: 0, errorCount: changes.length, errors: [reason], results }
+  }
+
   try {
     // Drain initial dump
     await recvUntilSilence(sock, 2000)
@@ -293,46 +347,50 @@ export async function videohubUploadLabels(ip: string, labels: Label[]): Promise
     if (inputChanges.length > 0) {
       const lines = ['INPUT LABELS:']
       for (const lbl of inputChanges) {
-        lines.push(`${lbl.portNumber - 1} ${lbl.newLabel!.slice(0, MAX_LABEL_LENGTH)}`)
+        // Strip CR/LF before framing: this is a line-oriented protocol, so an
+        // embedded newline injects an extra raw line into the block and shifts
+        // port attribution for every line after it.
+        lines.push(`${lbl.portNumber - 1} ${sanitizeLabel(lbl.newLabel!, MAX_LABEL_LENGTH)}`)
       }
       lines.push('', '')
       const payload = lines.join('\n')
       const ack = await sendAndWaitAck(sock, payload)
-      if (ack.toUpperCase().includes('ACK')) {
-        successCount += inputChanges.length
-      } else if (ack.toUpperCase().includes('NAK')) {
-        errorCount += inputChanges.length
-        errors.push('INPUT LABELS: device returned NAK')
-      } else {
-        errorCount += inputChanges.length
-        errors.push('INPUT LABELS: no ACK received')
-      }
+      recordBlock('INPUT LABELS', inputChanges, ack)
     }
 
     // Send output labels block
     if (outputChanges.length > 0) {
       const lines = ['OUTPUT LABELS:']
       for (const lbl of outputChanges) {
-        lines.push(`${lbl.portNumber - 1} ${lbl.newLabel!.slice(0, MAX_LABEL_LENGTH)}`)
+        // See INPUT LABELS above — CR/LF must not reach the wire block.
+        lines.push(`${lbl.portNumber - 1} ${sanitizeLabel(lbl.newLabel!, MAX_LABEL_LENGTH)}`)
       }
       lines.push('', '')
       const payload = lines.join('\n')
       const ack = await sendAndWaitAck(sock, payload)
-      if (ack.toUpperCase().includes('ACK')) {
-        successCount += outputChanges.length
-      } else if (ack.toUpperCase().includes('NAK')) {
-        errorCount += outputChanges.length
-        errors.push('OUTPUT LABELS: device returned NAK')
-      } else {
-        errorCount += outputChanges.length
-        errors.push('OUTPUT LABELS: no ACK received')
-      }
+      recordBlock('OUTPUT LABELS', outputChanges, ack)
     }
   } finally {
     sock.destroy()
   }
 
-  return { successCount, errorCount, errors }
+  return { successCount, errorCount, errors, results }
+}
+
+// Locks + take mode are parsed off the device dump but were previously
+// discarded entirely. Surfaced here (main-process only, no UI) so a future
+// grid can grey out / block writes to locked outputs. See VideohubStatus in
+// types.ts for the shape a UI would consume.
+export async function videohubGetStatus(ip: string): Promise<VideohubStatus> {
+  const sock = await connectSocket(ip)
+  try {
+    const raw = await recvUntilSilence(sock)
+    const info = parseVideohubDump(raw)
+    const locks = Array.from(info.locks, ([output, state]) => ({ output, state }))
+    return { locks, takeMode: info.takeMode }
+  } finally {
+    sock.destroy()
+  }
 }
 
 export async function videohubGetRouting(ip: string): Promise<{ output: number; input: number }[]> {

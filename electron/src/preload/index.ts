@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import type { Label, PortData, AppSettings, ConnectResult, UploadResult, Crosspoint, FileData, RouterType } from '../main/protocols/types'
+import type { Label, PortData, AppSettings, ConnectResult, UploadResult, Crosspoint, FileData, RouterType, VideohubStatus } from '../main/protocols/types'
 
 export type HelixAPI = typeof helixAPI
 
@@ -18,6 +18,12 @@ const helixAPI = {
       ipcRenderer.invoke('router:upload', labels),
     getCrosspoints: (): Promise<Crosspoint[]> =>
       ipcRenderer.invoke('router:get-crosspoints'),
+    // Videohub-only: locks + take mode. Resolves null when not connected to
+    // a Videohub. Not yet consumed by any UI — see VideohubStatus in
+    // ../main/protocols/types.ts for the shape a future locked-output
+    // indicator would use (state !== 'U' means don't allow set-route there).
+    getVideohubStatus: (): Promise<VideohubStatus | null> =>
+      ipcRenderer.invoke('router:get-videohub-status'),
     setRoute: (output: number, input: number): Promise<boolean> =>
       ipcRenderer.invoke('router:set-route', output, input),
     scanSubnet: (baseIp: string): Promise<Array<{ ip: string; routerType: RouterType }>> =>
