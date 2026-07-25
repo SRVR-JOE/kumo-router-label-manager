@@ -2,7 +2,32 @@
 
 **Professional AV Production Tool for Live Events**
 
-Supports **AJA KUMO**, **Blackmagic Videohub**, and **Lightware MX2** routers. The command-line tool auto-detects which type of router you are connected to, so the same workflow applies to all.
+Manage labels and crosspoints on broadcast video routers. Supports **AJA KUMO**, **Blackmagic Videohub**, and **Lightware MX2** hardware. The tools auto-detect which type of router you are connected to.
+
+## Repository Structure
+
+This repository contains **three independent implementations** of the Helix label manager. Each has different capabilities and maturity levels:
+
+1. **PowerShell/WinForms** (repo root: `Helix-*.ps1`) — Production-ready GUI and CLI tools
+2. **Electron/React** (in `electron/`) — Desktop app with modern UI (in development)
+3. **Python CLI** (in `src/`) — Command-line tool with event-driven architecture (framework stage)
+
+The **PowerShell tools are the only implementation currently shipped by the installer** (`installer.iss`). Users running `Helix-Label-Manager.ps1` are using the PowerShell/WinForms implementation.
+
+### Implementation Status
+
+| Feature | PowerShell | Electron | Python |
+|---------|-----------|----------|--------|
+| GUI Application | ✅ Full-featured | 🔄 In progress | ❌ Not implemented |
+| CLI Tool | ✅ Production | 🔄 In progress | 🔄 Basic |
+| AJA KUMO REST API | ✅ Full | ✅ Full | ✅ Full |
+| KUMO Telnet fallback | ✅ Integrated | ❌ Orphaned* | ✅ Integrated |
+| HTTPS-first fallback | ✅ Yes | ❌ HTTP only | ❌ HTTP only |
+| Auto-backup CSV | ✅ Before upload | ❌ No | ❌ No |
+| Videohub support | ✅ Full | ✅ Full | ✅ Full |
+| Lightware MX2 support | ✅ Full | ✅ Full | ✅ Full |
+
+*Electron has a Telnet client (`electron/src/main/protocols/kumo-telnet.ts`) but it is not imported or used by the router agent.
 
 ## Overview
 
@@ -27,23 +52,7 @@ Complete solution for managing video router labels across AJA KUMO, Videohub, an
 **Lightware MX2**
 - All MX2 models with LW3 protocol support (TCP 6107)
 
-### What's New in v5.0
-
-- **Multi-router support** - AJA KUMO, Blackmagic Videohub, and Lightware MX2
-- **Crosspoint matrix view** - Visual matrix display for routing connections
-- **Inline editing** - Click any New Label cell to type directly in the grid
-- **Filter tabs** - Switch between All / Inputs / Outputs / Changed views
-- **Search** - Find labels by name or port number instantly
-- **Find & Replace** - Batch rename with scope control (inputs only, outputs only, copy current labels)
-- **Auto-Number** - Generate sequential labels like "Camera 1", "Camera 2"... with custom prefix and start number
-- **Auto backup** - Labels are backed up to a CSV before every upload
-- **Character count** - Live validation showing chars used vs limit
-- **CSV-first** - No Excel dependency required; CSV works out of the box
-- **Resizable window** - Scale the UI to fit your monitor
-- **Improved progress** - Per-port status during download and upload
-- **Security hardening** - HTTPS-first with HTTP fallback, input validation
-
-## Quick Start
+## Quick Start (PowerShell/WinForms)
 
 ### Launch the GUI
 
@@ -57,8 +66,9 @@ Complete solution for managing video router labels across AJA KUMO, Videohub, an
 3. Edit labels directly in the grid (click the yellow "New Label" column)
 4. Use **Find & Replace** or **Auto-Number** for bulk edits
 5. Click **Upload Changes to Router** when ready
+   - A backup CSV is automatically saved to Documents before upload
 
-### Command Line
+### PowerShell Command Line
 
 ```powershell
 # Download current labels (router type auto-detected)
@@ -75,25 +85,63 @@ Complete solution for managing video router labels across AJA KUMO, Videohub, an
 .\Helix-Excel-Updater.ps1 -KumoIP "192.168.1.100" -ExcelFile "labels.csv" -TestOnly
 ```
 
-### Python CLI
+## Build & Run (Electron App)
+
+The Electron app is currently in development. To build and run from source:
 
 ```bash
+# From the electron/ directory
+cd electron
+
+# Install dependencies
+npm ci
+
+# Run in development mode
+npm run dev
+
+# Build for production
+npm run build
+```
+
+**Requirements:**
+- Node.js 20.x (specified in `.nvmrc`)
+- npm 10.8.2 or higher
+
+The built app will be in `electron/out/` after running `npm run build`.
+
+## Build & Run (Python CLI)
+
+The Python CLI is a framework for integration and programmatic access. It is not feature-complete.
+
+```bash
+# Install in development mode
 pip install -e .
+
+# Run CLI commands
 helix download labels.csv --ip 192.168.1.100
 helix upload labels.xlsx --ip 192.168.1.100 --test
 helix status --ip 192.168.1.100
 ```
 
+**Requirements:**
+- Python 3.8+ (tested with 3.11 and 3.12)
+- See `pyproject.toml` for dependencies
+
 ## Connection Protocols
 
-### AJA KUMO — REST API + Telnet
-1. **REST API** (per-port GET) — queries each port individually via HTTP
-2. **Telnet port 23** — last resort, sends `LABEL INPUT n ?` / `LABEL OUTPUT n ?` commands
+### AJA KUMO
 
-All HTTP requests try HTTPS first, then fall back to HTTP automatically.
+**PowerShell Implementation:**
+1. **REST API** — per-port HTTP queries with HTTPS-first fallback to HTTP
+2. **Telnet** — automatic fallback to port 23 if REST fails
+
+**Electron & Python Implementations:**
+1. **REST API** — per-port HTTP queries (HTTP only, no HTTPS fallback)
+2. **Telnet** — Python has fallback chain; Electron's Telnet client exists but is not integrated
 
 ### Blackmagic Videohub — TCP 9990
-On connect, the Videohub sends a full text-based state dump over TCP port 9990:
+
+On connect, Videohub sends a text-based state dump:
 
 ```
 VIDEOHUB DEVICE:
@@ -105,32 +153,21 @@ INPUT LABELS:
 0 Camera 1
 1 Camera 2
 ...
-
-OUTPUT LABELS:
-0 Program
-1 Preview
-...
 ```
 
-To write labels, the script sends a labeled block and waits for an ACK:
-
-```
-INPUT LABELS:
-0 New Camera Name
-
-```
-
-Videohub uses **0-based** port indexing. The script converts automatically — your CSV/Excel files always use **1-based** port numbers regardless of router type.
+To write labels, the tool sends a labeled block and waits for ACK. Videohub uses **0-based** port indexing internally; all implementations convert automatically to 1-based for user-facing tools.
 
 ### Lightware MX2 — LW3 Protocol (TCP 6107)
+
 Uses the LW3 protocol to communicate with Lightware MX2 matrix routers.
 
 ### Auto-Detection Logic
-When `-RouterType Auto` (the default) is used:
+
+When auto-detection is enabled (default):
 1. Probe Lightware LW3 TCP 6107
 2. Probe Videohub TCP 9990 (2-second timeout)
-3. If no response, probe AJA KUMO REST API
-4. Error if none responds — use `-RouterType` to specify manually
+3. If no response, assume AJA KUMO REST API
+4. Error if none responds — specify router type manually
 
 ## File Format
 
@@ -144,13 +181,13 @@ Works with CSV (recommended) or Excel (.xlsx). Columns:
 | New_Label | Your desired label (leave blank to skip) |
 | Notes | Optional documentation |
 
-Labels must be 50 characters or fewer for AJA KUMO. The app warns you if any labels exceed this limit.
+Labels must be 50 characters or fewer for AJA KUMO. The tools warn if labels exceed this limit.
 
-## Batch Operations
+## Batch Operations (PowerShell Only)
 
 ### Find & Replace
 Replace text across all labels at once. Options:
-- Apply to New_Label column only, or copy Current -> New first
+- Apply to New_Label column only, or copy Current → New first
 - Filter by Inputs only, Outputs only, or All
 
 ### Auto-Number
@@ -159,7 +196,7 @@ Generate sequential labels:
 - Set a start number
 - Apply to Inputs, Outputs, Both, or Selected rows
 
-### Multi-Router Batch (Mixed Fleet)
+### Multi-Router Batch
 
 ```powershell
 # Batch across mixed router fleet — type auto-detected per IP
@@ -171,9 +208,10 @@ foreach ($ip in $routers) {
 
 ## Requirements
 
+### PowerShell (GUI and CLI tools)
 - **Windows 10/11** with **PowerShell 5.1+**
 - Network access to router:
-  - AJA KUMO: port 80 (HTTP REST), port 23 (Telnet fallback)
+  - AJA KUMO: port 80 (REST), port 23 (Telnet fallback)
   - Videohub: port 9990 (TCP)
   - Lightware MX2: port 6107 (TCP)
 - Optional: ImportExcel PowerShell module for .xlsx support
@@ -183,6 +221,14 @@ foreach ($ip in $routers) {
 Install-Module ImportExcel -Scope CurrentUser -Force
 ```
 
+### Electron (Desktop App)
+- Node.js 20.x
+- npm 10.8.2 or higher
+
+### Python (CLI)
+- Python 3.8 or higher
+- Dependencies listed in `pyproject.toml`
+
 ## Troubleshooting
 
 **Can't connect to AJA KUMO?**
@@ -190,15 +236,16 @@ Install-Module ImportExcel -Scope CurrentUser -Force
 - Check you are on the same network segment
 - Try `ping <router-ip>` from PowerShell
 - Ensure the KUMO web interface is accessible (port 80)
+- For PowerShell: if REST fails, verify Telnet is enabled on the KUMO and port 23 is accessible
 
 **Can't connect to Videohub?**
 - Verify TCP port 9990 is not blocked by a firewall
 - Confirm the Videohub is powered on and network-reachable
 - Try `Test-NetConnection <router-ip> -Port 9990` from PowerShell
-- Use `-RouterType Videohub` to skip auto-detection
+- Use `-RouterType Videohub` (PowerShell) to skip auto-detection
 
 **Auto-detection picks the wrong type?**
-- Use `-RouterType KUMO` or `-RouterType Videohub` or `-RouterType Lightware` to force the correct type
+- PowerShell: Use `-RouterType KUMO`, `-RouterType Videohub`, or `-RouterType Lightware` to force the correct type
 
 **PowerShell won't run the script?**
 ```powershell
@@ -208,27 +255,21 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 **AJA KUMO labels not updating?**
 - Some KUMO models have shorter character limits (8-16 chars)
 - Check the firmware version and API compatibility
-- Try enabling Telnet in the KUMO web interface
+- For PowerShell: try enabling Telnet in the KUMO web interface as a fallback
 
 **Videohub labels not updating?**
-- Older Videohub firmware may not send an ACK — the script proceeds anyway
+- Older Videohub firmware may not send an ACK — the tool proceeds anyway
 - Ensure no other software is holding the TCP 9990 connection open
 
 ## Version History
 
 ### v5.0 (Current)
 - Multi-router support: AJA KUMO, Blackmagic Videohub, and Lightware MX2
-- Crosspoint matrix view for routing connections
-- Security hardening (HTTPS-first with HTTP fallback, input validation)
-- Comprehensive error logging to error-log.txt for remote debugging
-- Redesigned GUI with inline editing, tabs, search, and batch tools
-- Find & Replace and Auto-Number for bulk label management
-- Automatic backup before uploads
-- Live character count validation
-- CSV-first approach (no Excel dependency)
-- Resizable window with improved dark theme
+- PowerShell/WinForms: Crosspoint matrix view, inline editing, search, batch operations, auto-backup
+- Electron: Modern React UI with grid-based label editing
+- Python: Event-driven architecture for integration
 - Auto-detection of router type
-- `-RouterType` parameter for manual override
+- Input validation and error logging
 
 ### v4.0
 - Redesigned GUI with inline editing, tabs, search, and batch tools
@@ -240,8 +281,8 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ### v2.0
 - Download labels from router
-- HTTPS-first with HTTP fallback
-- REST + Telnet fallback chain
+- HTTPS-first with HTTP fallback (PowerShell only)
+- REST + Telnet fallback chain (PowerShell only)
 - PowerShell 5.1 compatibility fixes
 
 ### v1.0
@@ -251,5 +292,5 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ---
 
-**GitHub**: https://github.com/SRVR-JOE/helix
+**GitHub**: https://github.com/SRVR-JOE/helix  
 **Created for professional live event production environments**
