@@ -4,6 +4,8 @@ This module defines all custom exceptions used throughout the system,
 providing specific error types for different failure scenarios.
 """
 
+from typing import Any
+
 
 class HelixException(Exception):
     """Base exception class for all Helix-related errors.
@@ -89,7 +91,7 @@ class HelixValidationError(HelixException):
         self,
         message: str,
         field: str = None,
-        value: any = None,
+        value: Any = None,
         validation_errors: list = None,
         details: dict = None
     ) -> None:

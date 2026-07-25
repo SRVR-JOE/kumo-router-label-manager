@@ -670,6 +670,10 @@ export default function LabelTable() {
   const table = useReactTable({
     data: filteredLabels,
     columns,
+    // Key rows by port identity, not array position. Without this, sorting or
+    // filtering reuses row state (in-progress cell edits, selection) against
+    // whichever label happens to land at that index.
+    getRowId: row => row.id,
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),

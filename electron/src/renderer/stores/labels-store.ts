@@ -18,16 +18,25 @@ interface UndoEntry {
   labels: LabelRow[]
 }
 
+/**
+ * Where the currently loaded label set came from.
+ * 'router' sets are pinned to the IP they were downloaded from so they can
+ * never be uploaded to a different device; 'file' (or null) sets are not
+ * device-specific and may be uploaded anywhere.
+ */
+export type LabelSource = { kind: 'router'; ip: string } | { kind: 'file'; path: string }
+
 interface LabelsState {
   labels: LabelRow[]
   filter: 'all' | 'inputs' | 'outputs' | 'changed'
   searchText: string
   currentFilePath: string | null
   isDirty: boolean
+  source: LabelSource | null
   undoStack: UndoEntry[]
   redoStack: UndoEntry[]
 
-  setLabels: (labels: LabelRow[]) => void
+  setLabels: (labels: LabelRow[], source?: LabelSource | null) => void
   updateLabel: (id: string, field: keyof LabelRow, value: string | number | null) => void
   setFilter: (filter: 'all' | 'inputs' | 'outputs' | 'changed') => void
   setSearchText: (text: string) => void
@@ -61,12 +70,14 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
   searchText: '',
   currentFilePath: null,
   isDirty: false,
+  source: null,
   undoStack: [],
   redoStack: [],
 
-  setLabels: (labels) => set({
+  setLabels: (labels, source = null) => set({
     labels: labels.map(l => ({ ...l, status: computeStatus(l) })),
     isDirty: false,
+    source,
     undoStack: [],
     redoStack: [],
   }),
