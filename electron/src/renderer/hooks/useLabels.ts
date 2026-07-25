@@ -1,11 +1,20 @@
+import { useCallback } from 'react'
 import { useLabelsStore, LabelRow } from '../stores/labels-store'
 import { useUIStore } from '../stores/ui-store'
 
 export function useLabels() {
-  const store = useLabelsStore()
-  const ui = useUIStore()
+  // Field-level selectors so this hook (and anything that calls it, e.g.
+  // App.tsx's menuHandlers useMemo) only reacts to the specific slices of
+  // state each callback actually needs — not the whole store object. Zustand
+  // action references (setLabels, setFilePath, showToast) are stable across
+  // the store's lifetime, so selecting them directly never causes churn.
+  const labels = useLabelsStore(s => s.labels)
+  const currentFilePath = useLabelsStore(s => s.currentFilePath)
+  const setLabels = useLabelsStore(s => s.setLabels)
+  const setFilePath = useLabelsStore(s => s.setFilePath)
+  const showToast = useUIStore(s => s.showToast)
 
-  const openFile = async () => {
+  const openFile = useCallback(async () => {
     const data = await window.helix.file.open() as {
       ports: Array<{
         port: number; type: 'INPUT' | 'OUTPUT'
@@ -17,7 +26,7 @@ export function useLabels() {
     } | null
 
     if (!data) return
-    const labels: LabelRow[] = data.ports.map(p => ({
+    const rows: LabelRow[] = data.ports.map(p => ({
       id: `${p.type}-${p.port}`,
       portNumber: p.port,
       portType: p.type,
@@ -30,30 +39,13 @@ export function useLabels() {
       notes: p.notes || '',
       status: 'unchanged' as const,
     }))
-    store.setLabels(labels)
-    if (data.filePath) store.setFilePath(data.filePath)
-    ui.showToast(`Opened file with ${labels.length} labels`, 'success')
-  }
+    setLabels(rows)
+    if (data.filePath) setFilePath(data.filePath)
+    showToast(`Opened file with ${rows.length} labels`, 'success')
+  }, [setLabels, setFilePath, showToast])
 
-  const saveFile = async () => {
-    if (!store.currentFilePath) return saveFileAs()
-    const portData = store.labels.map(l => ({
-      port: l.portNumber,
-      type: l.portType,
-      currentLabel: l.currentLabel,
-      newLabel: l.newLabel || null,
-      currentLabelLine2: l.currentLabelLine2,
-      newLabelLine2: l.newLabelLine2 || null,
-      currentColor: l.currentColor,
-      newColor: l.newColor,
-      notes: l.notes,
-    }))
-    await window.helix.file.save(store.currentFilePath, { ports: portData })
-    ui.showToast('File saved', 'success')
-  }
-
-  const saveFileAs = async () => {
-    const portData = store.labels.map(l => ({
+  const saveFileAs = useCallback(async () => {
+    const portData = labels.map(l => ({
       port: l.portNumber,
       type: l.portType,
       currentLabel: l.currentLabel,
@@ -66,17 +58,34 @@ export function useLabels() {
     }))
     const path = await window.helix.file.saveAs({ ports: portData }) as string | null
     if (path) {
-      store.setFilePath(path)
-      ui.showToast(`Saved to ${path}`, 'success')
+      setFilePath(path)
+      showToast(`Saved to ${path}`, 'success')
     }
-  }
+  }, [labels, setFilePath, showToast])
 
-  const createTemplate = async () => {
+  const saveFile = useCallback(async () => {
+    if (!currentFilePath) return saveFileAs()
+    const portData = labels.map(l => ({
+      port: l.portNumber,
+      type: l.portType,
+      currentLabel: l.currentLabel,
+      newLabel: l.newLabel || null,
+      currentLabelLine2: l.currentLabelLine2,
+      newLabelLine2: l.newLabelLine2 || null,
+      currentColor: l.currentColor,
+      newColor: l.newColor,
+      notes: l.notes,
+    }))
+    await window.helix.file.save(currentFilePath, { ports: portData })
+    showToast('File saved', 'success')
+  }, [currentFilePath, labels, saveFileAs, showToast])
+
+  const createTemplate = useCallback(async () => {
     await window.helix.file.createTemplate('', 32)
-    ui.showToast('Template created', 'success')
-  }
+    showToast('Template created', 'success')
+  }, [showToast])
 
-  const loadDefaultTemplate = async (filename: string) => {
+  const loadDefaultTemplate = useCallback(async (filename: string) => {
     const data = await window.helix.file.openDefaultTemplate(filename) as {
       ports: Array<{
         port: number; type: 'INPUT' | 'OUTPUT'
@@ -88,7 +97,7 @@ export function useLabels() {
     } | null
 
     if (!data) return
-    const labels: LabelRow[] = data.ports.map(p => ({
+    const rows: LabelRow[] = data.ports.map(p => ({
       id: `${p.type}-${p.port}`,
       portNumber: p.port,
       portType: p.type,
@@ -101,11 +110,11 @@ export function useLabels() {
       notes: p.notes || '',
       status: 'unchanged' as const,
     }))
-    store.setLabels(labels)
-    store.setFilePath(null) // Template is not a saved file yet
-    const size = labels.length / 2
-    ui.showToast(`Loaded ${size}x${size} template (${labels.length} ports)`, 'success')
-  }
+    setLabels(rows)
+    setFilePath(null) // Template is not a saved file yet
+    const size = rows.length / 2
+    showToast(`Loaded ${size}x${size} template (${rows.length} ports)`, 'success')
+  }, [setLabels, setFilePath, showToast])
 
   return { openFile, saveFile, saveFileAs, createTemplate, loadDefaultTemplate }
 }

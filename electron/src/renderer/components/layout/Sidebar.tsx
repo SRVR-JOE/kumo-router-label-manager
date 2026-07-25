@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useRouterStore } from '../../stores/router-store'
 import { useLabelsStore } from '../../stores/labels-store'
 import { useUIStore } from '../../stores/ui-store'
@@ -26,9 +27,29 @@ function SidebarButton({ label, onClick, disabled, variant = 'default' }: {
 }
 
 export default function Sidebar() {
-  const router = useRouterStore()
-  const labelsStore = useLabelsStore()
-  const ui = useUIStore()
+  // Selector scoped to only the fields Sidebar reads (with useShallow so the
+  // grouped object doesn't create a fresh reference — and re-render — on
+  // every store update); avoids the whole-store-subscription churn where
+  // Sidebar re-rendered for any change anywhere in these stores (e.g. label
+  // search text, which Sidebar doesn't even use).
+  const router = useRouterStore(useShallow(s => ({
+    connectionStatus: s.connectionStatus,
+    deviceName: s.deviceName,
+    ip: s.ip,
+    routerType: s.routerType,
+    savedRouters: s.savedRouters,
+    loadSavedRouters: s.loadSavedRouters,
+    addSavedRouter: s.addSavedRouter,
+    removeSavedRouter: s.removeSavedRouter,
+  })))
+  const labelsStore = useLabelsStore(useShallow(s => ({
+    labels: s.labels,
+    getChangedLabels: s.getChangedLabels,
+  })))
+  const ui = useUIStore(useShallow(s => ({
+    openDialog: s.openDialog,
+    showToast: s.showToast,
+  })))
   const { connect, disconnect, downloadLabels, uploadLabels } = useRouter()
   const { openFile, saveFile, saveFileAs, createTemplate, loadDefaultTemplate } = useLabels()
   const isConnected = router.connectionStatus === 'connected'

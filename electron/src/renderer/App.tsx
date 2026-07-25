@@ -11,6 +11,7 @@ import Statistics from './components/dialogs/Statistics'
 import Settings from './components/dialogs/Settings'
 import About from './components/dialogs/About'
 import CrosspointMatrix from './components/matrix/CrosspointMatrix'
+import ErrorBoundary from './components/ErrorBoundary'
 import { useUIStore } from './stores/ui-store'
 import { useLabelsStore } from './stores/labels-store'
 import { useIpcEvents, useMenuEvents } from './hooks/useIpc'
@@ -18,7 +19,9 @@ import { useRouter } from './hooks/useRouter'
 import { useLabels } from './hooks/useLabels'
 
 function Toast() {
-  const { toastMessage, toastType, clearToast } = useUIStore()
+  const toastMessage = useUIStore(s => s.toastMessage)
+  const toastType = useUIStore(s => s.toastType)
+  const clearToast = useUIStore(s => s.clearToast)
   useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(clearToast, 4000)
@@ -43,8 +46,15 @@ function Toast() {
 }
 
 export default function App() {
-  const { activeDialog, openDialog } = useUIStore()
-  const { undo, redo } = useLabelsStore()
+  // Field/action-level selectors: activeDialog is the only piece of ui-store
+  // state this component reads, and openDialog/undo/redo are stable zustand
+  // action references. This means App no longer re-renders (and menuHandlers
+  // below no longer gets recomputed) for unrelated store changes like the
+  // label search box's searchText, which lives in labels-store.
+  const activeDialog = useUIStore(s => s.activeDialog)
+  const openDialog = useUIStore(s => s.openDialog)
+  const undo = useLabelsStore(s => s.undo)
+  const redo = useLabelsStore(s => s.redo)
   const { disconnect, downloadLabels, uploadLabels } = useRouter()
   const { openFile, saveFile, saveFileAs, createTemplate } = useLabels()
 
@@ -81,7 +91,9 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <LabelTable />
+          <ErrorBoundary label="Label Table" compact>
+            <LabelTable />
+          </ErrorBoundary>
         </div>
       </div>
 

@@ -1,12 +1,32 @@
 import React from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useRouterStore } from '../../stores/router-store'
 import { useLabelsStore } from '../../stores/labels-store'
 import { useUIStore } from '../../stores/ui-store'
 
 export default function StatusBar() {
-  const router = useRouterStore()
-  const labels = useLabelsStore()
-  const ui = useUIStore()
+  // Scoped selectors so StatusBar only re-renders for the fields it actually
+  // renders, instead of on every mutation anywhere in these stores (e.g.
+  // label search text keystrokes, which don't affect anything shown here).
+  const router = useRouterStore(useShallow(s => ({
+    connectionStatus: s.connectionStatus,
+    deviceName: s.deviceName,
+    ip: s.ip,
+    routerType: s.routerType,
+    inputCount: s.inputCount,
+    outputCount: s.outputCount,
+  })))
+  const labels = useLabelsStore(useShallow(s => ({
+    labels: s.labels,
+    currentFilePath: s.currentFilePath,
+    getChangedLabels: s.getChangedLabels,
+  })))
+  const ui = useUIStore(useShallow(s => ({
+    progressVisible: s.progressVisible,
+    progressValue: s.progressValue,
+    progressTotal: s.progressTotal,
+    progressPhase: s.progressPhase,
+  })))
 
   const statusColor = {
     disconnected: 'bg-gray-500',

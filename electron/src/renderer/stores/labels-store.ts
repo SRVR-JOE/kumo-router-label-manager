@@ -56,6 +56,17 @@ interface LabelsState {
   getChangedLabels: () => LabelRow[]
 }
 
+// Undo/redo entries hold a full copy of the labels array. Without a cap, a
+// long editing session (autoNumber, findReplace, bulk edits, per-cell edits)
+// accumulates these indefinitely, growing memory unbounded. Cap history to
+// the last 50 entries in both directions.
+const MAX_HISTORY = 50
+
+function pushHistory(stack: UndoEntry[], entry: UndoEntry): UndoEntry[] {
+  const next = [...stack, entry]
+  return next.length > MAX_HISTORY ? next.slice(next.length - MAX_HISTORY) : next
+}
+
 function computeStatus(row: LabelRow): LabelRow['status'] {
   if (row.status === 'uploaded' || row.status === 'error') return row.status
   const labelChanged = row.newLabel !== '' && row.newLabel !== row.currentLabel
@@ -94,7 +105,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -116,7 +127,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -133,7 +144,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -150,7 +161,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -167,7 +178,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -195,7 +206,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -213,7 +224,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
   },
@@ -239,7 +250,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels,
       isDirty: true,
-      undoStack: [...state.undoStack, { labels: prev }],
+      undoStack: pushHistory(state.undoStack, { labels: prev }),
       redoStack: [],
     })
     return count
@@ -270,7 +281,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels: entry.labels,
       undoStack: state.undoStack.slice(0, -1),
-      redoStack: [...state.redoStack, { labels: state.labels }],
+      redoStack: pushHistory(state.redoStack, { labels: state.labels }),
     })
   },
 
@@ -281,7 +292,7 @@ export const useLabelsStore = create<LabelsState>((set, get) => ({
     set({
       labels: entry.labels,
       redoStack: state.redoStack.slice(0, -1),
-      undoStack: [...state.undoStack, { labels: state.labels }],
+      undoStack: pushHistory(state.undoStack, { labels: state.labels }),
     })
   },
 

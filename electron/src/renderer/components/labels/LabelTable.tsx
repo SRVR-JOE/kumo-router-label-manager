@@ -346,13 +346,21 @@ export default function LabelTable() {
     return { min, max }
   }, [])
 
-  // Check if a cell is in the current selection
+  // Check if a cell is in the current selection.
+  // Reads from selectionRef (kept in sync eagerly by handleCellMouseDown /
+  // handleCellMouseEnter / the sync effect below) instead of the `selection`
+  // state value directly, so this callback's identity never changes. If it
+  // depended on `selection`, it would get a new identity on every mouseenter
+  // during a drag-select, which would in turn bust the `columns` useMemo
+  // below (isCellSelected is one of its deps) and force react-table to
+  // rebuild its entire column model on every mouse-move tick of a drag.
   const isCellSelected = useCallback((rowIdx: number, colId: string): boolean => {
-    if (!selection) return false
-    if (selection.colId !== colId) return false
-    const { min, max } = getSelectionRows(selection)
+    const sel = selectionRef.current
+    if (!sel) return false
+    if (sel.colId !== colId) return false
+    const { min, max } = getSelectionRows(sel)
     return rowIdx >= min && rowIdx <= max
-  }, [selection, getSelectionRows])
+  }, [getSelectionRows])
 
   // Mouse handlers for drag selection
   const handleCellMouseDown = useCallback((rowIdx: number, colId: string, e: React.MouseEvent) => {
