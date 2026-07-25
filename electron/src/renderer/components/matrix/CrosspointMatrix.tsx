@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef, useLayoutEffect } from 'react'
+import { FixedSizeGrid, GridChildComponentProps, GridOnScrollProps } from 'react-window'
 import { useRouterStore } from '../../stores/router-store'
 import { useLabelsStore } from '../../stores/labels-store'
 import { useUIStore } from '../../stores/ui-store'
@@ -154,6 +155,51 @@ const MatrixCell = React.memo(function MatrixCell({
 })
 
 // ---------------------------------------------------------------------------
+// Virtualized cell renderer (react-window)
+// ---------------------------------------------------------------------------
+
+interface CellData {
+  routeMap: Map<number, number>
+  flashMap: Record<string, string>
+  hoveredRow: number | null
+  hoveredCol: number | null
+  cellSize: number
+  inputLabels: Array<{ currentLabel: string }>
+  outputLabels: Array<{ currentLabel: string }>
+  getRouteColor: (outputIdx: number) => string
+  handleRoute: (o: number, i: number) => void
+  handleClear: (o: number) => void
+  handleCellHover: (o: number, i: number) => void
+}
+
+function VirtualCell({ columnIndex, rowIndex, style, data }: GridChildComponentProps<CellData>) {
+  const d = data
+  const o = rowIndex
+  const i = columnIndex
+  const cellKey = `${o}-${i}`
+  const isRouted = d.routeMap.get(o) === i
+  return (
+    <div style={style}>
+      <MatrixCell
+        outputIdx={o}
+        inputIdx={i}
+        isRouted={isRouted}
+        color={d.getRouteColor(o)}
+        cellSize={d.cellSize}
+        isHoveredRow={d.hoveredRow === o}
+        isHoveredCol={d.hoveredCol === i}
+        flashKey={d.flashMap[cellKey] || null}
+        onRoute={d.handleRoute}
+        onClear={d.handleClear}
+        onHover={d.handleCellHover}
+        inputLabel={d.inputLabels[i]?.currentLabel || `Input ${i + 1}`}
+        outputLabel={d.outputLabels[o]?.currentLabel || `Output ${o + 1}`}
+      />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Skeleton loader
 // ---------------------------------------------------------------------------
 
@@ -200,6 +246,13 @@ export default function CrosspointMatrix() {
   const [statusMsg, setStatusMsg] = useState<string>('')
   const [flashMap, setFlashMap] = useState<Record<string, string>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Virtualization: measure the scrollable body to size the FixedSizeGrid
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [bodySize, setBodySize] = useState({ width: 800, height: 500 })
+  // Scroll sync: translate header strips instead of re-rendering
+  const inputHeaderInnerRef = useRef<HTMLDivElement>(null)
+  const outputHeaderInnerRef = useRef<HTMLDivElement>(null)
 
   const inputCount = router.inputCount
   const outputCount = router.outputCount
@@ -330,6 +383,46 @@ export default function CrosspointMatrix() {
   const LABEL_COL_W = 160
   const LABEL_ROW_H = 140
 
+  // ---- virtualization: measure + scroll sync ------------------------------
+
+  useLayoutEffect(() => {
+    if (!bodyRef.current) return
+    const el = bodyRef.current
+    const update = () => {
+      setBodySize({ width: el.clientWidth, height: el.clientHeight })
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [loading])
+
+  const onGridScroll = useCallback(({ scrollLeft, scrollTop }: GridOnScrollProps) => {
+    if (inputHeaderInnerRef.current) {
+      inputHeaderInnerRef.current.style.transform = `translate3d(${-scrollLeft}px, 0, 0)`
+    }
+    if (outputHeaderInnerRef.current) {
+      outputHeaderInnerRef.current.style.transform = `translate3d(0, ${-scrollTop}px, 0)`
+    }
+  }, [])
+
+  const cellData = useMemo<CellData>(() => ({
+    routeMap,
+    flashMap,
+    hoveredRow,
+    hoveredCol,
+    cellSize,
+    inputLabels,
+    outputLabels,
+    getRouteColor,
+    handleRoute,
+    handleClear,
+    handleCellHover,
+  }), [routeMap, flashMap, hoveredRow, hoveredCol, cellSize, inputLabels, outputLabels, getRouteColor, handleRoute, handleClear, handleCellHover])
+
+  const gridWidth = Math.max(0, bodySize.width - LABEL_COL_W)
+  const gridHeight = Math.max(0, bodySize.height - LABEL_ROW_H)
+
   // ---- render -------------------------------------------------------------
 
   return (
@@ -367,9 +460,10 @@ export default function CrosspointMatrix() {
           style={{
             display: 'flex',
             flexDirection: 'column',
-            maxWidth: '95vw',
-            maxHeight: '95vh',
-            width: 'fit-content',
+            // Grow to hold the matrix at its natural size, capped at viewport.
+            // Extra width: label col + (cells) + scrollbar; height: toolbar + label row + (cells) + statusbar + scrollbar.
+            width: `min(${LABEL_COL_W + inputCount * cellSize + 20}px, 95vw)`,
+            height: `min(${LABEL_ROW_H + outputCount * cellSize + 100}px, 95vh)`,
             background: C.surface,
             borderRadius: 12,
             border: `1px solid ${C.border}`,
@@ -512,144 +606,173 @@ export default function CrosspointMatrix() {
             </div>
           </div>
 
-          {/* ---- MATRIX BODY ---- */}
+          {/* ---- MATRIX BODY (virtualized) ---- */}
           {loading ? (
             <SkeletonGrid />
           ) : (
             <div
-              ref={scrollRef}
+              ref={bodyRef}
               onMouseLeave={handleMouseLeave}
               style={{
-                overflow: 'auto',
                 flex: 1,
                 minHeight: 0,
+                display: 'grid',
+                gridTemplateColumns: `${LABEL_COL_W}px 1fr`,
+                gridTemplateRows: `${LABEL_ROW_H}px 1fr`,
+                overflow: 'hidden',
                 position: 'relative',
               }}
             >
-              {/* CSS Grid matrix wrapper */}
+              {/* ---- TOP-LEFT CORNER ---- */}
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: `${LABEL_COL_W}px repeat(${inputCount}, ${cellSize}px)`,
-                  gridTemplateRows: `${LABEL_ROW_H}px repeat(${outputCount}, ${cellSize}px)`,
-                  width: 'fit-content',
-                  minWidth: '100%',
+                  gridColumn: 1,
+                  gridRow: 1,
+                  background: C.surface,
+                  borderRight: `1px solid ${C.border}`,
+                  borderBottom: `2px solid ${C.border}`,
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  justifyContent: 'flex-end',
+                  padding: '4px 8px',
+                  zIndex: 30,
                 }}
               >
-                {/* ---- TOP-LEFT CORNER (empty) ---- */}
+                <span style={{ color: C.textDim, fontSize: 9, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                  OUT / IN
+                </span>
+              </div>
+
+              {/* ---- INPUT LABELS STRIP (top, scrolls with grid horizontally) ---- */}
+              <div
+                style={{
+                  gridColumn: 2,
+                  gridRow: 1,
+                  overflow: 'hidden',
+                  background: C.surface,
+                  borderBottom: `2px solid ${C.border}`,
+                  position: 'relative',
+                }}
+              >
                 <div
+                  ref={inputHeaderInnerRef}
                   style={{
-                    position: 'sticky',
-                    top: 0,
-                    left: 0,
-                    zIndex: 30,
-                    background: C.surface,
-                    borderRight: `1px solid ${C.border}`,
-                    borderBottom: `2px solid ${C.border}`,
                     display: 'flex',
-                    alignItems: 'flex-end',
-                    justifyContent: 'flex-end',
-                    padding: '4px 8px',
+                    width: inputCount * cellSize,
+                    height: LABEL_ROW_H,
+                    willChange: 'transform',
                   }}
                 >
-                  <span style={{ color: C.textDim, fontSize: 9, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                    OUT / IN
-                  </span>
-                </div>
-
-                {/* ---- INPUT LABELS (top header row) ---- */}
-                {Array.from({ length: inputCount }).map((_, i) => {
-                  const label = inputLabels[i]?.currentLabel || `In ${i + 1}`
-                  const highlighted = hoveredCol === i
-                  return (
-                    <div
-                      key={`ih-${i}`}
-                      style={{
-                        position: 'sticky',
-                        top: 0,
-                        zIndex: 20,
-                        background: highlighted
-                          ? `linear-gradient(180deg, ${C.surface} 0%, rgba(123,47,190,0.1) 100%)`
-                          : C.surface,
-                        borderRight: `1px solid ${C.border}`,
-                        borderBottom: `2px solid ${highlighted ? C.accent : C.border}`,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'flex-start',
-                        padding: '6px 0 6px 0',
-                        overflow: 'hidden',
-                        transition: 'background 150ms, border-color 150ms',
-                      }}
-                      title={label}
-                    >
-                      {/* Port number */}
-                      <span
-                        style={{
-                          fontSize: 15,
-                          fontWeight: 800,
-                          color: highlighted ? C.text : C.accent,
-                          fontFamily: 'Consolas, "Courier New", monospace',
-                          lineHeight: 1,
-                          marginBottom: 3,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {i + 1}
-                      </span>
-                      {/* Label name - vertical, reading top to bottom */}
+                  {Array.from({ length: inputCount }).map((_, i) => {
+                    const label = inputLabels[i]?.currentLabel || `In ${i + 1}`
+                    const highlighted = hoveredCol === i
+                    return (
                       <div
+                        key={`ih-${i}`}
                         style={{
-                          writingMode: 'vertical-lr',
-                          whiteSpace: 'nowrap',
+                          width: cellSize,
+                          minWidth: cellSize,
+                          height: LABEL_ROW_H,
+                          background: highlighted
+                            ? `linear-gradient(180deg, ${C.surface} 0%, rgba(123,47,190,0.1) 100%)`
+                            : C.surface,
+                          borderRight: `1px solid ${C.border}`,
+                          borderBottom: highlighted ? `2px solid ${C.accent}` : 'none',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'flex-start',
+                          padding: '6px 0',
                           overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          maxHeight: LABEL_ROW_H - 26,
-                          fontSize: 16,
-                          fontFamily: 'Consolas, "Courier New", monospace',
-                          fontWeight: highlighted ? 700 : 500,
-                          color: highlighted ? C.text : C.textMuted,
-                          transition: 'color 150ms',
-                          lineHeight: 1.1,
+                          transition: 'background 150ms, border-color 150ms',
+                          boxSizing: 'border-box',
                         }}
+                        title={label}
                       >
-                        {label}
+                        <span
+                          style={{
+                            fontSize: 15,
+                            fontWeight: 800,
+                            color: highlighted ? C.text : C.accent,
+                            fontFamily: 'Consolas, "Courier New", monospace',
+                            lineHeight: 1,
+                            marginBottom: 3,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {i + 1}
+                        </span>
+                        <div
+                          style={{
+                            writingMode: 'vertical-lr',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxHeight: LABEL_ROW_H - 26,
+                            fontSize: 16,
+                            fontFamily: 'Consolas, "Courier New", monospace',
+                            fontWeight: highlighted ? 700 : 500,
+                            color: highlighted ? C.text : C.textMuted,
+                            transition: 'color 150ms',
+                            lineHeight: 1.1,
+                          }}
+                        >
+                          {label}
+                        </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
+              </div>
 
-                {/* ---- OUTPUT ROWS ---- */}
-                {Array.from({ length: outputCount }).map((_, o) => {
-                  const outLabel = outputLabels[o]?.currentLabel || `Out ${o + 1}`
-                  const rowHighlighted = hoveredRow === o
-                  const routeColor = getRouteColor(o)
-
-                  return (
-                    <React.Fragment key={`row-${o}`}>
-                      {/* Output label (sticky left) */}
+              {/* ---- OUTPUT LABELS STRIP (left, scrolls with grid vertically) ---- */}
+              <div
+                style={{
+                  gridColumn: 1,
+                  gridRow: 2,
+                  overflow: 'hidden',
+                  background: C.surface,
+                  borderRight: `1px solid ${C.border}`,
+                  position: 'relative',
+                }}
+              >
+                <div
+                  ref={outputHeaderInnerRef}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    width: LABEL_COL_W,
+                    height: outputCount * cellSize,
+                    willChange: 'transform',
+                  }}
+                >
+                  {Array.from({ length: outputCount }).map((_, o) => {
+                    const outLabel = outputLabels[o]?.currentLabel || `Out ${o + 1}`
+                    const rowHighlighted = hoveredRow === o
+                    const routeColor = getRouteColor(o)
+                    return (
                       <div
+                        key={`oh-${o}`}
                         style={{
-                          position: 'sticky',
-                          left: 0,
-                          zIndex: 10,
+                          width: LABEL_COL_W,
+                          height: cellSize,
+                          minHeight: cellSize,
                           background: rowHighlighted
                             ? `linear-gradient(90deg, ${C.surface} 0%, rgba(123,47,190,0.1) 100%)`
                             : C.surface,
-                          borderRight: `2px solid ${rowHighlighted ? C.accent : C.border}`,
+                          borderRight: rowHighlighted ? `2px solid ${C.accent}` : 'none',
                           borderBottom: `1px solid ${C.border}`,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'flex-end',
                           paddingRight: 10,
                           paddingLeft: 6,
-                          height: cellSize,
                           overflow: 'hidden',
                           transition: 'background 150ms, border-color 150ms',
+                          boxSizing: 'border-box',
                         }}
                         title={outLabel}
                       >
-                        {/* Color dot for KUMO */}
                         {isKumo && (
                           <div style={{
                             width: 6,
@@ -660,7 +783,6 @@ export default function CrosspointMatrix() {
                             flexShrink: 0,
                           }} />
                         )}
-                        {/* Port number */}
                         <span
                           style={{
                             fontSize: 15,
@@ -692,33 +814,29 @@ export default function CrosspointMatrix() {
                           {outLabel}
                         </span>
                       </div>
+                    )
+                  })}
+                </div>
+              </div>
 
-                      {/* Cells for this row */}
-                      {Array.from({ length: inputCount }).map((_, i) => {
-                        const isRouted = routeMap.get(o) === i
-                        const cellKey = `${o}-${i}`
-                        return (
-                          <MatrixCell
-                            key={cellKey}
-                            outputIdx={o}
-                            inputIdx={i}
-                            isRouted={isRouted}
-                            color={routeColor}
-                            cellSize={cellSize}
-                            isHoveredRow={hoveredRow === o}
-                            isHoveredCol={hoveredCol === i}
-                            flashKey={flashMap[cellKey] || null}
-                            onRoute={handleRoute}
-                            onClear={handleClear}
-                            onHover={handleCellHover}
-                            inputLabel={inputLabels[i]?.currentLabel || `Input ${i + 1}`}
-                            outputLabel={outLabel}
-                          />
-                        )
-                      })}
-                    </React.Fragment>
-                  )
-                })}
+              {/* ---- VIRTUALIZED GRID (bottom-right cell) ---- */}
+              <div ref={scrollRef} style={{ gridColumn: 2, gridRow: 2, overflow: 'hidden' }}>
+                {gridWidth > 0 && gridHeight > 0 && (
+                  <FixedSizeGrid
+                    columnCount={inputCount}
+                    rowCount={outputCount}
+                    columnWidth={cellSize}
+                    rowHeight={cellSize}
+                    width={gridWidth}
+                    height={gridHeight}
+                    itemData={cellData}
+                    onScroll={onGridScroll}
+                    overscanColumnCount={4}
+                    overscanRowCount={4}
+                  >
+                    {VirtualCell}
+                  </FixedSizeGrid>
+                )}
               </div>
             </div>
           )}
