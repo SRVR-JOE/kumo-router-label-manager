@@ -8,21 +8,20 @@ Uses the real AJA KUMO REST API:
 import asyncio
 import json
 import logging
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
 from .router_protocols import (
-    APIEndpoint,
-    ResponseParser,
-    DefaultLabelGenerator,
-    Protocol,
-    KumoParamID,
     KUMO_DEFAULT_COLOR,
-    TIMEOUT_REST_REQUEST,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
     RETRY_BACKOFF_MULTIPLIER,
+    TIMEOUT_REST_REQUEST,
+    APIEndpoint,
+    DefaultLabelGenerator,
+    Protocol,
+    ResponseParser,
 )
 
 # Concurrency limit for parallel requests to avoid overwhelming the router.
@@ -120,13 +119,13 @@ class RestClient:
                             text = await response.text()
                             return {"value": text.strip()} if text.strip() else None
                     else:
-                        logger.warning(f"HTTP {response.status}: {endpoint}")
+                        logger.warning("HTTP %s: %s", response.status, endpoint)
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout (attempt {attempt + 1}): {endpoint}")
+                logger.warning("Timeout (attempt %d): %s", attempt + 1, endpoint)
             except aiohttp.ClientError as e:
-                logger.warning(f"Client error (attempt {attempt + 1}): {e}")
+                logger.warning("Client error (attempt %d): %s", attempt + 1, e)
             except Exception as e:
-                logger.error(f"Unexpected error: {e}")
+                logger.error("Unexpected error: %s", e, exc_info=True)
 
             if attempt < self._max_retries - 1:
                 await asyncio.sleep(self._retry_backoff_base * (self._retry_backoff_multiplier ** attempt))
@@ -268,7 +267,7 @@ class RestClient:
 
         for result in results:
             if isinstance(result, Exception):
-                logger.warning(f"Label fetch error: {result}")
+                logger.warning("Label fetch error: %s", result)
                 continue
 
             port, port_type, line, label = result
@@ -417,7 +416,7 @@ class RestClient:
 
         for result in results:
             if isinstance(result, Exception):
-                logger.warning(f"Color fetch error: {result}")
+                logger.warning("Color fetch error: %s", result)
                 continue
             port, port_type, color_id = result
             if port_type == "input":
