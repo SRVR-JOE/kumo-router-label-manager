@@ -23,7 +23,7 @@ if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
 $resolved = (Resolve-Path $ScriptPath).Path
 $src = Get-Content $resolved -Raw
 
-foreach ($fn in @("Get-SelectedGridRows", "Get-RenameTargetField", "Set-LabelForRows", "Select-GridRowCells", "Push-UndoCommand")) {
+foreach ($fn in @("Get-SelectedGridRows", "Get-SelectedLabelCells", "Set-LabelForTargets", "Select-GridRowCells", "Push-UndoCommand")) {
     $m = [regex]::Match($src, "(?ms)^function $([regex]::Escape($fn)) \{.*?^\}")
     if (-not $m.Success) {
         Write-Host "FAIL: $fn not found in $resolved"
@@ -125,71 +125,137 @@ $dataGrid.SelectAll()
 Check "SelectAll yields every row once" $script:PORTS @((Get-SelectedGridRows)).Count
 
 # =========================================================================
-# Get-RenameTargetField
+# Get-SelectedLabelCells -- per-cell rename targets
 # =========================================================================
+function TargetSig($targets) {
+    # "row:line" per target, in the order returned.
+    return (@($targets | ForEach-Object { "$($_.RowIndex):$($_.LineNum)" }) -join " ")
+}
+
 $colNewL2.Visible = $true
+
 $dataGrid.ClearSelection()
 $dataGrid.Rows[0].Cells["New_Label"].Selected = $true
-Check "line-1 cell targets New_Label" "New_Label" (Get-RenameTargetField)
+Check "a line-1 cell is one line-1 target" "0:1" (TargetSig (Get-SelectedLabelCells))
 
 $dataGrid.ClearSelection()
 $dataGrid.Rows[0].Cells["New_Label_2"].Selected = $true
-Check "line-2 cell targets New_Label_2" "New_Label_2" (Get-RenameTargetField)
+Check "a line-2 cell is one line-2 target" "0:2" (TargetSig (Get-SelectedLabelCells))
 
 $dataGrid.ClearSelection()
 $dataGrid.Rows[0].Cells["Current_Label_2"].Selected = $true
-Check "current-line-2 cell also targets New_Label_2" "New_Label_2" (Get-RenameTargetField)
+Check "a current-line-2 cell maps to line 2" "0:2" (TargetSig (Get-SelectedLabelCells))
+
+$dataGrid.ClearSelection()
+$dataGrid.Rows[2].Cells["Current_Label"].Selected = $true
+$dataGrid.Rows[2].Cells["New_Label"].Selected = $true
+Check "both sides of one line collapse to a single target" "2:1" (TargetSig (Get-SelectedLabelCells))
+
+# The headline case: one pass covering both lines.
+$dataGrid.ClearSelection()
+$dataGrid.Rows[1].Cells["New_Label"].Selected = $true
+$dataGrid.Rows[1].Cells["New_Label_2"].Selected = $true
+Check "line 1 and line 2 of one row are two targets" "1:1 1:2" (TargetSig (Get-SelectedLabelCells))
+
+$dataGrid.ClearSelection()
+$dataGrid.Rows[3].Cells["New_Label_2"].Selected = $true
+$dataGrid.Rows[1].Cells["New_Label_2"].Selected = $true
+$dataGrid.Rows[1].Cells["New_Label"].Selected = $true
+$dataGrid.Rows[3].Cells["New_Label"].Selected = $true
+Check "targets are ordered by row, then line" "1:1 1:2 3:1 3:2" (TargetSig (Get-SelectedLabelCells))
 
 $colNewL2.Visible = $false
 $dataGrid.ClearSelection()
 $dataGrid.Rows[0].Cells["New_Label_2"].Selected = $true
-Check "line 2 hidden always targets line 1" "New_Label" (Get-RenameTargetField)
+$dataGrid.Rows[0].Cells["New_Label"].Selected = $true
+Check "a hidden line-2 cell is not a target" "0:1" (TargetSig (Get-SelectedLabelCells))
 $colNewL2.Visible = $true
 
-# =========================================================================
-# Set-LabelForRows
-# =========================================================================
-Reset-Model
+# Non-label cells fall back to a whole-row line-1 rename.
 $dataGrid.ClearSelection()
-$dataGrid.Rows[0].Cells["New_Label"].Selected = $true
-$dataGrid.Rows[1].Cells["New_Label"].Selected = $true
-$dataGrid.Rows[2].Cells["New_Label"].Selected = $true
-$rows = Get-SelectedGridRows
-$applied = Set-LabelForRows -Rows $rows -Field "New_Label" -NameFor { param($i, $r) "CAM A" }
-Check "same name applied to three rows" 3 $applied
+$dataGrid.Rows[2].Cells["Port"].Selected = $true
+$dataGrid.Rows[4].Cells["Type"].Selected = $true
+Check "a selection with no label cell falls back to line 1 per row" "2:1 4:1" (TargetSig (Get-SelectedLabelCells))
+
+$dataGrid.ClearSelection()
+$dataGrid.Rows[1].Cells["Color"].Selected = $true
+Check "a colour cell is not a rename target" "1:1" (TargetSig (Get-SelectedLabelCells))
+
+# =========================================================================
+# Set-LabelForTargets
+# =========================================================================
+function Select-Cells($spec) {
+    # spec: array of "rowIndex:columnName"
+    $dataGrid.ClearSelection()
+    foreach ($item in $spec) {
+        $parts = $item -split ":"
+        $dataGrid.Rows[[int]$parts[0]].Cells[$parts[1]].Selected = $true
+    }
+}
+
+Reset-Model
+Select-Cells @("0:New_Label", "1:New_Label", "2:New_Label")
+$targets = Get-SelectedLabelCells
+$applied = Set-LabelForTargets -Targets $targets -NameFor { param($i, $t) "CAM A" }
+Check "same name applied to three cells" 3 $applied
 Check "rows 1-3 renamed" @("CAM A", "CAM A", "CAM A") @($global:allLabels[0..2] | ForEach-Object { $_.New_Label })
 Check "untouched row left alone" "" $global:allLabels[3].New_Label
-Check "one undo entry per changed row" 3 $global:undoStack.Count
+Check "one undo entry per changed cell" 3 $global:undoStack.Count
 
 Reset-Model
-$rows = Get-SelectedGridRows
-$applied = Set-LabelForRows -Rows $rows -Field "New_Label" -NameFor { param($i, $r) "CAM $($i + 1)" }
-Check "numbered rename increments per row" @("CAM 1", "CAM 2", "CAM 3") @($global:allLabels[0..2] | ForEach-Object { $_.New_Label })
+$applied = Set-LabelForTargets -Targets $targets -NameFor { param($i, $t) "CAM $($i + 1)" }
+Check "numbered rename increments per cell" @("CAM 1", "CAM 2", "CAM 3") @($global:allLabels[0..2] | ForEach-Object { $_.New_Label })
 
 Reset-Model
-$applied = Set-LabelForRows -Rows $rows -Field "New_Label_2" -NameFor { param($i, $r) "L2 NEW" }
+Select-Cells @("0:New_Label_2", "1:New_Label_2", "2:New_Label_2")
+$applied = Set-LabelForTargets -Targets (Get-SelectedLabelCells) -NameFor { param($i, $t) "L2 NEW" }
 Check "line-2 rename writes New_Label_2" @("L2 NEW", "L2 NEW", "L2 NEW") @($global:allLabels[0..2] | ForEach-Object { $_.New_Label_2 })
 Check "line-2 rename leaves line 1 alone" @("", "", "") @($global:allLabels[0..2] | ForEach-Object { $_.New_Label })
 
+# The point of per-cell targets: both lines written in one pass.
 Reset-Model
+Select-Cells @("0:New_Label", "1:New_Label_2")
+$applied = Set-LabelForTargets -Targets (Get-SelectedLabelCells) -NameFor { param($i, $t) "MIX" }
+Check "a mixed selection writes both lines in one pass" 2 $applied
+Check "row 1 line 1 written" "MIX" $global:allLabels[0].New_Label
+Check "row 1 line 2 untouched" "" $global:allLabels[0].New_Label_2
+Check "row 2 line 2 written" "MIX" $global:allLabels[1].New_Label_2
+Check "row 2 line 1 untouched" "" $global:allLabels[1].New_Label
+
+Reset-Model
+Select-Cells @("0:New_Label", "0:New_Label_2")
+$applied = Set-LabelForTargets -Targets (Get-SelectedLabelCells) -NameFor { param($i, $t) "N$($i + 1)" }
+Check "both lines of one row number in reading order" @("N1", "N2") @($global:allLabels[0].New_Label, $global:allLabels[0].New_Label_2)
+
+Reset-Model
+Select-Cells @("0:New_Label")
+$one = Get-SelectedLabelCells
 $long = "X" * 80
-$applied = Set-LabelForRows -Rows @($rows[0]) -Field "New_Label" -NameFor { param($i, $r) $long }
+$applied = Set-LabelForTargets -Targets $one -NameFor { param($i, $t) $long }
 Check "over-long label truncated to the router limit" 50 $global:allLabels[0].New_Label.Length
 
 Reset-Model
 $global:allLabels[0].New_Label = "ALREADY"
 $global:undoStack.Clear()
-$applied = Set-LabelForRows -Rows @($rows[0]) -Field "New_Label" -NameFor { param($i, $r) "ALREADY" }
+$applied = Set-LabelForTargets -Targets $one -NameFor { param($i, $t) "ALREADY" }
 Check "writing an identical value is not counted as a change" 0 $applied
 Check "and records no undo entry" 0 $global:undoStack.Count
 
 Reset-Model
-$applied = Set-LabelForRows -Rows @($rows[0]) -Field "New_Label" -NameFor { param($i, $r) $null }
+$applied = Set-LabelForTargets -Targets $one -NameFor { param($i, $t) $null }
 Check "a null name clears rather than throwing" "" $global:allLabels[0].New_Label
 
 Reset-Model
-$applied = Set-LabelForRows -Rows @() -Field "New_Label" -NameFor { param($i, $r) "NOPE" }
+$applied = Set-LabelForTargets -Targets @() -NameFor { param($i, $t) "NOPE" }
 Check "empty selection applies nothing" 0 $applied
+
+# The undo entry has to name the field it wrote, or undo restores the wrong line.
+Reset-Model
+Select-Cells @("2:New_Label_2")
+$applied = Set-LabelForTargets -Targets (Get-SelectedLabelCells) -NameFor { param($i, $t) "UNDOME" }
+$cmd = $global:undoStack.Peek()
+Check "the undo entry records the line-2 field" "New_Label_2" $cmd.Field
+Check "and the row it belongs to" 3 $cmd.Port
 
 # =========================================================================
 # CellClick redirect + seeding

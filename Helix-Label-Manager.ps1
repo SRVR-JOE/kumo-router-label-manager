@@ -3143,7 +3143,14 @@ $ctxResetColor.Add_Click({
     Populate-Grid
 })
 
-$ctxRenameSelected.Add_Click({ Show-RenameSelectedDialog })
+$ctxRenameSelected.Add_Click({
+    try {
+        Show-RenameSelectedDialog
+    } catch {
+        Write-ErrorLog "RENAME" "Rename dialog failed: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"
+        Set-StatusMessage "Rename failed - see error-log.txt" "Danger"
+    }
+})
 
 $ctxCopyCurrentToNew.Add_Click({
     foreach ($row in (Get-SelectedGridRows)) {
@@ -3616,43 +3623,96 @@ function Select-GridRowCells {
     }
 }
 
-function Get-RenameTargetField {
+function Get-SelectedLabelCells {
     <#
-      Which label line a bulk rename should write to.
+      The label cells the user has selected, as rename targets.
 
-      Line 2 only when the selection actually sits in a line-2 column and that
-      column is on screen; otherwise line 1.
+      Each target is @{ Row = <grid row>; Field = "New_Label"|"New_Label_2" }.
+      A current-label cell maps to the new-label cell beside it, so selecting
+      either side of a line targets that line. Selecting both sides of the same
+      line yields one target, not two.
+
+      Targets come back in the order they read on screen: down the rows, and
+      line 1 before line 2 within a row. That is the order a numbered rename
+      counts in.
+
+      When the selection touches no label cell at all -- a column of ports, say
+      -- this falls back to one line-1 target per selected row, so the old
+      whole-row behaviour still works.
     #>
-    if (-not $colNewL2.Visible) { return "New_Label" }
-    foreach ($cell in $dataGrid.SelectedCells) {
-        if ($cell.ColumnIndex -lt 0) { continue }
-        $name = $dataGrid.Columns[$cell.ColumnIndex].Name
-        if ($name -eq "New_Label_2" -or $name -eq "Current_Label_2") { return "New_Label_2" }
+    $fieldFor = @{
+        "New_Label"       = "New_Label"
+        "Current_Label"   = "New_Label"
+        "New_Label_2"     = "New_Label_2"
+        "Current_Label_2" = "New_Label_2"
     }
-    return "New_Label"
+
+    $seen = @{}
+    $found = New-Object System.Collections.ArrayList
+
+    foreach ($cell in $dataGrid.SelectedCells) {
+        if ($cell.RowIndex -lt 0 -or $cell.ColumnIndex -lt 0) { continue }
+        $colName = $dataGrid.Columns[$cell.ColumnIndex].Name
+        if (-not $fieldFor.ContainsKey($colName)) { continue }
+
+        $field = $fieldFor[$colName]
+        # A hidden line-2 column cannot be renamed.
+        if ($field -eq "New_Label_2" -and -not $colNewL2.Visible) { continue }
+
+        $key = "$($cell.RowIndex)|$field"
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        [void]$found.Add([PSCustomObject]@{
+            Row      = $dataGrid.Rows[$cell.RowIndex]
+            Field    = $field
+            RowIndex = $cell.RowIndex
+            LineNum  = if ($field -eq "New_Label_2") { 2 } else { 1 }
+        })
+    }
+
+    if ($found.Count -gt 0) {
+        return @($found | Sort-Object RowIndex, LineNum)
+    }
+
+    # Nothing label-shaped was selected; treat it as a whole-row line-1 rename.
+    $fallback = New-Object System.Collections.ArrayList
+    foreach ($row in (Get-SelectedGridRows)) {
+        [void]$fallback.Add([PSCustomObject]@{
+            Row      = $row
+            Field    = "New_Label"
+            RowIndex = $row.Index
+            LineNum  = 1
+        })
+    }
+    return @($fallback)
 }
 
-function Set-LabelForRows {
+function Set-LabelForTargets {
     <#
-      Writes $Field on the model rows behind $Rows, one undo entry per row.
+      Writes each target's own field on the model row behind it, one undo entry
+      per target that actually changes.
 
-      $NameFor is a script block given (index, row) and returning the label for
-      that row, so a plain rename and a numbered rename share this path.
+      $NameFor is a script block given (index, target) and returning the label,
+      so a plain rename and a numbered rename share this path. Because the field
+      travels with the target, a single pass can write line 1 on one row and
+      line 2 on another.
     #>
     param(
-        [object[]]$Rows,
-        [string]$Field,
+        [object[]]$Targets,
         [scriptblock]$NameFor
     )
 
     $applied = 0
     $index = 0
-    foreach ($row in $Rows) {
+    foreach ($target in $Targets) {
+        $row    = $target.Row
+        $field  = $target.Field
         $port   = $row.Cells["Port"].Value
         $type   = $row.Cells["Type"].Value
         $router = $row.Cells["Router"].Value
 
-        $label = & $NameFor $index $row
+        $label = & $NameFor $index $target
         if ($null -eq $label) { $label = "" }
         $label = [string]$label
         if ($label.Length -gt $global:maxLabelLength) {
@@ -3661,9 +3721,9 @@ function Set-LabelForRows {
 
         foreach ($lbl in $global:allLabels) {
             if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
-                if ($lbl.$Field -ne $label) {
-                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field=$Field; OldValue=$lbl.$Field; NewValue=$label }
-                    $lbl.$Field = $label
+                if ($lbl.$field -ne $label) {
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field=$field; OldValue=$lbl.$field; NewValue=$label }
+                    $lbl.$field = $label
                     $applied++
                 }
                 break
@@ -3676,25 +3736,27 @@ function Set-LabelForRows {
 
 function Show-RenameSelectedDialog {
     <#
-      Renames every selected row in one step.
+      Renames every selected label cell in one step.
 
-      Which label line gets written follows the selection (Get-RenameTargetField),
-      so selecting line-2 cells renames line 2.
+      Each cell carries its own line (Get-SelectedLabelCells), so one pass can
+      write line 1 on some rows and line 2 on others.
     #>
     Sync-GridToData
 
-    $rows = Get-SelectedGridRows
-    if ($rows.Count -eq 0) {
-        Set-StatusMessage "Select one or more rows to rename" "Warning"
+    $targets = Get-SelectedLabelCells
+    if ($targets.Count -eq 0) {
+        Set-StatusMessage "Select one or more label cells to rename" "Warning"
         return
     }
 
-    $field   = Get-RenameTargetField
-    $lineNum = if ($field -eq "New_Label_2") { 2 } else { 1 }
-    $srcCol  = if ($field -eq "New_Label_2") { "Current_Label_2" } else { "Current_Label" }
+    # The heading names the lines actually being written, so a mixed selection
+    # cannot be mistaken for a single-line one.
+    $lines = @($targets | ForEach-Object { $_.LineNum } | Sort-Object -Unique)
+    $lineText = if ($lines.Count -gt 1) { "Lines " + ($lines -join " & ") } else { "Line $($lines[0])" }
+    $noun = if ($targets.Count -eq 1) { "Cell" } else { "Cells" }
 
     $rnForm = New-Object System.Windows.Forms.Form
-    $rnForm.Text = "Rename $($rows.Count) Label$(if($rows.Count -ne 1){'s'}) (Line $lineNum)"
+    $rnForm.Text = "Rename $($targets.Count) $noun ($lineText)"
     $rnForm.Size = New-Object System.Drawing.Size(440, 260)
     $rnForm.StartPosition = "CenterParent"
     $rnForm.BackColor = $clrPanel
@@ -3707,11 +3769,13 @@ function Show-RenameSelectedDialog {
         Text="New name:"; Location="20,22"; Size="75,20"; ForeColor=$clrText
     }))
 
-    # A single row pre-fills with its existing label so this reads as an edit.
+    # A single target pre-fills with its existing label so this reads as an edit.
     $seed = ""
-    if ($rows.Count -eq 1) {
-        $v = $rows[0].Cells[$field].Value
-        if ($null -eq $v -or [string]$v -eq "") { $v = $rows[0].Cells[$srcCol].Value }
+    if ($targets.Count -eq 1) {
+        $only   = $targets[0]
+        $srcCol = if ($only.Field -eq "New_Label_2") { "Current_Label_2" } else { "Current_Label" }
+        $v = $only.Row.Cells[$only.Field].Value
+        if ($null -eq $v -or [string]$v -eq "") { $v = $only.Row.Cells[$srcCol].Value }
         if ($v) { $seed = [string]$v }
     }
 
@@ -3769,14 +3833,14 @@ function Show-RenameSelectedDialog {
         $numbered = $chkNumber.Checked
         $start = [int]$startBox.Value
         $samples = @()
-        $take = [Math]::Min(3, $rows.Count)
+        $take = [Math]::Min(3, $targets.Count)
         for ($i = 0; $i -lt $take; $i++) {
             $s = & $expand $tpl ($start + $i) $numbered
             if ($s.Length -gt $global:maxLabelLength) { $s = $s.Substring(0, $global:maxLabelLength) }
             $samples += $s
         }
         $text = $samples -join ", "
-        if ($rows.Count -gt $take) { $text += ", ..." }
+        if ($targets.Count -gt $take) { $text += ", ..." }
         $previewLbl.Text = $text
 
         $longest = 0
@@ -3808,8 +3872,8 @@ function Show-RenameSelectedDialog {
         $numbered = $chkNumber.Checked
         $start = [int]$startBox.Value
 
-        $applied = Set-LabelForRows -Rows $rows -Field $field -NameFor {
-            param($i, $row)
+        $applied = Set-LabelForTargets -Targets $targets -NameFor {
+            param($i, $target)
             & $expand $tpl ($start + $i) $numbered
         }
 
@@ -3834,7 +3898,7 @@ function Show-RenameSelectedDialog {
         $applied = $rnForm.Tag
         Populate-Grid
         Update-ChangeCount
-        Set-StatusMessage "Renamed $applied label$(if($applied -ne 1){'s'}) on line $lineNum" "Success"
+        Set-StatusMessage "Renamed $applied label$(if($applied -ne 1){'s'}) ($lineText)" "Success"
     }
     $rnForm.Dispose()
 }
@@ -4165,7 +4229,14 @@ $form.Add_KeyDown({
 
     if ($e.KeyCode -eq "F2") {
         if (-not $dataGrid.IsCurrentCellInEditMode) {
-            Show-RenameSelectedDialog
+            # An exception inside a WinForms handler is swallowed, which would
+            # make F2 look like it simply does nothing. Log it instead.
+            try {
+                Show-RenameSelectedDialog
+            } catch {
+                Write-ErrorLog "RENAME" "Rename dialog failed: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"
+                Set-StatusMessage "Rename failed - see error-log.txt" "Danger"
+            }
             $e.Handled = $true
             $e.SuppressKeyPress = $true
         }
@@ -5195,9 +5266,10 @@ $dataGrid.Add_EditingControlShowing({
         if ($global:pendingSeedText) {
             $tb.Text = $global:pendingSeedText
             $tb.SelectAll()
-            # Without this the seeded text is discarded if the user tabs away
-            # without typing.
-            $sender.NotifyCurrentCellDirty($true)
+            # Deliberately not marked dirty. The seed is a starting point, not an
+            # edit: leaving the cell without typing should write nothing, and a
+            # dirty cell would also make Escape take two presses to leave the
+            # editor, which breaks F2 straight after a click.
         }
         $global:pendingSeedText = $null
     }
