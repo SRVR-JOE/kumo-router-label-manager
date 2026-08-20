@@ -256,6 +256,10 @@ class APIAgent:
                                 error_count += 1
                                 error_messages.append(f"Color upload error port {label.port_number}: {e}")
 
+                    # Only return here when REST actually wrote something. Zero
+                    # successes means REST is not a working transport for this
+                    # router (reads return None rather than raising), so the
+                    # Telnet fallback below still needs to run.
                     if success_count > 0:
                         logger.info(f"Upload via REST: {success_count} succeeded, {error_count} failed")
                         await self._emit_upload_success_event(labels_to_upload, success_count, error_count)

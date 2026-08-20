@@ -1,4 +1,4 @@
-# Router Label Updater - Command Line Version
+﻿# Router Label Updater - Command Line Version
 # Helix - Bulk label management for AJA KUMO, Blackmagic Videohub, and Lightware MX2 routers
 # Auto-detects router type (KUMO REST/Telnet, Videohub TCP 9990, or Lightware LW3)
 #

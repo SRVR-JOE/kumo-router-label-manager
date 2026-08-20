@@ -1,4 +1,4 @@
-# Helix v5.0 - Router Label Manager
+﻿# Helix v5.0 - Router Label Manager
 # Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 matrix routers.
 
 # --- Error Logging -----------------------------------------------------------
@@ -990,6 +990,48 @@ function Save-ActiveRouter {
 
 # --- Router Adapter Functions -------------------------------------------------
 
+function Test-KumoPortPresent {
+    <#
+      Decides whether a probe reply actually proves a port exists.
+
+      Some KUMO firmware answers XPT parameter reads for ports the chassis does
+      not have, so "the router replied" is not evidence on its own. The caller
+      passes the reply for a canary port that exists on no model; comparing the
+      real probe against that canary tells us what a phantom reply looks like.
+
+      $ProbeValue / $PhantomValue: $null = no reply, "" = reply with no value.
+    #>
+    param(
+        $ProbeValue,
+        $PhantomValue,
+        [string]$Prefix,
+        [int]$PortNumber
+    )
+
+    # No reply, or a reply carrying no value: the port is not there.
+    if ($null -eq $ProbeValue -or $ProbeValue -eq "") { return $false }
+
+    # The router refused the impossible port, so any real reply proves existence.
+    if ($null -eq $PhantomValue -or $PhantomValue -eq "") { return $true }
+
+    # From here the router answers for impossible ports, so a reply proves nothing.
+    # Case 1: phantom ports echo one fixed filler string.
+    if ($ProbeValue -eq $PhantomValue) { return $false }
+
+    # Case 2: phantom ports get a name generated from their own index. Only trust
+    # this test when the canary itself came back auto-named, which is what proves
+    # the firmware behaves that way.
+    $canaryAuto = '^\s*' + [regex]::Escape($Prefix) + '\s*0*100\s*$'
+    if ($PhantomValue -match $canaryAuto) {
+        $probeAuto = '^\s*' + [regex]::Escape($Prefix) + '\s*0*' + $PortNumber + '\s*$'
+        if ($ProbeValue -match $probeAuto) { return $false }
+    }
+
+    # Anything else is a real label on a real port.
+    return $true
+}
+
+
 function Connect-KumoRouter {
     param([string]$IP)
     # Returns a hashtable with connection info or throws on failure.
@@ -1001,10 +1043,9 @@ function Connect-KumoRouter {
 
     # Fetch firmware + port-count probes in parallel for faster connection
     $firmware = ""
-    $test64 = $null
-    $test17 = $null
-    $testDest5 = $null
 
+    # Returns $null when the request fails or the router refuses the parameter,
+    # "" when it replies with no value, otherwise the parameter's value.
     $probeScript = {
         param([string]$Uri)
         try {
@@ -1016,16 +1057,20 @@ function Connect-KumoRouter {
         } catch { return $null }
     }
 
-    $probePool = [RunspaceFactory]::CreateRunspacePool(1, 6)
+    $probePool = [RunspaceFactory]::CreateRunspacePool(1, 8)
     $probePool.Open()
     $baseProbe = "http://$IP/config?action=get&configid=0&paramid="
+    # sCanary / dCanary address port 100, which exists on no KUMO model. If the
+    # router answers them, a reply cannot be used as proof that a port exists.
     $probes = @(
-        @{ Name = "fw";   Uri = "${baseProbe}eParamID_SWVersion" }
-        @{ Name = "p64";  Uri = "${baseProbe}eParamID_XPT_Source33_Line_1" }
-        @{ Name = "p32";  Uri = "${baseProbe}eParamID_XPT_Source17_Line_1" }
-        @{ Name = "d5";   Uri = "${baseProbe}eParamID_XPT_Destination5_Line_1" }
-        @{ Name = "d17";  Uri = "${baseProbe}eParamID_XPT_Destination17_Line_1" }
-        @{ Name = "d33";  Uri = "${baseProbe}eParamID_XPT_Destination33_Line_1" }
+        @{ Name = "fw";      Uri = "${baseProbe}eParamID_SWVersion" }
+        @{ Name = "p64";     Uri = "${baseProbe}eParamID_XPT_Source33_Line_1" }
+        @{ Name = "p32";     Uri = "${baseProbe}eParamID_XPT_Source17_Line_1" }
+        @{ Name = "sCanary"; Uri = "${baseProbe}eParamID_XPT_Source100_Line_1" }
+        @{ Name = "d5";      Uri = "${baseProbe}eParamID_XPT_Destination5_Line_1" }
+        @{ Name = "d17";     Uri = "${baseProbe}eParamID_XPT_Destination17_Line_1" }
+        @{ Name = "d33";     Uri = "${baseProbe}eParamID_XPT_Destination33_Line_1" }
+        @{ Name = "dCanary"; Uri = "${baseProbe}eParamID_XPT_Destination100_Line_1" }
     )
     $probeJobs = [System.Collections.ArrayList]::new()
     foreach ($p in $probes) {
@@ -1035,25 +1080,47 @@ function Connect-KumoRouter {
     }
     $probeResults = @{}
     foreach ($pj in $probeJobs) {
-        try { $probeResults[$pj.Name] = $pj.PS.EndInvoke($pj.Handle) } catch { $probeResults[$pj.Name] = $null }
+        # EndInvoke hands back a PSDataCollection, not the value itself. Comparing
+        # a collection to $null applies filtering semantics rather than equality,
+        # so unwrap to a scalar before anything compares these results.
+        try {
+            $collected = $pj.PS.EndInvoke($pj.Handle)
+            if ($null -ne $collected -and $collected.Count -gt 0) { $probeResults[$pj.Name] = $collected[0] }
+            else { $probeResults[$pj.Name] = $null }
+        } catch { $probeResults[$pj.Name] = $null }
         $pj.PS.Dispose()
     }
     $probePool.Close(); $probePool.Dispose()
 
     if ($probeResults["fw"]) { $firmware = $probeResults["fw"] }
 
-    # Determine port count from parallel probe results
+    $sPhantom = $probeResults["sCanary"]
+    $dPhantom = $probeResults["dCanary"]
+    if (($null -ne $sPhantom -and $sPhantom -ne "") -or ($null -ne $dPhantom -and $dPhantom -ne "")) {
+        Write-ErrorLog "KUMO-DETECT" "Router at $IP answers reads for port 100, which no model has. Port counts are derived by comparing against that reply instead of trusting it." "WARN"
+    }
+
+    # Determine port count from the parallel probe results
     $inputCount = 32
-    if ($probeResults["p64"] -ne $null) { $inputCount = 64 }
-    elseif ($probeResults["p32"] -eq $null) { $inputCount = 16 }
+    if (Test-KumoPortPresent -ProbeValue $probeResults["p64"] -PhantomValue $sPhantom -Prefix "Source" -PortNumber 33) {
+        $inputCount = 64
+    } elseif (-not (Test-KumoPortPresent -ProbeValue $probeResults["p32"] -PhantomValue $sPhantom -Prefix "Source" -PortNumber 17)) {
+        $inputCount = 16
+    }
 
     $outputCount = 32
-    if ($probeResults["d33"] -ne $null) { $outputCount = 64 }
-    elseif ($probeResults["d17"] -eq $null) {
+    if (Test-KumoPortPresent -ProbeValue $probeResults["d33"] -PhantomValue $dPhantom -Prefix "Destination" -PortNumber 33) {
+        $outputCount = 64
+    } elseif (-not (Test-KumoPortPresent -ProbeValue $probeResults["d17"] -PhantomValue $dPhantom -Prefix "Destination" -PortNumber 17)) {
         # Sub-32 outputs
-        if ($probeResults["d5"] -eq $null) { $outputCount = 4 }
-        else { $outputCount = 16 }
+        if (-not (Test-KumoPortPresent -ProbeValue $probeResults["d5"] -PhantomValue $dPhantom -Prefix "Destination" -PortNumber 5)) {
+            $outputCount = 4
+        } else {
+            $outputCount = 16
+        }
     }
+
+    Write-ErrorLog "KUMO-DETECT" "Detected ${inputCount}x${outputCount} at $IP (probes: s33='$($probeResults["p64"])' s17='$($probeResults["p32"])' sCanary='$sPhantom' d33='$($probeResults["d33"])' d17='$($probeResults["d17"])' d5='$($probeResults["d5"])' dCanary='$dPhantom')" "INFO"
 
     $modelName = switch ("$inputCount`x$outputCount") {
         "16x4"  { "KUMO 1604" }

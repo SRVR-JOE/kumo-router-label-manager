@@ -1,4 +1,4 @@
-# Helix - Installation Script
+﻿# Helix - Installation Script
 # Professional AV Production Tool for Solotech
 # Version 5.0 - Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2
 
@@ -92,8 +92,50 @@ if ($InstallExcelModule) {
     }
 }
 
-# Copy files (in a real deployment, these would be copied from the source)
+# Copy the application files from the source directory next to this script.
+# Without this the launcher and the profile functions created below all point at
+# files that were never placed in $InstallPath.
 Write-Host "`nInstalling Helix Tools..." -ForegroundColor Yellow
+
+$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $sourceDir) { $sourceDir = (Get-Location).Path }
+
+$payload = @(
+    @{ Name = "Helix-Label-Manager.ps1";   Desc = "GUI Application";      Required = $true  },
+    @{ Name = "Helix-Excel-Updater.ps1";   Desc = "Command Line Tool";    Required = $true  },
+    @{ Name = "Helix-Shared.psm1";         Desc = "Shared Module";        Required = $false },
+    @{ Name = "Helix-Setup-Guide.md";      Desc = "Documentation";        Required = $false },
+    @{ Name = "Helix_Labels_Template.csv"; Desc = "Sample Template";      Required = $false },
+    @{ Name = "Helix-Menu.bat";            Desc = "Interactive Menu";     Required = $false }
+)
+
+$missingRequired = @()
+foreach ($item in $payload) {
+    $src = Join-Path $sourceDir $item.Name
+    if (Test-Path $src) {
+        try {
+            Copy-Item -Path $src -Destination (Join-Path $InstallPath $item.Name) -Force -ErrorAction Stop
+            Write-Host "$([char]0x2713) Installed: $($item.Name) ($($item.Desc))" -ForegroundColor Green
+        } catch {
+            Write-Host "$([char]0x2717) Failed to copy $($item.Name): $($_.Exception.Message)" -ForegroundColor Red
+            if ($item.Required) { $missingRequired += $item.Name }
+        }
+    } else {
+        if ($item.Required) {
+            Write-Host "$([char]0x2717) Missing: $($item.Name) (expected in $sourceDir)" -ForegroundColor Red
+            $missingRequired += $item.Name
+        } else {
+            Write-Host "  Skipped (not present): $($item.Name)" -ForegroundColor DarkGray
+        }
+    }
+}
+
+if ($missingRequired.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Installation failed: could not install $($missingRequired -join ', ')." -ForegroundColor Red
+    Write-Host "Run this script from the folder that contains the Helix scripts." -ForegroundColor Yellow
+    exit 1
+}
 
 # Create batch file for easy GUI launch
 $batchContent = @"
@@ -215,9 +257,8 @@ Files Created:
 • Helix-Setup-Guide.md        (Complete Documentation)
 
 Next Steps:
-1. Copy the main PowerShell files to: $InstallPath
-2. Run: .\Launch-Helix-GUI.bat (for GUI)
-3. Or use command line: helix-download -KumoIP "YOUR_ROUTER_IP" -DownloadPath "labels.xlsx"
+1. Run: .\Launch-Helix-GUI.bat (for GUI)
+2. Or use command line: helix-download -KumoIP "YOUR_ROUTER_IP" -DownloadPath "labels.xlsx"
    (Router type is auto-detected. Use -RouterType Videohub to force Videohub mode.)
 
 For support: Check Helix-Setup-Guide.md for troubleshooting

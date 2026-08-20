@@ -105,3 +105,42 @@ jobs:
             Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error
           }
         shell: pwsh
+
+      # Windows PowerShell 5.1 assumes ANSI for files without a BOM, which mangles
+      # non-ASCII characters. U+2713 becomes a smart quote that 5.1 treats as a string
+      # delimiter, so the script fails to parse. pwsh (7+) defaults to UTF-8 and does
+      # not reproduce this, which is why the analyzer step above never caught it.
+      - name: Assert scripts parse under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $failed = @()
+          Get-ChildItem -Path . | Where-Object { $_.Extension -in @('.ps1','.psm1') } | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            $hasNonAscii = $false
+            foreach ($b in $bytes) { if ($b -gt 127) { $hasNonAscii = $true; break } }
+            if ($hasNonAscii -and -not $hasBom) {
+              $failed += "$($_.Name): contains non-ASCII but has no UTF-8 BOM"
+            }
+            $errs = $null; $toks = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$toks, [ref]$errs)
+            if ($errs.Count -gt 0) {
+              $failed += "$($_.Name): $($errs.Count) parse error(s), first at line $($errs[0].Extent.StartLineNumber)"
+            }
+          }
+          if ($failed.Count -gt 0) {
+            $failed | ForEach-Object { Write-Host "FAIL: $_" }
+            exit 1
+          }
+          Write-Host "All PowerShell scripts parse cleanly under $($PSVersionTable.PSVersion)"
+
+      - name: Run PowerShell unit tests
+        shell: powershell
+        run: |
+          $failed = 0
+          Get-ChildItem -Path tests/powershell -Filter *.ps1 -File | ForEach-Object {
+            Write-Host "Running: $($_.Name)"
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $_.FullName
+            if ($LASTEXITCODE -ne 0) { $failed++ }
+          }
+          if ($failed -gt 0) { exit 1 }

@@ -1,4 +1,4 @@
-# Helix Deployment Script
+﻿# Helix Deployment Script
 # Copies all files to target directory and sets up complete package
 # Supports AJA KUMO, Blackmagic Videohub, and Lightware MX2 routers
 

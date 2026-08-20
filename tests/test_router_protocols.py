@@ -378,3 +378,36 @@ class TestDefaultLabelGenerator:
     def test_generate_default_labels_returns_dict_with_expected_keys(self):
         result = DefaultLabelGenerator.generate_default_labels()
         assert set(result.keys()) == {"inputs", "outputs", "inputs_line2", "outputs_line2"}
+
+
+class TestDefaultLabelGeneratorPortCountGuard:
+    """A port count no KUMO has must not size the generated label set.
+
+    detect_port_count only ever yields 16, 32 or 64; anything else reaching
+    here means detection failed, and 32 is the safe fallback.
+    """
+
+    def test_negative_count_falls_back_to_32(self):
+        result = DefaultLabelGenerator.generate_default_labels(port_count=-1)
+        assert len(result["inputs"]) == 32
+        assert len(result["outputs"]) == 32
+
+    def test_zero_falls_back_to_32(self):
+        result = DefaultLabelGenerator.generate_default_labels(port_count=0)
+        assert len(result["inputs"]) == 32
+
+    def test_absurd_count_falls_back_to_32(self):
+        result = DefaultLabelGenerator.generate_default_labels(port_count=100000)
+        assert len(result["inputs"]) == 32
+
+    def test_count_above_the_largest_kumo_falls_back_to_32(self):
+        result = DefaultLabelGenerator.generate_default_labels(port_count=65)
+        assert len(result["inputs"]) == 32
+
+    def test_supported_counts_are_preserved(self):
+        for count in (16, 32, 64):
+            result = DefaultLabelGenerator.generate_default_labels(port_count=count)
+            assert len(result["inputs"]) == count
+            assert len(result["outputs"]) == count
+            assert len(result["inputs_line2"]) == count
+            assert len(result["outputs_line2"]) == count

@@ -579,3 +579,36 @@ class TestJSONHandlerTemplate:
             raw = _json.load(f)
 
         assert "ports" in raw
+
+
+class TestExcelEmptyFileDataValidationRange:
+    """Writing empty FileData produced the reversed range "B2:B1".
+
+    openpyxl rejects that range outright with "1 must be greater than 2", so
+    exporting a file with no ports raised instead of writing a workbook.
+    """
+
+    def test_write_empty_filedata_produces_a_readable_workbook(self, tmp_path: Path):
+        from openpyxl import load_workbook
+
+        handler = ExcelHandler()
+        empty = FileData(ports=[])
+        out = tmp_path / "empty.xlsx"
+
+        handler.write_excel(out, empty)
+
+        assert out.exists()
+        workbook = load_workbook(out)
+        try:
+            sheet = workbook.active
+            for validation in sheet.data_validations.dataValidation:
+                for cell_range in validation.sqref.ranges:
+                    assert cell_range.max_row >= cell_range.min_row
+        finally:
+            workbook.close()
+
+    def test_empty_filedata_roundtrips(self, tmp_path: Path):
+        handler = ExcelHandler()
+        out = tmp_path / "empty_roundtrip.xlsx"
+        handler.write_excel(out, FileData(ports=[]))
+        assert handler.read_excel(out).ports == []

@@ -248,15 +248,31 @@ class TestRestClientTestConnection:
 # ===================================================================
 
 
+def _detection_responses(mapping):
+    """Build a fake ``_get`` that answers by source port number.
+
+    ``mapping`` maps port number -> the value the router returns, or ``None``
+    for "the router refuses this port". Ports absent from the mapping are
+    treated as refused.
+    """
+
+    async def fake_get(endpoint, timeout=None):
+        for port in sorted(mapping, reverse=True):
+            if f"Source{port}_" in endpoint or endpoint.endswith(f"Source{port}"):
+                value = mapping[port]
+                return None if value is None else {"value_name": value}
+        return None
+
+    return fake_get
+
+
 class TestRestClientDetectPortCount:
     """Test router size detection (16, 32, 64 ports)."""
 
     async def test_detects_64_port(self):
         client = RestClient("192.168.1.100")
-
-        async def fake_get(endpoint, timeout=None):
-            # Both port-33 and port-17 queries succeed
-            return {"value_name": "SomePort"}
+        # A real 6464: port 33 carries a label, the impossible port 100 does not.
+        fake_get = _detection_responses({33: "CAM A", 17: "CAM B", 100: None})
 
         with patch.object(client, "_get", side_effect=fake_get):
             count = await client.detect_port_count()
@@ -265,11 +281,7 @@ class TestRestClientDetectPortCount:
 
     async def test_detects_32_port(self):
         client = RestClient("192.168.1.100")
-
-        async def fake_get(endpoint, timeout=None):
-            if "Source33" in endpoint:
-                return None  # port 33 does not exist
-            return {"value_name": "Port 17"}
+        fake_get = _detection_responses({33: None, 17: "Port 17", 100: None})
 
         with patch.object(client, "_get", side_effect=fake_get):
             count = await client.detect_port_count()
@@ -281,6 +293,65 @@ class TestRestClientDetectPortCount:
         with patch.object(client, "_get", return_value=None):
             count = await client.detect_port_count()
             assert count == 16
+
+
+class TestRestClientPhantomPortDetection:
+    """Firmware that answers reads for ports the chassis does not have.
+
+    Treating any reply as proof of existence sized a KUMO 3232 as a 6464,
+    which then wrote labels to ports that were not there.
+    """
+
+    async def test_fixed_filler_firmware_is_not_read_as_64_port(self):
+        client = RestClient("192.168.1.100")
+        # Every non-existent port echoes the same filler, port 100 included.
+        fake_get = _detection_responses({33: "---", 17: "IN 17", 100: "---"})
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            assert await client.detect_port_count() == 32
+
+    async def test_auto_naming_firmware_is_not_read_as_64_port(self):
+        client = RestClient("192.168.1.100")
+        # Non-existent ports come back auto-named from their own index.
+        fake_get = _detection_responses(
+            {33: "Source 33", 17: "IN 17", 100: "Source 100"}
+        )
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            assert await client.detect_port_count() == 32
+
+    async def test_auto_naming_firmware_still_detects_a_real_64_port(self):
+        client = RestClient("192.168.1.100")
+        # Port 33 carries a user label, so it is real despite the chatty firmware.
+        fake_get = _detection_responses(
+            {33: "CAM A", 17: "IN 17", 100: "Source 100"}
+        )
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            assert await client.detect_port_count() == 64
+
+    async def test_auto_naming_firmware_falls_through_to_16(self):
+        client = RestClient("192.168.1.100")
+        fake_get = _detection_responses(
+            {33: "Source 33", 17: "Source 17", 100: "Source 100"}
+        )
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            assert await client.detect_port_count() == 16
+
+    async def test_empty_value_is_not_proof_of_existence(self):
+        client = RestClient("192.168.1.100")
+        fake_get = _detection_responses({33: "", 17: "IN 17", 100: None})
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            assert await client.detect_port_count() == 32
+
+    def test_label_containing_the_prefix_word_is_still_real(self):
+        # "Source Feed A" is a user label, not the auto-generated "Source 33".
+        assert RestClient._port_is_real("Source Feed A", "Source 100", 33) is True
+
+    def test_zero_padded_auto_name_is_recognised_as_phantom(self):
+        assert RestClient._port_is_real("Source 033", "Source 100", 33) is False
 
 
 # ===================================================================
@@ -439,3 +510,86 @@ class TestRestClientUpload:
             success, errors, msgs = await client.upload_labels_batch(data)
             assert success == 1
             assert errors == 1
+
+
+# ===================================================================
+# Regressions fixed during the 2026-08-20 audit
+# ===================================================================
+
+
+class TestRestClientTestConnection:
+    """test_connection must not confuse "no system name" with "unreachable"."""
+
+    async def test_router_with_no_system_name_is_still_connected(self):
+        client = RestClient("192.168.1.100")
+        # A router with no system name set answers with empty strings.
+        with patch.object(
+            client, "_get", return_value={"value": "", "value_name": ""}
+        ):
+            assert await client.test_connection() is True
+
+    async def test_named_router_is_connected(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"value": "FOH-KUMO"}):
+            assert await client.test_connection() is True
+
+    async def test_paramid_only_response_is_connected(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"paramid": "eParamID_SysName"}):
+            assert await client.test_connection() is True
+
+    async def test_no_response_is_not_connected(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value=None):
+            assert await client.test_connection() is False
+
+    async def test_error_response_is_not_connected(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(
+            client, "_get", return_value={"error": "unknown parameter"}
+        ):
+            assert await client.test_connection() is False
+
+    async def test_unrecognised_payload_is_not_connected(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"unexpected": "shape"}):
+            assert await client.test_connection() is False
+
+
+class TestRestClientUploadResponseValidation:
+    """A 200 response carrying an error must not be reported as a write."""
+
+    async def test_upload_label_rejects_error_payload(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"error": "port out of range"}):
+            ok, err = await client.upload_label(99, "INPUT", "CAM A")
+            assert ok is False
+            assert "port out of range" in err
+
+    async def test_upload_label_accepts_normal_payload(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"value": "CAM A"}):
+            ok, err = await client.upload_label(1, "INPUT", "CAM A")
+            assert ok is True
+            assert err is None
+
+    async def test_upload_label_reports_no_response_as_failure(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value=None):
+            ok, err = await client.upload_label(1, "INPUT", "CAM A")
+            assert ok is False
+            assert err
+
+    async def test_upload_color_rejects_error_payload(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"error": "bad color"}):
+            ok, err = await client.upload_color(1, "INPUT", 3)
+            assert ok is False
+            assert "bad color" in err
+
+    async def test_upload_color_accepts_normal_payload(self):
+        client = RestClient("192.168.1.100")
+        with patch.object(client, "_get", return_value={"value": "3"}):
+            ok, err = await client.upload_color(1, "INPUT", 3)
+            assert ok is True
+            assert err is None

@@ -206,7 +206,11 @@ class ExcelHandler:
         type_validation.errorTitle = "Invalid Type"
 
         # Apply to all data rows
+        # With no ports this expression produced "B2:B1"; openpyxl rejects that
+        # reversed range, so exporting empty data raised instead of writing.
         max_row = 65 if create_template else len(data.ports) + 1
+        if max_row < 2:
+            max_row = 2
         type_validation.add(f"B2:B{max_row}")
 
         # Add data validation for New_Label_Line2 column header (column F)

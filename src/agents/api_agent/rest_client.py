@@ -8,21 +8,21 @@ Uses the real AJA KUMO REST API:
 import asyncio
 import json
 import logging
-from typing import Dict, List, Optional, Any, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
 from .router_protocols import (
-    APIEndpoint,
-    ResponseParser,
-    DefaultLabelGenerator,
-    Protocol,
-    KumoParamID,
     KUMO_DEFAULT_COLOR,
-    TIMEOUT_REST_REQUEST,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
     RETRY_BACKOFF_MULTIPLIER,
+    TIMEOUT_REST_REQUEST,
+    APIEndpoint,
+    DefaultLabelGenerator,
+    Protocol,
+    ResponseParser,
 )
 
 # Concurrency limit for parallel requests to avoid overwhelming the router.
@@ -120,13 +120,13 @@ class RestClient:
                             text = await response.text()
                             return {"value": text.strip()} if text.strip() else None
                     else:
-                        logger.warning(f"HTTP {response.status}: {endpoint}")
+                        logger.warning("HTTP %s: %s", response.status, endpoint)
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout (attempt {attempt + 1}): {endpoint}")
+                logger.warning("Timeout (attempt %d): %s", attempt + 1, endpoint)
             except aiohttp.ClientError as e:
-                logger.warning(f"Client error (attempt {attempt + 1}): {e}")
+                logger.warning("Client error (attempt %d): %s", attempt + 1, e)
             except Exception as e:
-                logger.error(f"Unexpected error: {e}")
+                logger.error("Unexpected error: %s", e, exc_info=True)
 
             if attempt < self._max_retries - 1:
                 await asyncio.sleep(self._retry_backoff_base * (self._retry_backoff_multiplier ** attempt))
@@ -134,11 +134,18 @@ class RestClient:
         return None
 
     async def test_connection(self) -> bool:
-        """Test connection by reading the system name."""
+        """Test connection by querying the system name endpoint.
+
+        Success means the router answered with a well-formed parameter response,
+        not that the value was non-empty. A router with no system name configured
+        returns empty strings for both ``value`` and ``value_name``, which
+        ``parse_param_response`` reports as ``None`` -- that used to be read as
+        unreachable and showed a live router as "Disconnected".
+        """
         endpoint = APIEndpoint.get_system_name()
         result = await self._get(endpoint, timeout=5)
-        if result and ResponseParser.parse_param_response(result):
-            return True
+        if isinstance(result, dict) and not result.get("error"):
+            return any(key in result for key in ("value", "value_name", "paramid"))
         return False
 
     async def get_system_name(self) -> str:
@@ -161,23 +168,77 @@ class RestClient:
                 return version
         return "Unknown"
 
+    #: Source port addressed by the detection canary. No KUMO model has it, so
+    #: any value the router returns for it shows what a phantom reply looks like.
+    CANARY_PORT = 100
+
+    @staticmethod
+    def _port_is_real(value: Optional[str], phantom: Optional[str], port: int) -> bool:
+        """Decide whether a probe reply proves that ``port`` exists.
+
+        ``value`` and ``phantom`` are parsed parameter values (``None`` when the
+        router refused the read or answered with nothing).
+
+        Some KUMO firmware answers reads for ports the chassis does not have, so
+        "the router replied" is not evidence on its own. ``phantom`` is the reply
+        for a port that exists on no model; comparing against it tells us what a
+        phantom reply looks like on this router.
+        """
+        if not value:
+            return False
+        # The router refused the impossible port, so any real reply proves the port.
+        if not phantom:
+            return True
+        # Phantom ports echo one fixed filler string.
+        if value == phantom:
+            return False
+        # Or they are auto-named from their own index. Only trust that test when
+        # the canary itself came back auto-named, which is what proves the
+        # firmware behaves that way.
+        canary_auto = re.compile(
+            rf"^\s*(source|destination)\s*0*{RestClient.CANARY_PORT}\s*$", re.IGNORECASE
+        )
+        if canary_auto.match(phantom):
+            probe_auto = re.compile(
+                rf"^\s*(source|destination)\s*0*{port}\s*$", re.IGNORECASE
+            )
+            if probe_auto.match(value):
+                return False
+        return True
+
     async def detect_port_count(self) -> int:
         """Detect router size (16, 32, or 64 ports).
 
-        Probes in parallel for faster detection on LAN.
+        Probes in parallel for faster detection on LAN. The canary probe runs
+        alongside the real ones, so it costs no extra round trip.
         """
-        # Probe 64-port and 32-port simultaneously
         ep64 = APIEndpoint.get_source_name(33)
         ep32 = APIEndpoint.get_source_name(17)
-        r64, r32 = await asyncio.gather(
+        ep_canary = APIEndpoint.get_source_name(self.CANARY_PORT)
+        r64, r32, r_canary = await asyncio.gather(
             self._get(ep64, timeout=3),
             self._get(ep32, timeout=3),
+            self._get(ep_canary, timeout=3),
         )
 
-        if r64 and ResponseParser.parse_param_response(r64):
+        phantom = ResponseParser.parse_param_response(r_canary) if r_canary else None
+        if phantom:
+            logger.warning(
+                "Router %s answers reads for source %d, which no model has. "
+                "Port count is derived by comparing against that reply (%r) "
+                "rather than trusting it.",
+                self.router_ip,
+                self.CANARY_PORT,
+                phantom,
+            )
+
+        v64 = ResponseParser.parse_param_response(r64) if r64 else None
+        v32 = ResponseParser.parse_param_response(r32) if r32 else None
+
+        if self._port_is_real(v64, phantom, 33):
             self._port_count = 64
             return 64
-        if r32 and ResponseParser.parse_param_response(r32):
+        if self._port_is_real(v32, phantom, 17):
             self._port_count = 32
             return 32
 
@@ -268,7 +329,7 @@ class RestClient:
 
         for result in results:
             if isinstance(result, Exception):
-                logger.warning(f"Label fetch error: {result}")
+                logger.warning("Label fetch error: %s", result)
                 continue
 
             port, port_type, line, label = result
@@ -311,7 +372,11 @@ class RestClient:
             return False, f"Invalid port type: {port_type}"
 
         result = await self._get(endpoint)
-        if result is not None:
+        # The router answers set requests with HTTP 200 even when it rejects them,
+        # so a non-None result is not on its own proof that the label was written.
+        if isinstance(result, dict) and result.get("error"):
+            return False, f"Router rejected {port_type} {port} line {line}: {result['error']}"
+        if isinstance(result, dict):
             return True, None
         return False, f"Failed to set {port_type} {port} line {line} label"
 
@@ -417,7 +482,7 @@ class RestClient:
 
         for result in results:
             if isinstance(result, Exception):
-                logger.warning(f"Color fetch error: {result}")
+                logger.warning("Color fetch error: %s", result)
                 continue
             port, port_type, color_id = result
             if port_type == "input":
@@ -443,6 +508,8 @@ class RestClient:
         pt = "output" if port_type.upper() == "OUTPUT" else "input"
         endpoint = APIEndpoint.set_button_color(port, pt, color_id)
         result = await self._get(endpoint)
-        if result is not None:
+        if isinstance(result, dict) and result.get("error"):
+            return False, f"Router rejected {port_type} {port} color: {result['error']}"
+        if isinstance(result, dict):
             return True, None
         return False, f"Failed to set {port_type} {port} color to {color_id}"

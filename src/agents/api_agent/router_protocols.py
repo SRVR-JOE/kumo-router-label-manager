@@ -320,6 +320,11 @@ class DefaultLabelGenerator:
 
     @staticmethod
     def generate_default_labels(port_count: int = 32) -> Dict[str, List[str]]:
+        # Guard against a caller passing a count no KUMO could have. A negative,
+        # zero, or absurd value would otherwise produce an empty or enormous label
+        # set that later code sizes its grids from. 64 is the largest KUMO.
+        if not isinstance(port_count, int) or port_count < 1 or port_count > 64:
+            port_count = 32
         return {
             "inputs": [f"Source {i + 1}" for i in range(port_count)],
             "outputs": [f"Dest {i + 1}" for i in range(port_count)],
