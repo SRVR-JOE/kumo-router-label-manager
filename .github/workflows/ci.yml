@@ -140,7 +140,7 @@ jobs:
           $failed = 0
           Get-ChildItem -Path tests/powershell -Filter *.ps1 -File | ForEach-Object {
             Write-Host "Running: $($_.Name)"
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $_.FullName
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $_.FullName
             if ($LASTEXITCODE -ne 0) { $failed++ }
           }
           if ($failed -gt 0) { exit 1 }

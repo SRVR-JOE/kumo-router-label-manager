@@ -919,6 +919,7 @@ $global:routers           = @{}      # hashtable keyed by IP, each value holds p
 $script:defaultRouterIPs  = @("192.168.100.51", "192.168.100.52")  # tried when textbox is empty
 $global:routerType        = ""       # "KUMO" or "Videohub"
 $global:maxLabelLength    = 50       # 50 for KUMO, 255 for Videohub
+$global:pendingSeedText   = $null    # text to pre-load into the next cell editor
 $global:videohubTcp       = $null    # persistent TCP connection for Videohub
 $global:videohubWriter    = $null
 $global:videohubReader    = $null
@@ -2785,7 +2786,10 @@ $dataGrid.CellBorderStyle = "SingleHorizontal"
 $dataGrid.AllowUserToAddRows = $false
 $dataGrid.AllowUserToDeleteRows = $false
 $dataGrid.AllowUserToResizeRows = $false
-$dataGrid.SelectionMode = "FullRowSelect"
+# CellSelect so a single label cell can be picked and edited, and so a range
+# of cells can be selected for a bulk rename. Read the selection through
+# Get-SelectedGridRows, never SelectedRows, which is empty in this mode.
+$dataGrid.SelectionMode = "CellSelect"
 $dataGrid.MultiSelect = $true
 $dataGrid.RowHeadersVisible = $false
 $dataGrid.AutoSizeColumnsMode = "Fill"
@@ -3081,6 +3085,9 @@ $gridContextMenu.BackColor = $clrPanel
 $gridContextMenu.ForeColor = $clrText
 $gridContextMenu.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
+$ctxRenameSelected   = $gridContextMenu.Items.Add("Rename Selected...")
+$ctxRenameSelected.ShortcutKeyDisplayString = "F2"
+$gridContextMenu.Items.Add("-") | Out-Null
 $ctxCopyCurrentToNew = $gridContextMenu.Items.Add("Copy Current Label to New Label")
 $ctxClearNew         = $gridContextMenu.Items.Add("Clear New Label")
 $ctxCopyClipboard    = $gridContextMenu.Items.Add("Copy to Clipboard")
@@ -3101,7 +3108,7 @@ foreach ($scId in 1..9) {
     $scItem.Tag = $scId
     $scItem.Add_Click({
         $colorId = $this.Tag
-        foreach ($row in $dataGrid.SelectedRows) {
+        foreach ($row in (Get-SelectedGridRows)) {
             $port = $row.Cells["Port"].Value
             $type = $row.Cells["Type"].Value
             $router = $row.Cells["Router"].Value
@@ -3121,7 +3128,7 @@ $gridContextMenu.Items.Add($ctxSetColor) | Out-Null
 
 $ctxResetColor = $gridContextMenu.Items.Add("Reset Color")
 $ctxResetColor.Add_Click({
-    foreach ($row in $dataGrid.SelectedRows) {
+    foreach ($row in (Get-SelectedGridRows)) {
         $port = $row.Cells["Port"].Value
         $type = $row.Cells["Type"].Value
         $router = $row.Cells["Router"].Value
@@ -3136,8 +3143,10 @@ $ctxResetColor.Add_Click({
     Populate-Grid
 })
 
+$ctxRenameSelected.Add_Click({ Show-RenameSelectedDialog })
+
 $ctxCopyCurrentToNew.Add_Click({
-    foreach ($row in $dataGrid.SelectedRows) {
+    foreach ($row in (Get-SelectedGridRows)) {
         $port = $row.Cells["Port"].Value
         $type = $row.Cells["Type"].Value
         $router = $row.Cells["Router"].Value
@@ -3161,7 +3170,7 @@ $ctxCopyCurrentToNew.Add_Click({
 })
 
 $ctxClearNew.Add_Click({
-    foreach ($row in $dataGrid.SelectedRows) {
+    foreach ($row in (Get-SelectedGridRows)) {
         $port = $row.Cells["Port"].Value
         $type = $row.Cells["Type"].Value
         $router = $row.Cells["Router"].Value
@@ -3182,7 +3191,7 @@ $ctxClearNew.Add_Click({
 
 $ctxCopyClipboard.Add_Click({
     $lines = @()
-    foreach ($row in $dataGrid.SelectedRows | Sort-Object { $_.Index }) {
+    foreach ($row in (Get-SelectedGridRows)) {
         $port    = $row.Cells["Port"].Value
         $type    = $row.Cells["Type"].Value
         $current = $row.Cells["Current_Label"].Value
@@ -3202,16 +3211,20 @@ $ctxCopyClipboard.Add_Click({
 
 $ctxSelectInputs.Add_Click({
     $dataGrid.ClearSelection()
+    $match = @()
     foreach ($row in $dataGrid.Rows) {
-        if ($row.Cells["Type"].Value -eq "INPUT") { $row.Selected = $true }
+        if ($row.Cells["Type"].Value -eq "INPUT") { $match += $row }
     }
+    Select-GridRowCells -Rows $match
 })
 
 $ctxSelectOutputs.Add_Click({
     $dataGrid.ClearSelection()
+    $match = @()
     foreach ($row in $dataGrid.Rows) {
-        if ($row.Cells["Type"].Value -eq "OUTPUT") { $row.Selected = $true }
+        if ($row.Cells["Type"].Value -eq "OUTPUT") { $match += $row }
     }
+    Select-GridRowCells -Rows $match
 })
 
 $dataGrid.ContextMenuStrip = $gridContextMenu
@@ -3550,6 +3563,282 @@ function Update-ChangeCount {
     $lblStatusRight.Text = "$totalLabels labels | $count changed"
 }
 
+function Get-SelectedGridRows {
+    <#
+      Returns the distinct grid rows the user has selected, in display order.
+
+      The grid selects cells rather than whole rows, so SelectedRows is empty
+      even when every cell of a row is highlighted. Everything that acts on "the
+      selection" goes through here so it works whichever way the user selected:
+      dragging across cells, clicking a row header, or Ctrl+A.
+    #>
+    $seen = @{}
+    $rows = New-Object System.Collections.ArrayList
+
+    foreach ($cell in $dataGrid.SelectedCells) {
+        if ($cell.RowIndex -lt 0) { continue }
+        if (-not $seen.ContainsKey($cell.RowIndex)) {
+            $seen[$cell.RowIndex] = $true
+            [void]$rows.Add($dataGrid.Rows[$cell.RowIndex])
+        }
+    }
+
+    # Row-header clicks still populate SelectedRows; fold those in too.
+    foreach ($row in $dataGrid.SelectedRows) {
+        if (-not $seen.ContainsKey($row.Index)) {
+            $seen[$row.Index] = $true
+            [void]$rows.Add($row)
+        }
+    }
+
+    # Nothing explicitly selected: fall back to whatever cell has focus.
+    if ($rows.Count -eq 0 -and $dataGrid.CurrentRow) {
+        [void]$rows.Add($dataGrid.CurrentRow)
+    }
+
+    return @($rows | Sort-Object { $_.Index })
+}
+
+function Select-GridRowCells {
+    <#
+      Selects every visible cell of the given rows.
+
+      In CellSelect mode, setting DataGridViewRow.Selected does not highlight the
+      row's cells and does not put the row into SelectedRows, so anything that
+      wants to select whole rows has to select their cells instead.
+    #>
+    param([object[]]$Rows)
+
+    foreach ($row in $Rows) {
+        foreach ($cell in $row.Cells) {
+            if ($dataGrid.Columns[$cell.ColumnIndex].Visible) { $cell.Selected = $true }
+        }
+    }
+}
+
+function Get-RenameTargetField {
+    <#
+      Which label line a bulk rename should write to.
+
+      Line 2 only when the selection actually sits in a line-2 column and that
+      column is on screen; otherwise line 1.
+    #>
+    if (-not $colNewL2.Visible) { return "New_Label" }
+    foreach ($cell in $dataGrid.SelectedCells) {
+        if ($cell.ColumnIndex -lt 0) { continue }
+        $name = $dataGrid.Columns[$cell.ColumnIndex].Name
+        if ($name -eq "New_Label_2" -or $name -eq "Current_Label_2") { return "New_Label_2" }
+    }
+    return "New_Label"
+}
+
+function Set-LabelForRows {
+    <#
+      Writes $Field on the model rows behind $Rows, one undo entry per row.
+
+      $NameFor is a script block given (index, row) and returning the label for
+      that row, so a plain rename and a numbered rename share this path.
+    #>
+    param(
+        [object[]]$Rows,
+        [string]$Field,
+        [scriptblock]$NameFor
+    )
+
+    $applied = 0
+    $index = 0
+    foreach ($row in $Rows) {
+        $port   = $row.Cells["Port"].Value
+        $type   = $row.Cells["Type"].Value
+        $router = $row.Cells["Router"].Value
+
+        $label = & $NameFor $index $row
+        if ($null -eq $label) { $label = "" }
+        $label = [string]$label
+        if ($label.Length -gt $global:maxLabelLength) {
+            $label = $label.Substring(0, $global:maxLabelLength)
+        }
+
+        foreach ($lbl in $global:allLabels) {
+            if ($lbl.Port -eq $port -and $lbl.Type -eq $type -and $lbl.Router -eq $router) {
+                if ($lbl.$Field -ne $label) {
+                    Push-UndoCommand @{ Port=$lbl.Port; Type=$lbl.Type; Router=$lbl.Router; Field=$Field; OldValue=$lbl.$Field; NewValue=$label }
+                    $lbl.$Field = $label
+                    $applied++
+                }
+                break
+            }
+        }
+        $index++
+    }
+    return $applied
+}
+
+function Show-RenameSelectedDialog {
+    <#
+      Renames every selected row in one step.
+
+      Which label line gets written follows the selection (Get-RenameTargetField),
+      so selecting line-2 cells renames line 2.
+    #>
+    Sync-GridToData
+
+    $rows = Get-SelectedGridRows
+    if ($rows.Count -eq 0) {
+        Set-StatusMessage "Select one or more rows to rename" "Warning"
+        return
+    }
+
+    $field   = Get-RenameTargetField
+    $lineNum = if ($field -eq "New_Label_2") { 2 } else { 1 }
+    $srcCol  = if ($field -eq "New_Label_2") { "Current_Label_2" } else { "Current_Label" }
+
+    $rnForm = New-Object System.Windows.Forms.Form
+    $rnForm.Text = "Rename $($rows.Count) Label$(if($rows.Count -ne 1){'s'}) (Line $lineNum)"
+    $rnForm.Size = New-Object System.Drawing.Size(440, 260)
+    $rnForm.StartPosition = "CenterParent"
+    $rnForm.BackColor = $clrPanel
+    $rnForm.ForeColor = $clrText
+    $rnForm.FormBorderStyle = "FixedDialog"
+    $rnForm.MaximizeBox = $false
+    $rnForm.MinimizeBox = $false
+
+    $rnForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
+        Text="New name:"; Location="20,22"; Size="75,20"; ForeColor=$clrText
+    }))
+
+    # A single row pre-fills with its existing label so this reads as an edit.
+    $seed = ""
+    if ($rows.Count -eq 1) {
+        $v = $rows[0].Cells[$field].Value
+        if ($null -eq $v -or [string]$v -eq "") { $v = $rows[0].Cells[$srcCol].Value }
+        if ($v) { $seed = [string]$v }
+    }
+
+    $nameBox = New-Object System.Windows.Forms.TextBox -Property @{
+        Location="100,20"; Size="300,24"; BackColor=$clrField; ForeColor=$clrText;
+        BorderStyle="FixedSingle"; Text=$seed
+    }
+    $rnForm.Controls.Add($nameBox)
+
+    $chkNumber = New-Object System.Windows.Forms.CheckBox -Property @{
+        Text="Number them"; Location="100,54"; Size="115,22"; ForeColor=$clrText
+    }
+    $rnForm.Controls.Add($chkNumber)
+
+    $rnForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
+        Text="Start at:"; Location="223,56"; Size="55,20"; ForeColor=$clrDimText
+    }))
+    $startBox = New-Object System.Windows.Forms.NumericUpDown -Property @{
+        Location="281,54"; Size="70,24"; BackColor=$clrField; ForeColor=$clrText;
+        Value=1; Minimum=0; Maximum=9999; Enabled=$false
+    }
+    $rnForm.Controls.Add($startBox)
+
+    $rnForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
+        Text="Use {n} to place the number, otherwise it is appended."
+        Location="100,82"; Size="300,18"; ForeColor=$clrDimText
+        Font=(New-Object System.Drawing.Font("Segoe UI", 8))
+    }))
+
+    $rnForm.Controls.Add((New-Object System.Windows.Forms.Label -Property @{
+        Text="Preview:"; Location="20,112"; Size="75,20"; ForeColor=$clrDimText
+    }))
+    $previewLbl = New-Object System.Windows.Forms.Label -Property @{
+        Location="100,112"; Size="300,20"; ForeColor=$clrChanged
+    }
+    $rnForm.Controls.Add($previewLbl)
+
+    $lenLbl = New-Object System.Windows.Forms.Label -Property @{
+        Location="100,134"; Size="300,18"; ForeColor=$clrDimText
+        Font=(New-Object System.Drawing.Font("Segoe UI", 8))
+    }
+    $rnForm.Controls.Add($lenLbl)
+
+    # The apply step calls this same block, so the preview cannot drift from what
+    # actually gets written.
+    $expand = {
+        param($template, $n, $numbered)
+        if (-not $numbered) { return $template }
+        if ($template -match '\{n\}') { return ($template -replace '\{n\}', [string]$n) }
+        return "$template$n"
+    }
+
+    $updatePreview = {
+        $tpl = $nameBox.Text
+        $numbered = $chkNumber.Checked
+        $start = [int]$startBox.Value
+        $samples = @()
+        $take = [Math]::Min(3, $rows.Count)
+        for ($i = 0; $i -lt $take; $i++) {
+            $s = & $expand $tpl ($start + $i) $numbered
+            if ($s.Length -gt $global:maxLabelLength) { $s = $s.Substring(0, $global:maxLabelLength) }
+            $samples += $s
+        }
+        $text = $samples -join ", "
+        if ($rows.Count -gt $take) { $text += ", ..." }
+        $previewLbl.Text = $text
+
+        $longest = 0
+        foreach ($s in $samples) { if ($s.Length -gt $longest) { $longest = $s.Length } }
+        if ($longest -ge $global:maxLabelLength) {
+            $lenLbl.Text = "Truncated to the $($global:maxLabelLength)-character limit for this router."
+            $lenLbl.ForeColor = $clrWarning
+        } else {
+            $lenLbl.Text = "$longest of $($global:maxLabelLength) characters."
+            $lenLbl.ForeColor = $clrDimText
+        }
+    }
+
+    $nameBox.Add_TextChanged($updatePreview)
+    $chkNumber.Add_CheckedChanged({ $startBox.Enabled = $chkNumber.Checked; & $updatePreview })
+    $startBox.Add_ValueChanged($updatePreview)
+    & $updatePreview
+
+    $btnRename = New-Object ModernButton -Property @{
+        Location="225,172"; Size="90,32"; Text="Rename"
+    }
+    $btnCancelRn = New-Object ModernButton -Property @{
+        Location="323,172"; Size="77,32"; Text="Cancel"
+    }
+    $btnCancelRn.Style = [ModernButton+ButtonStyle]::Secondary
+
+    $btnRename.Add_Click({
+        $tpl = $nameBox.Text
+        $numbered = $chkNumber.Checked
+        $start = [int]$startBox.Value
+
+        $applied = Set-LabelForRows -Rows $rows -Field $field -NameFor {
+            param($i, $row)
+            & $expand $tpl ($start + $i) $numbered
+        }
+
+        $rnForm.Tag = $applied
+        $rnForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $rnForm.Close()
+    })
+    $btnCancelRn.Add_Click({
+        $rnForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $rnForm.Close()
+    })
+
+    $rnForm.Controls.Add($btnRename)
+    $rnForm.Controls.Add($btnCancelRn)
+    $rnForm.AcceptButton = $btnRename
+    $rnForm.CancelButton = $btnCancelRn
+
+    $nameBox.Select()
+    $nameBox.SelectAll()
+
+    if ($rnForm.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $applied = $rnForm.Tag
+        Populate-Grid
+        Update-ChangeCount
+        Set-StatusMessage "Renamed $applied label$(if($applied -ne 1){'s'}) on line $lineNum" "Success"
+    }
+    $rnForm.Dispose()
+}
+
 function Sync-GridToData {
     foreach ($row in $dataGrid.Rows) {
         $port    = $row.Cells["Port"].Value
@@ -3874,6 +4163,15 @@ $form.Add_KeyDown({
         return
     }
 
+    if ($e.KeyCode -eq "F2") {
+        if (-not $dataGrid.IsCurrentCellInEditMode) {
+            Show-RenameSelectedDialog
+            $e.Handled = $true
+            $e.SuppressKeyPress = $true
+        }
+        return
+    }
+
     if ($e.Control -and $e.KeyCode -eq "A") {
         $dataGrid.SelectAll()
         $e.Handled = $true
@@ -3882,7 +4180,7 @@ $form.Add_KeyDown({
     }
 
     if ($e.KeyCode -eq "Delete") {
-        foreach ($row in $dataGrid.SelectedRows) {
+        foreach ($row in (Get-SelectedGridRows)) {
             $port = $row.Cells["Port"].Value
             $type = $row.Cells["Type"].Value
             $router = $row.Cells["Router"].Value
@@ -4605,7 +4903,7 @@ $btnAutoNumber.Add_Click({
             $num = [int]$startNumBox.Value
 
             if ($rbSelected2.Checked) {
-                $sortedRows = $dataGrid.SelectedRows | Sort-Object { $_.Index }
+                $sortedRows = Get-SelectedGridRows
                 foreach ($row in $sortedRows) {
                     $port   = $row.Cells["Port"].Value
                     $type   = $row.Cells["Type"].Value
@@ -4637,7 +4935,7 @@ $btnAutoNumber.Add_Click({
             $letterIndex = $startLetterBox.SelectedIndex + 1  # 1-based
 
             if ($rbSelected2.Checked) {
-                $sortedRows = $dataGrid.SelectedRows | Sort-Object { $_.Index }
+                $sortedRows = Get-SelectedGridRows
                 foreach ($row in $sortedRows) {
                     $port   = $row.Cells["Port"].Value
                     $type   = $row.Cells["Type"].Value
@@ -4890,6 +5188,18 @@ $dataGrid.Add_EditingControlShowing({
     $tb = $e.Control
     if ($tb -is [System.Windows.Forms.TextBox]) {
         $tb.MaxLength = $global:maxLabelLength
+
+        # A click on a current-label cell asks for that text to be pre-loaded so
+        # the edit reads as a rename. The editor is only created here, which is
+        # why the seed cannot be applied at click time.
+        if ($global:pendingSeedText) {
+            $tb.Text = $global:pendingSeedText
+            $tb.SelectAll()
+            # Without this the seeded text is discarded if the user tabs away
+            # without typing.
+            $sender.NotifyCurrentCellDirty($true)
+        }
+        $global:pendingSeedText = $null
     }
 })
 
@@ -5014,14 +5324,37 @@ $dataGrid.Add_CellEndEdit({
 
 $dataGrid.Add_CellClick({
     param($sender, $e)
-    if ($e.RowIndex -ge 0) {
-        $colName = $sender.Columns[$e.ColumnIndex].Name
-        if ($colName -eq "New_Label" -or $colName -eq "New_Label_2" -or $colName -eq "Color") {
-            $col = $sender.Columns[$e.ColumnIndex]
-            if (-not $col.ReadOnly -and $col.Visible) {
-                $sender.CurrentCell = $sender.Rows[$e.RowIndex].Cells[$e.ColumnIndex]
-                $sender.BeginEdit($true)
+    if ($e.RowIndex -lt 0) { return }
+    $colName = $sender.Columns[$e.ColumnIndex].Name
+
+    # Clicking the label you can see should start renaming it. The current-label
+    # columns are read-only, so redirect the click onto the matching new-label
+    # cell and seed it with the existing text, which gives a rename rather than a
+    # blank entry. Seeding is safe: a new label identical to the current one is
+    # not counted as a change on upload.
+    $editColName = $colName
+    $seedFrom    = $null
+    if ($colName -eq "Current_Label")   { $editColName = "New_Label";   $seedFrom = "Current_Label" }
+    if ($colName -eq "Current_Label_2") { $editColName = "New_Label_2"; $seedFrom = "Current_Label_2" }
+
+    if ($editColName -eq "New_Label" -or $editColName -eq "New_Label_2" -or $editColName -eq "Color") {
+        $col = $sender.Columns[$editColName]
+        if (-not $col.ReadOnly -and $col.Visible) {
+            $cell = $sender.Rows[$e.RowIndex].Cells[$editColName]
+
+            # Only seed when the new-label cell is still empty, so a rename
+            # already in progress is never overwritten by the old name.
+            $global:pendingSeedText = $null
+            if ($seedFrom) {
+                $existing = $cell.Value
+                if ($null -eq $existing -or [string]$existing -eq "") {
+                    $seedValue = $sender.Rows[$e.RowIndex].Cells[$seedFrom].Value
+                    if ($seedValue) { $global:pendingSeedText = [string]$seedValue }
+                }
             }
+
+            $sender.CurrentCell = $cell
+            $sender.BeginEdit($true)
         }
     }
 })
